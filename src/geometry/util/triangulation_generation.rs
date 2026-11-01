@@ -87,7 +87,7 @@ impl From<RandomPointCountError> for DelaunayTriangulationConstructionError {
                 dimension,
             } => TriangulationConstructionError::InsufficientVertices {
                 dimension,
-                source: SimplexValidationError::InsufficientVertices {
+                source: SimplexValidationError::VertexCountMismatch {
                     actual,
                     expected,
                     dimension,
@@ -301,12 +301,7 @@ fn random_points_with_seed<const D: usize>(
 /// construction path.
 fn validate_random_triangulation<K, U, V, const D: usize>(
     dt: DelaunayTriangulation<K, U, V, D>,
-) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
-where
-    K: ExactPredicates<D, Scalar = f64>,
-    U: DataType,
-    V: DataType,
-{
+) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError> {
     dt.as_triangulation().validate().map_err(|e| {
         TriangulationConstructionError::FinalTopologyValidation {
             context: FinalTopologyValidationContext::RandomGeneration,
@@ -340,7 +335,7 @@ fn random_triangulation_try_build<K, U, V, const D: usize>(
     topology_guarantee: TopologyGuarantee,
 ) -> Result<Option<DelaunayTriangulation<K, U, V, D>>, DelaunayTriangulationConstructionError>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -561,18 +556,20 @@ where
 ///
 /// # Note on String Data
 ///
-/// Due to the `DataType` trait requiring `Copy`, `String` and `&str` cannot be used directly
-/// as vertex data. For string-like data, consider using:
+/// [`DataType`] requires both `Copy` and `DeserializeOwned`: `String` is not
+/// `Copy`, while borrowed `&str` is `Copy` but cannot satisfy owned
+/// deserialization, even with a `'static` lifetime. For string-like data, consider using:
 /// - Fixed-size character arrays: `[char; N]`
 /// - Small integer types that can be mapped to strings: `u32`, `u64`
 /// - Custom Copy types that wrap string-like data
 ///
 /// # Performance Notes
 ///
-/// - Point generation is O(n) and typically fast
-/// - Triangulation construction complexity varies by dimension:
-///   - 2D, 3D: O(n log n) expected with incremental insertion
-///   - 4D+: O(n²) worst case, significantly slower for large point sets
+/// - Point generation writes `n * D` coordinates.
+/// - Construction cost depends on dimension, point distribution, output size,
+///   degeneracy, and the required validation and repair work. This API does not
+///   promise a dimension-independent quadratic worst-case bound or an
+///   unconditional O(n log n) expected bound.
 /// - Consider using smaller point counts for dimensions ≥ 4
 ///
 /// # See Also
@@ -940,6 +937,7 @@ where
 ///         .seed(666)
 ///         .insertion_order(InsertionOrderStrategy::Input)
 ///         .build()?;
+/// dt.validate()?;
 ///
 /// // Build with PLManifold guarantee
 /// let dt_manifold: DelaunayTriangulation<_, (), (), 4> =
@@ -947,6 +945,7 @@ where
 ///         .seed(777)
 ///         .topology_guarantee(TopologyGuarantee::PLManifold)
 ///         .build()?;
+/// dt_manifold.validate()?;
 /// # Ok(())
 /// # }
 /// ```

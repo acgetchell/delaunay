@@ -26,6 +26,10 @@ extend-ignore-identifiers-re = [
     ".*_ba$",
 ]
 
+[default.extend-identifiers]
+# num-rational's numerator accessor, used by the independent exact test oracle.
+numer = "numer"
+
 [default.extend-words]
 # Domain terms that typos suggests "fixing" but are correct in this repo.
 bimap = "bimap"

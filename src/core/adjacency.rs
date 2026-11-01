@@ -89,10 +89,10 @@ pub struct IncidenceView<'tds> {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 #[must_use]
-pub struct EdgeIndex<'tds> {
+pub struct EdgeIndex<'tds, const D: usize> {
     /// Vertex → incident edges.
     pub(in crate::core) vertex_to_edges:
-        FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+        FastHashMap<VertexKey, SmallBuffer<EdgeKey<D>, MAX_PRACTICAL_DIMENSION_SIZE>>,
 
     /// Number of unique edges in the triangulation snapshot.
     pub(in crate::core) edge_count: usize,
@@ -161,21 +161,21 @@ pub struct SimplexNeighborIndex<'tds> {
 #[derive(Debug)]
 #[non_exhaustive]
 #[must_use]
-pub struct TriangulationAdjacency<'tds> {
+pub struct TriangulationAdjacency<'tds, const D: usize> {
     /// Borrowed canonical vertex → incident simplices relation.
     incidence: IncidenceView<'tds>,
     /// Derived vertex → edge index.
-    edges: EdgeIndex<'tds>,
+    edges: EdgeIndex<'tds, D>,
     /// Derived simplex → neighbor index.
     simplex_neighbors: SimplexNeighborIndex<'tds>,
 }
 
-impl<'tds> TriangulationAdjacency<'tds> {
+impl<'tds, const D: usize> TriangulationAdjacency<'tds, D> {
     /// Wraps the split topology views as the lifetime-bound composite API.
     #[inline]
     pub(crate) const fn from_parts(
         incidence: IncidenceView<'tds>,
-        edges: EdgeIndex<'tds>,
+        edges: EdgeIndex<'tds, D>,
         simplex_neighbors: SimplexNeighborIndex<'tds>,
     ) -> Self {
         Self {
@@ -201,7 +201,7 @@ impl<'tds> TriangulationAdjacency<'tds> {
     /// use delaunay::prelude::tds::{SimplexKey, VertexKey};
     ///
     /// fn incident<'tds>(
-    ///     adjacency: TriangulationAdjacency<'tds>,
+    ///     adjacency: TriangulationAdjacency<'tds, 2>,
     ///     vertex: VertexKey,
     /// ) -> impl Iterator<Item = SimplexKey> + 'tds + use<'tds> {
     ///     adjacency.adjacent_simplices(vertex)
@@ -212,7 +212,7 @@ impl<'tds> TriangulationAdjacency<'tds> {
     pub fn adjacent_simplices(
         &self,
         v: VertexKey,
-    ) -> impl Iterator<Item = SimplexKey> + 'tds + use<'tds> {
+    ) -> impl Iterator<Item = SimplexKey> + 'tds + use<'tds, D> {
         self.incidence.adjacent_simplices(v)
     }
 
@@ -231,7 +231,7 @@ impl<'tds> TriangulationAdjacency<'tds> {
     /// order is not specified.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
-    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
+    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey<D>> + '_ {
         self.edges.incident_edges(v)
     }
 
@@ -268,7 +268,7 @@ impl<'tds> TriangulationAdjacency<'tds> {
     /// Iteration order is not specified.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
-    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
+    pub fn edges(&self) -> impl Iterator<Item = EdgeKey<D>> + '_ {
         self.edges.edges()
     }
 
@@ -372,11 +372,14 @@ impl<'tds> IncidenceView<'tds> {
     }
 }
 
-impl<'tds> EdgeIndex<'tds> {
+impl<'tds, const D: usize> EdgeIndex<'tds, D> {
     /// Assembles an index from parts derived and validated by the owning triangulation.
     #[inline]
     pub(crate) const fn from_validated_parts(
-        vertex_to_edges: FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>>,
+        vertex_to_edges: FastHashMap<
+            VertexKey,
+            SmallBuffer<EdgeKey<D>, MAX_PRACTICAL_DIMENSION_SIZE>,
+        >,
         edge_count: usize,
         source_incidence: &'tds VertexIncidenceIndex,
     ) -> Self {
@@ -391,7 +394,7 @@ impl<'tds> EdgeIndex<'tds> {
     #[inline]
     pub(crate) const fn vertex_to_edges(
         &self,
-    ) -> &FastHashMap<VertexKey, SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>> {
+    ) -> &FastHashMap<VertexKey, SmallBuffer<EdgeKey<D>, MAX_PRACTICAL_DIMENSION_SIZE>> {
         &self.vertex_to_edges
     }
 
@@ -406,7 +409,7 @@ impl<'tds> EdgeIndex<'tds> {
     /// If `v` is not present in this index, the iterator is empty.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
     #[inline]
-    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
+    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey<D>> + '_ {
         self.vertex_to_edges()
             .get(&v)
             .into_iter()
@@ -427,7 +430,7 @@ impl<'tds> EdgeIndex<'tds> {
     /// This emits each edge exactly once by only yielding it from its canonical
     /// `v0()` endpoint. Iteration order is not specified.
     #[must_use = "this iterator is lazy and does nothing unless consumed"]
-    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
+    pub fn edges(&self) -> impl Iterator<Item = EdgeKey<D>> + '_ {
         self.vertex_to_edges().iter().flat_map(|(vk, edges)| {
             let vk = *vk;
             edges.iter().copied().filter(move |edge| edge.v0() == vk)
@@ -524,9 +527,9 @@ mod tests {
     fn topology_indexes_are_send_sync_unpin() {
         fn assert_auto_traits<T: Send + Sync + Unpin>() {}
         assert_auto_traits::<IncidenceView<'static>>();
-        assert_auto_traits::<EdgeIndex<'static>>();
+        assert_auto_traits::<EdgeIndex<'static, 2>>();
         assert_auto_traits::<SimplexNeighborIndex<'static>>();
-        assert_auto_traits::<TriangulationAdjacency<'static>>();
+        assert_auto_traits::<TriangulationAdjacency<'static, 2>>();
     }
 
     #[test]

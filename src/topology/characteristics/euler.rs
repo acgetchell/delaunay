@@ -39,7 +39,6 @@ use crate::core::{
         FacetToSimplicesMap, FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer,
         VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
     },
-    edge::EdgeKey,
     tds::{Tds, VertexKey},
 };
 use crate::topology::manifold::boundary_facet_keys_from_index;
@@ -107,7 +106,10 @@ impl FVector {
         self.by_dim.get(k).copied().unwrap_or(0)
     }
 
-    /// Get the dimension (maximum `k` where `f_k` > 0).
+    /// Returns the represented dimension: the last stored face-count index.
+    ///
+    /// Trailing zero counts still contribute to this extent. Empty storage
+    /// returns zero; this is not a search for the largest nonzero face count.
     ///
     /// # Examples
     ///
@@ -123,6 +125,8 @@ impl FVector {
     ///     by_dim: vec![3, 3, 1],
     /// };
     /// assert_eq!(counts_2d.dimension(), 2);
+    /// assert_eq!(FVector { by_dim: vec![3, 3, 0] }.dimension(), 2);
+    /// assert_eq!(FVector { by_dim: vec![] }.dimension(), 0);
     /// ```
     #[must_use]
     pub const fn dimension(&self) -> usize {
@@ -345,12 +349,15 @@ fn insert_lifted_simplices_of_size<const D: usize>(
         let mut simplex_vertices: LiftedCellKey = SmallBuffer::new();
         for &vertex_index in &indices {
             let offset: SmallBuffer<i16, MAX_PRACTICAL_DIMENSION_SIZE> = periodic_offsets
-                .map_or_else(SmallBuffer::new, |offsets| {
-                    offsets[vertex_index]
-                        .iter()
-                        .map(|&component| i16::from(component))
-                        .collect()
-                });
+                .map_or_else(
+                    || [0; D].into_iter().collect(),
+                    |offsets| {
+                        offsets[vertex_index]
+                            .iter()
+                            .map(|&component| i16::from(component))
+                            .collect()
+                    },
+                );
             simplex_vertices.push((vertex_keys[vertex_index], offset));
         }
         normalize_lifted_cell_key(&mut simplex_vertices);
@@ -635,7 +642,7 @@ pub(crate) fn triangulated_surface_euler_characteristic(
     // For a triangulated 2D complex: χ = V - E + F.
     let mut vertices: FastHashSet<VertexKey> =
         fast_hash_set_with_capacity(triangles.len().saturating_mul(3).max(1));
-    let mut edges: FastHashSet<EdgeKey> =
+    let mut edges: FastHashSet<[VertexKey; 2]> =
         fast_hash_set_with_capacity(triangles.len().saturating_mul(3).max(1));
 
     let mut face_count = 0usize;
@@ -655,9 +662,10 @@ pub(crate) fn triangulated_surface_euler_characteristic(
         vertices.insert(b);
         vertices.insert(c);
 
-        edges.insert(EdgeKey::from_validated_endpoints(a, b));
-        edges.insert(EdgeKey::from_validated_endpoints(b, c));
-        edges.insert(EdgeKey::from_validated_endpoints(c, a));
+        for mut edge in [[a, b], [b, c], [c, a]] {
+            edge.sort_unstable();
+            edges.insert(edge);
+        }
     }
 
     let counts = FVector {
@@ -672,7 +680,7 @@ pub(crate) fn triangulated_surface_boundary_component_count(
 ) -> usize {
     // Count boundary edges (edges incident to exactly 1 triangle), then count connected components
     // in the boundary 1-skeleton.
-    let mut edge_counts: FastHashMap<EdgeKey, usize> =
+    let mut edge_counts: FastHashMap<[VertexKey; 2], usize> =
         fast_hash_map_with_capacity(triangles.len().saturating_mul(3).max(1));
 
     for tri in triangles {
@@ -684,11 +692,8 @@ pub(crate) fn triangulated_surface_boundary_component_count(
         let b = tri[1];
         let c = tri[2];
 
-        for e in [
-            EdgeKey::from_validated_endpoints(a, b),
-            EdgeKey::from_validated_endpoints(b, c),
-            EdgeKey::from_validated_endpoints(c, a),
-        ] {
+        for mut e in [[a, b], [b, c], [c, a]] {
+            e.sort_unstable();
             *edge_counts.entry(e).or_insert(0) += 1;
         }
     }
@@ -701,7 +706,7 @@ pub(crate) fn triangulated_surface_boundary_component_count(
             continue;
         }
 
-        let (u, v) = e.endpoints();
+        let [u, v] = e;
         boundary_adjacency.entry(u).or_default().push(v);
         boundary_adjacency.entry(v).or_default().push(u);
     }
@@ -876,6 +881,41 @@ mod tests {
 
     use crate::core::simplex::Simplex;
     use slotmap::{KeyData, SlotMap};
+
+    #[test]
+    fn mixed_zero_offset_storage_preserves_shared_edges_and_euler_characteristic() {
+        let vertices = [
+            vertex![0.0, 0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0, 0.0].unwrap(),
+            vertex![0.0, 1.0, 0.0].unwrap(),
+            vertex![0.0, 0.0, 1.0].unwrap(),
+            vertex![0.0, 0.0, -1.0].unwrap(),
+        ];
+        let specs = [vec![0, 1, 2, 3], vec![0, 2, 1, 4]];
+        let mut tds = TdsBuilder::new(&vertices, &specs).build().unwrap();
+        let key = tds.simplex_keys().next().unwrap();
+        tds.simplex_mut(key).unwrap().periodic_vertex_offsets =
+            Some([[0; 3]; 4].into_iter().collect());
+        let encoded = serde_json::to_string(&tds).unwrap();
+        let restored: Tds<(), (), 3> = serde_json::from_str(&encoded).unwrap();
+        let counts = count_simplices(&restored).unwrap();
+        assert_eq!(counts.by_dim, vec![5, 9, 7, 2]);
+        assert_eq!(euler_characteristic(&counts), 1);
+    }
+
+    #[test]
+    fn lifted_cell_identity_preserves_relative_images_and_ignores_chart_translation() {
+        let mut slots: SlotMap<VertexKey, ()> = SlotMap::default();
+        let keys = [slots.insert(()), slots.insert(()), slots.insert(())];
+        let mut cells = FastHashSet::default();
+        insert_lifted_simplices_of_size::<3>(&keys, None, 2, &mut cells);
+        assert_eq!(cells.len(), 3);
+        insert_lifted_simplices_of_size(&keys, Some(&[[0; 3]; 3]), 2, &mut cells);
+        insert_lifted_simplices_of_size(&keys, Some(&[[2, -1, 3]; 3]), 2, &mut cells);
+        assert_eq!(cells.len(), 3);
+        insert_lifted_simplices_of_size(&keys, Some(&[[0; 3], [1, 0, 0], [0; 3]]), 2, &mut cells);
+        assert_eq!(cells.len(), 5);
+    }
 
     #[test]
     fn test_simplex_counts() {

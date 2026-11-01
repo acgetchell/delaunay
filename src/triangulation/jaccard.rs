@@ -592,7 +592,8 @@ macro_rules! assert_jaccard_gte {
         let jaccard_index = $crate::query::jaccard_index(a_ref, b_ref)
             .expect("Jaccard computation should not overflow for reasonable test sets");
 
-        if jaccard_index < threshold {
+        let meets_threshold = jaccard_index >= threshold;
+        if !meets_threshold {
             let report = $crate::query::format_jaccard_report(
                 a_ref,
                 b_ref,
@@ -617,17 +618,15 @@ macro_rules! assert_jaccard_gte {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tds::TdsBuilder;
-    use crate::vertex;
-    use std::assert_matches;
-
-    use crate::core::tds::VertexKey;
+    use crate::core::tds::{TdsBuilder, VertexKey};
     use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::{AdaptiveKernel, FastKernel};
     use crate::triangulation::builder::TriangulationBuilder;
     use crate::triangulation::validation::TopologyGuarantee;
+    use crate::vertex;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
+    use std::{assert_matches, panic::catch_unwind};
 
     // Unit tests for jaccard_index and jaccard_distance across 2D–5D using a macro
     macro_rules! gen_jaccard_set_tests {
@@ -664,6 +663,16 @@ mod tests {
     gen_jaccard_set_tests!(jaccard_basic_properties_3d, 3);
     gen_jaccard_set_tests!(jaccard_basic_properties_4d, 4);
     gen_jaccard_set_tests!(jaccard_basic_properties_5d, 5);
+
+    #[test]
+    fn jaccard_assertion_rejects_nan_and_respects_finite_boundary() {
+        let first: HashSet<_> = [1, 2, 3].into_iter().collect();
+        let second: HashSet<_> = [2, 3, 4].into_iter().collect();
+        assert_jaccard_gte!(&first, &second, 0.5);
+        assert_jaccard_gte!(&first, &second, 0.49, "finite threshold");
+        assert!(catch_unwind(|| assert_jaccard_gte!(&first, &second, 0.51)).is_err());
+        assert!(catch_unwind(|| assert_jaccard_gte!(&first, &second, f64::NAN)).is_err());
+    }
 
     #[test]
     fn test_canonical_edge() {

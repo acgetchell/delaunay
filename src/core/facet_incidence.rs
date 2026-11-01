@@ -14,20 +14,19 @@ use std::ptr;
 impl<U, V, const D: usize> Tds<U, V, D> {
     /// Identifies all one-sided facet incidences in the TDS.
     ///
-    /// This is incidence analysis only: a one-sided facet can be a Euclidean
-    /// boundary facet, but topology-aware callers must still decide whether it
-    /// is true boundary or a closed periodic self-identification.
+    /// This is incidence analysis only: topology-aware callers must decide
+    /// whether an open one-sided facet is an allowed boundary. Closed periodic
+    /// self-identifications have two distinct reciprocal local occurrences,
+    /// potentially in the same stored simplex, and are not one-sided.
     ///
     /// # Triangulation Invariant
     ///
     /// This method relies on the fundamental invariant of Delaunay triangulations:
-    /// **every facet is one-sided or two-sided.** Any facet shared by 0, 3, or
-    /// more simplices indicates a structural/topological error in the
-    /// triangulation.
+    /// **every facet is one-sided or two-sided.** A facet identity with zero or
+    /// more than two local occurrences indicates a structural/topological error.
     ///
-    /// For a comprehensive discussion of all topological invariants in Delaunay triangulations,
-    /// see the [Topological Invariants](crate::tds::Tds#topological-invariants)
-    /// section in the triangulation data structure documentation.
+    /// See [`Tds::is_valid`] for the Level 2 structural checks and
+    /// [`Tds::validate`] for cumulative Levels 1–2 validation.
     ///
     /// # Returns
     ///

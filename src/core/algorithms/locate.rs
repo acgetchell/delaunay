@@ -191,6 +191,12 @@ pub enum LocateError {
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum ConflictError {
+    /// Conflict-region traversal is implemented only in Euclidean coordinates.
+    #[error("Conflict-region queries are unsupported for {topology:?} topology")]
+    UnsupportedTopology {
+        /// Geometry model requested by the owner.
+        topology: TopologyKind,
+    },
     /// Starting simplex is invalid
     #[error("Invalid starting simplex: {simplex_key:?}")]
     InvalidStartSimplex {

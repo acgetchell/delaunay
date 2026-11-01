@@ -81,10 +81,12 @@ pub enum TopologyError {
 /// a triangulation is realized. Different topologies have different
 /// properties regarding boundary conditions and geometric constraints.
 ///
-/// # Future Use
+/// <a id="future-use"></a>
 ///
-/// This is currently unused but provides the foundation for future support
-/// of non-Euclidean triangulations (spherical, toroidal, hyperbolic).
+/// [`GlobalTopology::kind`] uses this classification for the current Euclidean,
+/// toroidal, and spherical models. A kind identifies the model; it does not by
+/// itself certify that a construction workflow supports that model or dimension.
+/// Hyperbolic construction remains future work.
 ///
 /// # Examples
 ///

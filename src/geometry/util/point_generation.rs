@@ -228,6 +228,15 @@ pub enum RandomPointGenerationError<T = f64> {
         value: InvalidCoordinateValue,
     },
 
+    /// Positive spacing cannot produce distinct adjacent binary64 coordinates.
+    #[error("grid coordinates collapse on axis {axis} at index {index}")]
+    GridCoordinateCollapse {
+        /// Axis whose realized coordinates are not strictly increasing.
+        axis: usize,
+        /// Index of the second coordinate in the collapsed adjacent pair.
+        index: usize,
+    },
+
     /// Poisson disk sampling could not satisfy the requested spacing.
     #[error(
         "Could not generate {requested_points} Poisson points in {bounds} with minimum distance {min_distance:?} after {attempts} attempts; generated {generated_points}"
@@ -298,8 +307,7 @@ fn max_grid_bytes_safety_cap() -> usize {
 /// # Errors
 ///
 /// Returns [`RandomPointGenerationError::CoordinateConversionFailed`] if
-/// `n_points` cannot be converted to the coordinate type `T` without loss of
-/// precision.
+/// `n_points` exceeds the exact integer conversion bound of 2^53 for `f64`.
 ///
 /// # Examples
 ///
@@ -773,7 +781,7 @@ pub fn generate_random_points_in_range_seeded<const D: usize>(
 
 /// Generate random points in a periodic (toroidal) domain with seeded RNG.
 ///
-/// Each coordinate is independently sampled from `[T::zero(), domain[i])` using a seeded
+/// Each coordinate is independently sampled from `[0.0, domain[i])` using a seeded
 /// random number generator. All `domain[i]` must be strictly positive.
 ///
 /// # Arguments
@@ -1029,7 +1037,9 @@ pub fn generate_random_points_in_ball_seeded<const D: usize>(
 /// [`RandomPointGenerationError::InvalidGridOffset`] if the grid parameters
 /// contain non-finite offsets,
 /// [`RandomPointGenerationError::InvalidGeneratedGridCoordinate`] if a generated
-/// coordinate overflows to a non-finite value, or
+/// coordinate overflows to a non-finite value,
+/// [`RandomPointGenerationError::GridCoordinateCollapse`] if positive spacing
+/// rounds adjacent coordinates to the same value, or
 /// [`RandomPointGenerationError::CoordinateConversionFailed`] if a grid index
 /// cannot be represented exactly by the supported coordinate scalar.
 ///
@@ -1111,6 +1121,25 @@ pub fn generate_grid_points<const D: usize>(
             required_bytes: total_bytes,
             cap_bytes: cap,
         });
+    }
+    // Check representability before Cartesian expansion: positive mathematical
+    // spacing can disappear when rounded beside a much larger offset.
+    for (axis, &origin) in offset.iter().enumerate() {
+        let mut previous = origin;
+        for index in 1..points_per_dim {
+            let index_as_scalar = grid_index_as_scalar::<D>(&[index; D], axis, points_per_dim)?;
+            let coordinate = index_as_scalar.mul_add(spacing, origin);
+            if !coordinate.is_finite() {
+                return Err(RandomPointGenerationError::InvalidGeneratedGridCoordinate {
+                    axis,
+                    value: InvalidCoordinateValue::from_debug(&coordinate),
+                });
+            }
+            if coordinate <= previous {
+                return Err(RandomPointGenerationError::GridCoordinateCollapse { axis, index });
+            }
+            previous = coordinate;
+        }
     }
     let mut points = Vec::with_capacity(total_points);
 
@@ -2372,6 +2401,29 @@ mod tests {
     // =============================================================================
     // GRID POINT GENERATION TESTS
     // =============================================================================
+
+    #[test]
+    fn grid_rejects_representational_collapse() {
+        fn check<const D: usize>() {
+            assert!(matches!(
+                generate_grid_points::<D>(nonzero(2), 1.0, [1.0e20; D]),
+                Err(RandomPointGenerationError::GridCoordinateCollapse { axis: 0, index: 1 })
+            ));
+            let grid = generate_grid_points::<D>(nonzero(2), 32768.0, [1.0e20; D]).unwrap();
+            assert_eq!(grid.len(), 1 << D);
+            for axis in 0..D {
+                let mut coordinates: Vec<_> =
+                    grid.iter().map(|point| point.coords()[axis]).collect();
+                coordinates.sort_by(f64::total_cmp);
+                coordinates.dedup();
+                assert_eq!(coordinates.len(), 2);
+            }
+        }
+        check::<2>();
+        check::<3>();
+        check::<4>();
+        check::<5>();
+    }
 
     #[test]
     fn test_generate_grid_points_2d() {

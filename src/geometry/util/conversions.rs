@@ -157,13 +157,12 @@ pub fn try_finite_scalar(value: f64) -> Result<f64, CoordinateConversionError> {
 ///
 /// # Returns
 ///
-/// The converted T value or a `CoordinateConversionError`
+/// The converted `f64` value or a [`CoordinateConversionError`].
 ///
 /// # Errors
 ///
-/// Returns `CoordinateConversionError::ConversionFailed` if:
-/// - The `usize` value is too large and would lose precision in the conversion chain
-/// - The conversion from `f64` to type T fails
+/// Returns [`CoordinateConversionError::ConversionFailed`] if `value` exceeds
+/// 2^53 or cannot be represented by the checked conversion to `f64`.
 ///
 /// # Examples
 ///
@@ -188,10 +187,10 @@ pub fn try_finite_scalar(value: f64) -> Result<f64, CoordinateConversionError> {
 ///
 /// # Precision Limits
 ///
-/// The function uses the minimum mantissa bits between f64 and the target type:
-/// - `f64` integers are exact up to and including 2^53 (9,007,199,254,740,992)
-/// - For f64 targets: `usize` values larger than 2^53 will cause an error
-/// - On 64-bit platforms, `usize` can be up to 64 bits, so f64 precision loss is possible
+/// Every integer through 2^53 (9,007,199,254,740,992), inclusive, is exactly
+/// representable by `f64`. This function rejects all larger values, including
+/// those particular larger integers that happen to be representable. On
+/// 32-bit platforms every `usize` is within the accepted bound.
 pub fn safe_usize_to_scalar(value: usize) -> Result<f64, CoordinateConversionError> {
     let max_precise_u128: u128 = 1u128 << F64_MANTISSA_DIGITS;
 

@@ -12,7 +12,7 @@ use crate::core::tds::{SimplexKey, VertexKey};
 use crate::core::vertex::Vertex;
 use crate::delaunay_model::DelaunayTriangulation;
 use crate::geometry::traits::coordinate::InvalidCoordinateValue;
-use crate::topology::traits::topological_space::TopologyKind;
+use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use crate::triangulation::Triangulation;
 use crate::triangulation::validation::TopologyGuarantee;
 
@@ -21,7 +21,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt,
 };
 
@@ -35,7 +35,7 @@ const fn no_attributes<Attributes>() -> Option<Attributes> {
 pub const VISUALIZATION_SCHEMA: &str = "delaunay.simplicial_complex";
 
 /// Current [`VisualizationData`] schema version.
-pub const VISUALIZATION_SCHEMA_VERSION: u32 = 1;
+pub const VISUALIZATION_SCHEMA_VERSION: u32 = 2;
 
 /// Stable topology-kind schema category used by [`VisualizationMetadata`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -51,13 +51,13 @@ pub enum VisualizationTopologyKind {
     Hyperbolic,
     /// Unknown topology-kind text from an external JSON producer.
     Unknown {
-        /// Raw schema text that did not match a known v1 topology kind.
+        /// Raw schema text that did not match a known topology kind.
         actual: String,
     },
 }
 
 impl VisualizationTopologyKind {
-    /// Returns the v1 JSON schema spelling for this topology-kind category.
+    /// Returns the JSON schema spelling for this topology-kind category.
     fn schema_name(&self) -> &str {
         match self {
             Self::Euclidean => "Euclidean",
@@ -68,7 +68,7 @@ impl VisualizationTopologyKind {
         }
     }
 
-    /// Reports whether this topology-kind value is part of the v1 schema.
+    /// Reports whether this topology-kind value is part of the schema.
     const fn is_supported(&self) -> bool {
         match self {
             Self::Euclidean | Self::Toroidal | Self::Spherical | Self::Hyperbolic => true,
@@ -129,13 +129,13 @@ pub enum VisualizationTopologyGuarantee {
     PLManifold,
     /// Unknown topology-guarantee text from an external JSON producer.
     Unknown {
-        /// Raw schema text that did not match a known v1 topology guarantee.
+        /// Raw schema text that did not match a known topology guarantee.
         actual: String,
     },
 }
 
 impl VisualizationTopologyGuarantee {
-    /// Returns the v1 JSON schema spelling for this topology-guarantee category.
+    /// Returns the JSON schema spelling for this topology-guarantee category.
     fn schema_name(&self) -> &str {
         match self {
             Self::Pseudomanifold => "Pseudomanifold",
@@ -144,7 +144,7 @@ impl VisualizationTopologyGuarantee {
         }
     }
 
-    /// Reports whether this topology-guarantee value is part of the v1 schema.
+    /// Reports whether this topology-guarantee value is part of the schema.
     const fn is_supported(&self) -> bool {
         match self {
             Self::Pseudomanifold | Self::PLManifold => true,
@@ -198,6 +198,10 @@ impl<'de> Deserialize<'de> for VisualizationTopologyGuarantee {
 /// simplex ids, coordinates, simplex vertex membership, and facet-neighbor
 /// adjacency by stable simplex id. Attribute type parameters let downstream
 /// crates wrap or extend the base records with domain-specific metadata.
+/// Toroidal snapshots also retain periods and ordered lattice offsets in
+/// [`Self::periodic`], allowing repeated quotient UUIDs to identify distinct
+/// lifted vertex images. Schema v2 adds this realization data; nonperiodic v1
+/// records remain accepted by validation.
 /// The value is an owned, detached interchange snapshot rather than a live
 /// borrowed view over a triangulation; regenerate it after mutating the source
 /// triangulation.
@@ -253,6 +257,25 @@ pub struct VisualizationData<
     pub simplices: Vec<SimplexRecord<SimplexAttributes>>,
     /// Facet-neighbor adjacency records sorted by simplex id and facet index.
     pub adjacency: Vec<AdjacencyRecord<AdjacencyAttributes>>,
+    /// Toroidal periods and lifted vertex offsets, required for toroidal data.
+    ///
+    /// Absent for other topology kinds and for legacy nonperiodic v1 records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub periodic: Option<PeriodicVisualizationData>,
+}
+
+/// Periodic realization data for a toroidal [`VisualizationData`] snapshot.
+///
+/// A simplex vertex at slot `i` is realized at
+/// `coordinates + simplex_vertex_offsets[simplex_id][i] * periods`, component
+/// by component. Repeated quotient vertex UUIDs therefore remain distinct when
+/// their lattice offsets differ. Facets match up to a common lattice translation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PeriodicVisualizationData {
+    /// Positive finite fundamental-domain lengths in dimension order.
+    pub periods: Vec<f64>,
+    /// Ordered lattice offsets for every simplex, keyed by its stable UUID.
+    pub simplex_vertex_offsets: BTreeMap<Uuid, Vec<Vec<i8>>>,
 }
 
 impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, GlobalAttributes>
@@ -284,7 +307,7 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
         ValidatedVisualizationData::try_from_raw(self)
     }
 
-    /// Validates this raw visualization/interchange value against the v1 schema.
+    /// Validates this raw visualization/interchange value against the schema.
     ///
     /// This is the boundary to use after deserializing untrusted JSON. Produced
     /// values from [`DelaunayTriangulation::to_visualization_data`] should
@@ -321,10 +344,17 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
     /// # }
     /// ```
     pub fn validate(&self) -> Result<(), VisualizationDataValidationError> {
+        let expected_simplex_vertices = visualization_arity::<D>()?;
         validate_metadata::<D, GlobalAttributes>(
             &self.metadata,
             self.vertices.len(),
             self.simplices.len(),
+        )?;
+        validate_periodic_metadata::<D, _, _>(
+            &self.metadata,
+            self.periodic.as_ref(),
+            &self.simplices,
+            expected_simplex_vertices,
         )?;
 
         let mut vertex_ids = HashSet::with_capacity(self.vertices.len());
@@ -359,7 +389,6 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
             }
         }
 
-        let expected_simplex_vertices = D + 1;
         let mut simplex_ids = HashSet::with_capacity(self.simplices.len());
         for (simplex_index, simplex) in self.simplices.iter().enumerate() {
             if simplex.id.is_nil() {
@@ -381,14 +410,19 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
             }
 
             let mut local_vertex_ids = HashSet::with_capacity(simplex.vertex_ids.len());
-            for vertex_id in &simplex.vertex_ids {
+            let offsets = self
+                .periodic
+                .as_ref()
+                .and_then(|periodic| periodic.simplex_vertex_offsets.get(&simplex.id));
+            for (vertex_index, vertex_id) in simplex.vertex_ids.iter().enumerate() {
                 if !vertex_ids.contains(vertex_id) {
                     return Err(VisualizationDataValidationError::MissingSimplexVertex {
                         simplex_id: simplex.id,
                         vertex_id: *vertex_id,
                     });
                 }
-                if !local_vertex_ids.insert(*vertex_id) {
+                let offset = offsets.map(|offsets| offsets[vertex_index].as_slice());
+                if !local_vertex_ids.insert((*vertex_id, offset)) {
                     return Err(VisualizationDataValidationError::DuplicateSimplexVertex {
                         simplex_id: simplex.id,
                         vertex_id: *vertex_id,
@@ -397,7 +431,7 @@ impl<const D: usize, VertexAttributes, SimplexAttributes, AdjacencyAttributes, G
             }
         }
 
-        validate_adjacency::<D, _, _>(&self.adjacency, &self.simplices)
+        validate_adjacency::<D, _, _>(&self.adjacency, &self.simplices, self.periodic.as_ref())
     }
 }
 
@@ -612,6 +646,12 @@ pub struct AdjacencyRecord<Attributes = ()> {
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum VisualizationExportError {
+    /// The const-generic dimension cannot represent simplex arity.
+    #[error("visualization dimension {dimension} cannot represent simplex arity")]
+    DimensionOutOfRange {
+        /// Unsupported const-generic dimension.
+        dimension: usize,
+    },
     /// A simplex referenced a vertex key that is not present in the TDS.
     #[error("simplex {simplex_id} references missing vertex key {vertex_key:?}")]
     MissingVertex {
@@ -662,6 +702,80 @@ pub enum VisualizationExportError {
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum VisualizationDataValidationError {
+    /// The const-generic dimension cannot represent simplex arity.
+    #[error("visualization dimension {dimension} cannot represent simplex arity")]
+    DimensionOutOfRange {
+        /// Unsupported const-generic dimension.
+        dimension: usize,
+    },
+    /// Toroidal data requires the periodic realization fields introduced in v2.
+    #[error("toroidal visualization requires schema v2 and periodic realization data")]
+    MissingPeriodicData {},
+    /// Periodic realization data appeared outside the v2 toroidal schema.
+    #[error("periodic realization data requires schema v2 and toroidal topology")]
+    UnexpectedPeriodicData {},
+    /// The periodic domain has the wrong number of periods.
+    #[error("periodic domain has {actual} periods; expected {expected}")]
+    InvalidPeriodCount {
+        /// Required number of periods.
+        expected: usize,
+        /// Number of supplied periods.
+        actual: usize,
+    },
+    /// A fundamental-domain period is not finite and strictly positive.
+    #[error("periodic domain period {axis} is not finite and strictly positive")]
+    InvalidPeriod {
+        /// Axis with the invalid period.
+        axis: usize,
+    },
+    /// Periodic offsets do not cover a simplex in the simplex table.
+    #[error("periodic offsets are missing for simplex {simplex_id}")]
+    MissingPeriodicOffsets {
+        /// Simplex missing its realization data.
+        simplex_id: Uuid,
+    },
+    /// Periodic offsets refer to a simplex absent from the simplex table.
+    #[error("periodic offsets reference missing simplex {simplex_id}")]
+    UnknownPeriodicSimplex {
+        /// Simplex absent from the simplex table.
+        simplex_id: Uuid,
+    },
+    /// A simplex has the wrong number of periodic vertex offsets.
+    #[error("simplex {simplex_id} has {actual} periodic offsets; expected {expected}")]
+    InvalidPeriodicOffsetCount {
+        /// Simplex with malformed offset data.
+        simplex_id: Uuid,
+        /// Required offset count.
+        expected: usize,
+        /// Supplied offset count.
+        actual: usize,
+    },
+    /// A periodic lattice offset has the wrong coordinate arity.
+    #[error(
+        "simplex {simplex_id} vertex {vertex_index} offset has {actual} entries; expected {expected}"
+    )]
+    InvalidPeriodicOffsetDimension {
+        /// Simplex with malformed offset data.
+        simplex_id: Uuid,
+        /// Vertex slot with the malformed offset.
+        vertex_index: usize,
+        /// Required coordinate count.
+        expected: usize,
+        /// Supplied coordinate count.
+        actual: usize,
+    },
+    /// Reciprocal periodic facets do not agree up to a common lattice translation.
+    #[error(
+        "simplex {simplex_id} facet {facet_index} has no matching reciprocal periodic facet in {neighbor_simplex_id}"
+    )]
+    InvalidPeriodicFacetSharing {
+        /// Source simplex of the invalid adjacency.
+        simplex_id: Uuid,
+        /// Source facet index.
+        facet_index: usize,
+        /// Neighbor without a matching reciprocal facet.
+        neighbor_simplex_id: Uuid,
+    },
     /// The schema name is not supported by this validator.
     #[error("unsupported visualization schema {actual:?}; expected {expected:?}")]
     InvalidSchema {
@@ -702,7 +816,7 @@ pub enum VisualizationDataValidationError {
         /// Actual simplex table length.
         actual: usize,
     },
-    /// Metadata topology kind is not one of the v1 schema names.
+    /// Metadata topology kind is not one of the schema names.
     #[error(
         "unsupported topology kind {actual}; expected one of Euclidean, Toroidal, Spherical, Hyperbolic"
     )]
@@ -710,7 +824,7 @@ pub enum VisualizationDataValidationError {
         /// Actual topology-kind schema category.
         actual: VisualizationTopologyKind,
     },
-    /// Metadata topology guarantee is not one of the v1 schema names.
+    /// Metadata topology guarantee is not one of the schema names.
     #[error("unsupported topology guarantee {actual}; expected one of Pseudomanifold, PLManifold")]
     InvalidTopologyGuarantee {
         /// Actual topology-guarantee schema category.
@@ -778,7 +892,7 @@ pub enum VisualizationDataValidationError {
         /// Missing stable vertex id.
         vertex_id: Uuid,
     },
-    /// A simplex repeats a vertex id.
+    /// A simplex repeats a vertex id (and, for toroidal data, its lattice offset).
     #[error("simplex {simplex_id} repeats vertex id {vertex_id}")]
     DuplicateSimplexVertex {
         /// Stable simplex id.
@@ -871,6 +985,8 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// The returned value is an owned, detached snapshot of the triangulation's
     /// current UUIDs, coordinates, simplex membership, and facet adjacency.
+    /// Toroidal exports include domain periods and vertex offsets in
+    /// [`VisualizationData::periodic`] so their lifted realization is preserved.
     /// Mutating the triangulation later does not update this export; regenerate
     /// the value when consumers need a fresh view of the topology.
     ///
@@ -906,6 +1022,16 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # }
     /// ```
     pub fn to_visualization_data(&self) -> Result<VisualizationData<D>, VisualizationExportError> {
+        let simplex_arity = D
+            .checked_add(1)
+            .ok_or(VisualizationExportError::DimensionOutOfRange { dimension: D })?;
+        let mut periodic = match self.global_topology() {
+            GlobalTopology::Toroidal { domain, .. } => Some(PeriodicVisualizationData {
+                periods: domain.periods().to_vec(),
+                simplex_vertex_offsets: BTreeMap::new(),
+            }),
+            _ => None,
+        };
         let mut vertices: Vec<_> = self
             .vertices()
             .map(|(_, vertex)| VertexRecord {
@@ -917,9 +1043,17 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         vertices.sort_by_key(|record| record.id);
 
         let mut simplices = Vec::with_capacity(self.number_of_simplices());
-        let mut adjacency = Vec::with_capacity(self.number_of_simplices().saturating_mul(D + 1));
+        let mut adjacency =
+            Vec::with_capacity(self.number_of_simplices().saturating_mul(simplex_arity));
         for (_, simplex) in self.simplices() {
             let simplex_id = simplex.uuid();
+            if let Some(periodic) = &mut periodic {
+                let offsets = simplex.periodic_vertex_offsets().map_or_else(
+                    || vec![vec![0; D]; simplex.vertices().len()],
+                    |offsets| offsets.iter().map(|offset| offset.to_vec()).collect(),
+                );
+                periodic.simplex_vertex_offsets.insert(simplex_id, offsets);
+            }
             let vertex_ids = simplex
                 .vertices()
                 .iter()
@@ -941,7 +1075,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             });
             push_adjacency_records(
                 |neighbor_key| self.simplex_uuid_from_key(neighbor_key),
-                D + 1,
+                simplex_arity,
                 simplex_id,
                 simplex.neighbor_slots().map(NeighborBuffer::as_slice),
                 &mut adjacency,
@@ -965,6 +1099,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
             vertices,
             simplices,
             adjacency,
+            periodic,
         })
     }
 }
@@ -1016,6 +1151,79 @@ fn canonicalize_record_order<
         .sort_by_key(|record| (record.simplex_id, record.facet_index));
 }
 
+/// Rejects unrepresentable dimensions even when every entity table is empty.
+fn visualization_arity<const D: usize>() -> Result<usize, VisualizationDataValidationError> {
+    D.checked_add(1)
+        .ok_or(VisualizationDataValidationError::DimensionOutOfRange { dimension: D })
+}
+
+/// Checks the periodic table before any vertex slot indexes its lifted offset.
+fn validate_periodic_metadata<const D: usize, Attributes, SimplexAttributes>(
+    metadata: &VisualizationMetadata<Attributes>,
+    periodic: Option<&PeriodicVisualizationData>,
+    simplices: &[SimplexRecord<SimplexAttributes>],
+    simplex_arity: usize,
+) -> Result<(), VisualizationDataValidationError> {
+    let toroidal = metadata.topology_kind == VisualizationTopologyKind::Toroidal;
+    if toroidal && (periodic.is_none() || metadata.schema_version < 2) {
+        return Err(VisualizationDataValidationError::MissingPeriodicData {});
+    }
+    let Some(periodic) = periodic else {
+        return Ok(());
+    };
+    if !toroidal || metadata.schema_version < 2 {
+        return Err(VisualizationDataValidationError::UnexpectedPeriodicData {});
+    }
+    if periodic.periods.len() != D {
+        return Err(VisualizationDataValidationError::InvalidPeriodCount {
+            expected: D,
+            actual: periodic.periods.len(),
+        });
+    }
+    for (axis, period) in periodic.periods.iter().enumerate() {
+        if !period.is_finite() || *period <= 0.0 {
+            return Err(VisualizationDataValidationError::InvalidPeriod { axis });
+        }
+    }
+    let simplex_ids: HashSet<_> = simplices.iter().map(|simplex| simplex.id).collect();
+    for simplex_id in periodic.simplex_vertex_offsets.keys() {
+        if !simplex_ids.contains(simplex_id) {
+            return Err(VisualizationDataValidationError::UnknownPeriodicSimplex {
+                simplex_id: *simplex_id,
+            });
+        }
+    }
+    for simplex in simplices {
+        let offsets = periodic.simplex_vertex_offsets.get(&simplex.id).ok_or(
+            VisualizationDataValidationError::MissingPeriodicOffsets {
+                simplex_id: simplex.id,
+            },
+        )?;
+        if offsets.len() != simplex_arity {
+            return Err(
+                VisualizationDataValidationError::InvalidPeriodicOffsetCount {
+                    simplex_id: simplex.id,
+                    expected: simplex_arity,
+                    actual: offsets.len(),
+                },
+            );
+        }
+        for (vertex_index, offset) in offsets.iter().enumerate() {
+            if offset.len() != D {
+                return Err(
+                    VisualizationDataValidationError::InvalidPeriodicOffsetDimension {
+                        simplex_id: simplex.id,
+                        vertex_index,
+                        expected: D,
+                        actual: offset.len(),
+                    },
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Validates whole-payload schema metadata before walking entity records.
 fn validate_metadata<const D: usize, Attributes>(
     metadata: &VisualizationMetadata<Attributes>,
@@ -1028,7 +1236,7 @@ fn validate_metadata<const D: usize, Attributes>(
             actual: metadata.schema.clone(),
         });
     }
-    if metadata.schema_version != VISUALIZATION_SCHEMA_VERSION {
+    if !matches!(metadata.schema_version, 1 | VISUALIZATION_SCHEMA_VERSION) {
         return Err(VisualizationDataValidationError::InvalidSchemaVersion {
             expected: VISUALIZATION_SCHEMA_VERSION,
             actual: metadata.schema_version,
@@ -1071,12 +1279,13 @@ fn validate_metadata<const D: usize, Attributes>(
 fn validate_adjacency<const D: usize, SimplexAttributes, AdjacencyAttributes>(
     adjacency: &[AdjacencyRecord<AdjacencyAttributes>],
     simplices: &[SimplexRecord<SimplexAttributes>],
+    periodic: Option<&PeriodicVisualizationData>,
 ) -> Result<(), VisualizationDataValidationError> {
+    let max_exclusive = visualization_arity::<D>()?;
     let simplex_by_id: HashMap<_, _> = simplices
         .iter()
         .map(|simplex| (simplex.id, simplex))
         .collect();
-    let max_exclusive = D + 1;
     let mut adjacency_slots = HashSet::with_capacity(adjacency.len());
     let mut neighbor_edge_counts = HashMap::with_capacity(adjacency.len());
 
@@ -1154,7 +1363,96 @@ fn validate_adjacency<const D: usize, SimplexAttributes, AdjacencyAttributes>(
         }
     }
 
+    if let Some(periodic) = periodic {
+        validate_periodic_adjacency(adjacency, &simplex_by_id, periodic)?;
+    }
+
     Ok(())
+}
+
+/// Matches periodic facets by lifted vertex identity, allowing chart translation.
+fn validate_periodic_adjacency<SimplexAttributes, AdjacencyAttributes>(
+    adjacency: &[AdjacencyRecord<AdjacencyAttributes>],
+    simplex_by_id: &HashMap<Uuid, &SimplexRecord<SimplexAttributes>>,
+    periodic: &PeriodicVisualizationData,
+) -> Result<(), VisualizationDataValidationError> {
+    let signatures: HashMap<_, _> = adjacency
+        .iter()
+        .map(|record| {
+            let simplex = simplex_by_id[&record.simplex_id];
+            let offsets = &periodic.simplex_vertex_offsets[&record.simplex_id];
+            (
+                (record.simplex_id, record.facet_index),
+                periodic_facet_signature(simplex, offsets, record.facet_index),
+            )
+        })
+        .collect();
+    let mut facets_by_simplex = HashMap::<_, Vec<_>>::new();
+    for record in adjacency {
+        facets_by_simplex
+            .entry(record.simplex_id)
+            .or_default()
+            .push(record);
+    }
+    for record in adjacency {
+        let Some(neighbor_simplex_id) = record.neighbor_simplex_id else {
+            continue;
+        };
+        let source_slot = (record.simplex_id, record.facet_index);
+        let matches = facets_by_simplex[&neighbor_simplex_id]
+            .iter()
+            .filter(|candidate| {
+                let candidate_slot = (candidate.simplex_id, candidate.facet_index);
+                candidate_slot != source_slot
+                    && candidate.neighbor_simplex_id == Some(record.simplex_id)
+                    && signatures[&candidate_slot] == signatures[&source_slot]
+            })
+            .count();
+        if matches != 1 {
+            return Err(
+                VisualizationDataValidationError::InvalidPeriodicFacetSharing {
+                    simplex_id: record.simplex_id,
+                    facet_index: record.facet_index,
+                    neighbor_simplex_id,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Removes a facet's common lattice translation without overflowing i8 offsets.
+fn periodic_facet_signature<Attributes>(
+    simplex: &SimplexRecord<Attributes>,
+    offsets: &[Vec<i8>],
+    facet_index: usize,
+) -> Vec<(Uuid, Vec<i16>)> {
+    let mut vertices: Vec<_> = simplex
+        .vertex_ids
+        .iter()
+        .zip(offsets)
+        .enumerate()
+        .filter(|(index, _)| *index != facet_index)
+        .map(|(_, (id, offset))| {
+            (
+                *id,
+                offset
+                    .iter()
+                    .map(|value| i16::from(*value))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    vertices.sort_unstable();
+    if let Some((_, anchor)) = vertices.first() {
+        let anchor = anchor.clone();
+        for (_, offset) in &mut vertices {
+            for (value, origin) in offset.iter_mut().zip(&anchor) {
+                *value -= origin;
+            }
+        }
+    }
+    vertices
 }
 
 /// Enforces the exported adjacency reciprocity contract.
@@ -1249,7 +1547,89 @@ fn push_adjacency_records(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tds::Tds;
+    use crate::geometry::kernel::RobustKernel;
+    use crate::topology::traits::topological_space::ToroidalConstructionMode;
+    use crate::triangulation::builder::TriangulationBuilder;
     use slotmap::KeyData;
+
+    #[test]
+    fn periodic_export_preserves_implicit_zero_offset_charts() {
+        let (mut tds, _) = Tds::periodic_grid_t2_for_test(false);
+        let expected_offsets: BTreeMap<_, _> = tds
+            .simplices()
+            .map(|(_, simplex)| {
+                (
+                    simplex.uuid(),
+                    simplex
+                        .periodic_vertex_offsets()
+                        .unwrap()
+                        .iter()
+                        .map(|offset| offset.to_vec())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        let simplex_keys: Vec<_> = tds.simplex_keys().collect();
+        let mut implicit_charts = 0;
+        for simplex_key in simplex_keys {
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            if simplex
+                .periodic_vertex_offsets()
+                .unwrap()
+                .iter()
+                .all(|offset| *offset == [0; 2])
+            {
+                simplex.periodic_vertex_offsets = None;
+                implicit_charts += 1;
+            }
+        }
+        assert_eq!(implicit_charts, 4);
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let tri = TriangulationBuilder::new(tds, RobustKernel::new())
+            .global_topology(topology)
+            .build()
+            .unwrap();
+        tri.validate_realization().unwrap();
+        let export = tri.to_visualization_data().unwrap();
+        export.validate().unwrap();
+        assert_eq!(
+            export.periodic.unwrap().simplex_vertex_offsets,
+            expected_offsets
+        );
+    }
+
+    #[test]
+    fn empty_visualization_rejects_dimension_overflow_before_validation() {
+        let data = VisualizationData::<{ usize::MAX }> {
+            metadata: VisualizationMetadata {
+                schema: VISUALIZATION_SCHEMA.to_owned(),
+                schema_version: VISUALIZATION_SCHEMA_VERSION,
+                producer: "test".to_owned(),
+                dimension: usize::MAX,
+                vertex_count: 0,
+                simplex_count: 0,
+                topology_kind: VisualizationTopologyKind::Euclidean,
+                topology_guarantee: VisualizationTopologyGuarantee::PLManifold,
+                attributes: None,
+            },
+            vertices: Vec::new(),
+            simplices: Vec::new(),
+            adjacency: Vec::new(),
+            periodic: None,
+        };
+        let expected = VisualizationDataValidationError::DimensionOutOfRange {
+            dimension: usize::MAX,
+        };
+        assert_eq!(data.validate(), Err(expected.clone()));
+        assert_eq!(data.into_validated(), Err(expected.clone()));
+        assert_eq!(
+            validate_adjacency::<{ usize::MAX }, (), ()>(&[], &[], None),
+            Err(expected)
+        );
+    }
 
     #[test]
     fn push_adjacency_records_rejects_wrong_neighbor_arity() {

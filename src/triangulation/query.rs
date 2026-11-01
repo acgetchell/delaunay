@@ -20,7 +20,7 @@ use crate::core::collections::{
     FastHashMap, FastHashSet, MAX_PRACTICAL_DIMENSION_SIZE, SimplexKeyBuffer, SmallBuffer, Uuid,
     VertexKeyBuffer, fast_hash_map_with_capacity, fast_hash_set_with_capacity,
 };
-use crate::core::edge::{EdgeKey, EdgeKeyError, EdgeView};
+use crate::core::edge::{EdgeKey, EdgeKeyError, EdgeSet, EdgeView};
 use crate::core::facet::{
     AllFacetsIter, BoundaryFacetsIter, FacetError, FacetHandle, FacetToSimplicesIndex, FacetView,
     SimplexFacetsIter,
@@ -39,6 +39,7 @@ use crate::topology::traits::{
     GlobalTopologyModelError, global_topology_model::GlobalTopologyModel,
 };
 use crate::triangulation::Triangulation;
+use std::fmt;
 
 /// One simplex in an owner-bound [`ConflictRegion`].
 #[derive(Debug)]
@@ -98,9 +99,17 @@ impl<'tri, V, const D: usize> ConflictSimplexView<'tri, V, D> {
 }
 
 /// Borrowed, already-parsed facets on a conflict-region cavity boundary.
-#[derive(Debug)]
 pub struct CavityBoundary<'tri, U, V, const D: usize> {
     facets: Vec<FacetView<'tri, U, V, D>>,
+}
+
+impl<U, V, const D: usize> fmt::Debug for CavityBoundary<'_, U, V, D> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CavityBoundary")
+            .field("facets", &self.facets)
+            .finish()
+    }
 }
 
 impl<'tri, U, V, const D: usize> CavityBoundary<'tri, U, V, D> {
@@ -1685,7 +1694,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> + '_ {
+    pub fn edges(&self) -> impl Iterator<Item = EdgeKey<D>> + '_ {
         self.collect_edges().into_iter()
     }
 
@@ -1693,8 +1702,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns [`EdgeKeyError`] if the vertices are stale, duplicated, or do not
-    /// share a stored simplex edge.
+    /// Returns [`EdgeKeyError`] if the vertices are stale, have no edge, or
+    /// identify several periodic lattice classes. Use [`Self::edge_key_from_simplex`]
+    /// to select a particular occurrence.
     ///
     /// # Examples
     ///
@@ -1718,8 +1728,22 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn edge_key(&self, a: VertexKey, b: VertexKey) -> Result<EdgeKey, EdgeKeyError> {
+    pub fn edge_key(&self, a: VertexKey, b: VertexKey) -> Result<EdgeKey<D>, EdgeKeyError> {
         EdgeKey::try_new(&self.tds, a, b)
+    }
+
+    /// Selects an edge by two local vertex slots of a stored simplex.
+    ///
+    /// This distinguishes parallel periodic edges with the same quotient endpoints.
+    ///
+    /// # Errors
+    /// Returns [`EdgeKeyError`] for invalid slots, missing endpoints or invalid incidence.
+    pub fn edge_key_from_simplex(
+        &self,
+        simplex_key: SimplexKey,
+        vertices: [usize; 2],
+    ) -> Result<EdgeKey<D>, EdgeKeyError> {
+        EdgeKey::try_from_simplex(&self.tds, simplex_key, vertices)
     }
 
     /// Revalidates an edge key and returns a borrowed edge view.
@@ -1752,7 +1776,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn edge_view(&self, edge: EdgeKey) -> Result<EdgeView<'_, U, V, D>, EdgeKeyError> {
+    pub fn edge_view(&self, edge: EdgeKey<D>) -> Result<EdgeView<'_, U, V, D>, EdgeKeyError> {
         edge.view(&self.tds)
     }
 
@@ -1938,8 +1962,9 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConflictError`] if the start simplex is stale, structural data is
-    /// inconsistent, or the conflict boundary cannot be classified.
+    /// Returns [`ConflictError::UnsupportedTopology`] for non-Euclidean owners.
+    /// Other [`ConflictError`] variants identify a stale start simplex,
+    /// inconsistent structural data, or an unclassifiable conflict boundary.
     ///
     /// # Examples
     ///
@@ -1985,6 +2010,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     where
         K: Kernel<D, Scalar = f64>,
     {
+        if !self.global_topology().is_euclidean() {
+            return Err(ConflictError::UnsupportedTopology {
+                topology: self.global_topology().kind(),
+            });
+        }
         let simplex_keys =
             find_conflict_region_in_tds(&self.tds, &self.kernel, point, start_simplex)?;
         ConflictRegion::try_new(self, *point, simplex_keys)
@@ -1993,7 +2023,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// Returns an iterator over all unique edges incident to a vertex.
     ///
     /// If `v` is not present in this triangulation, the iterator is empty.
-    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey> + '_ {
+    pub fn incident_edges(&self, v: VertexKey) -> impl Iterator<Item = EdgeKey<D>> + '_ {
         self.collect_incident_edges(v).into_iter()
     }
 
@@ -2068,7 +2098,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn adjacency(&self) -> Result<TriangulationAdjacency<'_>, TopologyIndexBuildError> {
+    pub fn adjacency(&self) -> Result<TriangulationAdjacency<'_, D>, TopologyIndexBuildError> {
         let incidence = self.incidence();
         let edges = self.build_edge_index()?;
         let simplex_neighbors = self.build_simplex_neighbor_index()?;
@@ -2102,15 +2132,12 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     ///
     /// Returns [`TopologyIndexBuildError::MissingVertexKey`] if a simplex
     /// references a vertex key that is absent from vertex storage.
-    pub fn build_edge_index(&self) -> Result<EdgeIndex<'_>, TopologyIndexBuildError> {
+    pub fn build_edge_index(&self) -> Result<EdgeIndex<'_, D>, TopologyIndexBuildError> {
         let vertex_cap = self.tds.number_of_vertices();
         let mut vertex_to_edges: FastHashMap<
             VertexKey,
-            SmallBuffer<EdgeKey, MAX_PRACTICAL_DIMENSION_SIZE>,
+            SmallBuffer<EdgeKey<D>, MAX_PRACTICAL_DIMENSION_SIZE>,
         > = fast_hash_map_with_capacity(vertex_cap);
-
-        let mut seen_edges: FastHashSet<EdgeKey> =
-            fast_hash_set_with_capacity(self.edge_capacity_hint());
 
         for (simplex_key, simplex) in self.tds.simplices() {
             let vertices = simplex.vertices();
@@ -2123,18 +2150,15 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
                     });
                 }
             }
+        }
 
-            for i in 0..vertices.len() {
-                for j in (i + 1)..vertices.len() {
-                    let edge = EdgeKey::from_validated_endpoints(vertices[i], vertices[j]);
-                    if !seen_edges.insert(edge) {
-                        continue;
-                    }
-
-                    let (a, b) = edge.endpoints();
-                    vertex_to_edges.entry(a).or_default().push(edge);
-                    vertex_to_edges.entry(b).or_default().push(edge);
-                }
+        let edges = self.collect_edges();
+        let edge_count = edges.len();
+        for edge in edges {
+            let (a, b) = edge.endpoints();
+            vertex_to_edges.entry(a).or_default().push(edge);
+            if a != b {
+                vertex_to_edges.entry(b).or_default().push(edge);
             }
         }
 
@@ -2144,7 +2168,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
 
         Ok(EdgeIndex::from_validated_parts(
             vertex_to_edges,
-            seen_edges.len(),
+            edge_count,
             self.tds.vertex_to_simplices_index(),
         ))
     }
@@ -2219,36 +2243,25 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     }
 
     #[must_use]
-    fn collect_edges(&self) -> FastHashSet<EdgeKey> {
-        let mut edges: FastHashSet<EdgeKey> =
-            fast_hash_set_with_capacity(self.edge_capacity_hint());
-
-        for (_simplex_key, simplex) in self.tds.simplices() {
-            let vertices = simplex.vertices();
-            for i in 0..vertices.len() {
-                for j in (i + 1)..vertices.len() {
-                    edges.insert(EdgeKey::from_validated_endpoints(vertices[i], vertices[j]));
-                }
-            }
-        }
-
-        edges
+    fn collect_edges(&self) -> EdgeSet<D> {
+        EdgeSet::from_tds(&self.tds, self.edge_capacity_hint())
     }
 
     #[must_use]
-    fn collect_incident_edges(&self, v: VertexKey) -> FastHashSet<EdgeKey> {
-        let mut edges: FastHashSet<EdgeKey> = FastHashSet::default();
+    fn collect_incident_edges(&self, v: VertexKey) -> FastHashSet<EdgeKey<D>> {
+        let mut edges: FastHashSet<EdgeKey<D>> = FastHashSet::default();
 
         for simplex_key in self.adjacent_simplices(v) {
             let Some(simplex) = self.tds.simplex(simplex_key) else {
                 continue;
             };
 
-            for &other in simplex.vertices() {
-                if other == v {
-                    continue;
+            for i in 0..simplex.number_of_vertices() {
+                for j in i + 1..simplex.number_of_vertices() {
+                    if simplex.vertices()[i] == v || simplex.vertices()[j] == v {
+                        edges.insert(EdgeKey::from_simplex_slots(simplex, i, j));
+                    }
                 }
-                edges.insert(EdgeKey::from_validated_endpoints(v, other));
             }
         }
 
@@ -2359,7 +2372,7 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
     /// ```
     pub fn try_interior_facet_for_edge_2d(
         &self,
-        edge: EdgeKey,
+        edge: EdgeKey<2>,
     ) -> Result<Option<FacetHandle>, EdgeKeyError> {
         let edge_view = edge.view(&self.tds)?;
         let facets = Self::collect_incident_facets_to_edge_2d(&edge_view);
@@ -2417,7 +2430,7 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
     /// ```
     pub fn try_incident_facets_to_edge_2d(
         &self,
-        edge: EdgeKey,
+        edge: EdgeKey<2>,
     ) -> Result<impl Iterator<Item = FacetHandle>, EdgeKeyError> {
         let edge_view = edge.view(&self.tds)?;
         Ok(Self::collect_incident_facets_to_edge_2d(&edge_view).into_iter())
@@ -2431,7 +2444,6 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
     fn collect_incident_facets_to_edge_2d(
         edge_view: &EdgeView<'_, U, V, 2>,
     ) -> SmallBuffer<FacetHandle, 2> {
-        let (v0, v1) = edge_view.endpoint_keys();
         let mut facets = SmallBuffer::new();
 
         for &simplex_key in edge_view.incident_simplices() {
@@ -2439,24 +2451,13 @@ impl<K, U, V> Triangulation<K, U, V, 2> {
                 .tds()
                 .simplex(simplex_key)
                 .expect("validated EdgeView contains only live incident simplices");
-            let facet_index = Self::facet_index_for_edge_2d(simplex, v0, v1);
-            facets.push(FacetHandle::from_validated(simplex_key, facet_index));
+            for [i, j] in edge_view.key().slots_in(simplex) {
+                let facet_index = usize_to_u8(3 - i - j, 3).expect("triangle slot fits in u8");
+                facets.push(FacetHandle::from_validated(simplex_key, facet_index));
+            }
         }
 
         facets
-    }
-
-    /// Converts a validated triangle edge into the facet slot opposite the third vertex.
-    ///
-    /// Callers only pass simplices from a parsed [`EdgeView`], so each simplex
-    /// is already proven to contain both edge endpoints.
-    fn facet_index_for_edge_2d(simplex: &Simplex<V, 2>, v0: VertexKey, v1: VertexKey) -> u8 {
-        let vertices = simplex.vertices();
-        let facet_index = vertices
-            .iter()
-            .position(|&vertex_key| vertex_key != v0 && vertex_key != v1)
-            .expect("validated 2D EdgeView incident simplex contains both edge endpoints");
-        usize_to_u8(facet_index, vertices.len()).expect("2D simplex facet index fits in u8")
     }
 }
 
@@ -2467,12 +2468,125 @@ mod tests {
     use crate::core::tds::{Tds, TdsBuilder};
     use crate::delaunay_model::DelaunayTriangulation;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
+    use crate::topology::traits::topological_space::{GlobalTopology, ToroidalConstructionMode};
     use crate::triangulation::builder::TriangulationBuilder;
     use crate::vertex;
 
     use slotmap::KeyData;
     use std::assert_matches;
     use std::collections::HashSet;
+
+    #[test]
+    fn periodic_traversal_grid_has_eighteen_distinct_edges_and_stars() {
+        let (tds, _) = Tds::periodic_grid_t2_for_test(false);
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let tri = TriangulationBuilder::new(tds, RobustKernel::new())
+            .global_topology(topology)
+            .build()
+            .unwrap();
+        let edges: HashSet<_> = tri.edges().collect();
+        assert_eq!(edges.len(), 18);
+        assert_eq!(tri.number_of_vertices(), 6);
+        assert_eq!(tri.number_of_simplices(), 12);
+        let index = tri.build_edge_index().unwrap();
+        assert_eq!(index.edges().collect::<HashSet<_>>(), edges);
+        for edge in edges {
+            assert_eq!(tri.edge_view(edge).unwrap().incident_simplices().len(), 2);
+            assert_eq!(tri.try_incident_facets_to_edge_2d(edge).unwrap().count(), 2);
+        }
+    }
+
+    #[test]
+    fn periodic_traversal_mixed_offset_storage_preserves_grid_edges() {
+        let (mut tds, _) = Tds::periodic_grid_t2_for_test(false);
+        let simplex_keys: Vec<_> = tds.simplex_keys().collect();
+        for simplex_key in simplex_keys {
+            let simplex = tds.simplex_mut(simplex_key).unwrap();
+            if simplex
+                .periodic_vertex_offsets()
+                .unwrap()
+                .iter()
+                .all(|offset| *offset == [0; 2])
+            {
+                // Absence denotes exactly the same zero-offset chart. The
+                // later seam simplices still require full lattice identities.
+                simplex.periodic_vertex_offsets = None;
+            }
+        }
+        assert!(
+            tds.simplices()
+                .next()
+                .unwrap()
+                .1
+                .periodic_vertex_offsets()
+                .is_none()
+        );
+        assert!(
+            tds.simplices()
+                .any(|(_, simplex)| simplex.periodic_vertex_offsets().is_some())
+        );
+        // Public persistence reconstructs the same mixed representation and
+        // must accept the same mathematical quotient before owner refinement.
+        let encoded = serde_json::to_string(&tds).unwrap();
+        let tds: Tds<(), (), 2> = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            tds.simplices()
+                .filter(|(_, simplex)| simplex.periodic_vertex_offsets().is_none())
+                .count(),
+            4
+        );
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let tri = TriangulationBuilder::new(tds, RobustKernel::new())
+            .global_topology(topology)
+            .build()
+            .unwrap();
+        tri.validate_realization().unwrap();
+        let edges: HashSet<_> = tri.edges().collect();
+        // The 2-by-3 grid has six horizontal, six vertical and six diagonal
+        // quotient edges. Bare endpoint pairs collapse parallel seam edges.
+        assert_eq!(edges.len(), 18);
+        let endpoint_pairs: HashSet<_> = edges.iter().map(|edge| edge.endpoints()).collect();
+        assert!(endpoint_pairs.len() < edges.len());
+        let index = tri.build_edge_index().unwrap();
+        assert_eq!(index.number_of_edges(), 18);
+        assert_eq!(index.edges().collect::<HashSet<_>>(), edges);
+        for edge in edges {
+            assert_eq!(tri.edge_view(edge).unwrap().incident_simplices().len(), 2);
+            assert_eq!(tri.try_incident_facets_to_edge_2d(edge).unwrap().count(), 2);
+        }
+    }
+
+    #[test]
+    fn periodic_traversal_conflict_region_rejects_periodic_owner() {
+        let (tds, _) = Tds::periodic_grid_t2_for_test(false);
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let tri = TriangulationBuilder::new(tds, RobustKernel::new())
+            .global_topology(topology)
+            .build()
+            .unwrap();
+        let seam = tri
+            .simplices()
+            .find(|(_, simplex)| {
+                simplex
+                    .periodic_vertex_offsets()
+                    .unwrap()
+                    .iter()
+                    .flatten()
+                    .any(|&offset| offset != 0)
+            })
+            .unwrap()
+            .0;
+        assert!(matches!(
+            tri.find_conflict_region(&Point::try_new([0.25, 0.5]).unwrap(), seam),
+            Err(ConflictError::UnsupportedTopology { .. })
+        ));
+    }
 
     #[test]
     fn locate_nonconvex_disk_from_every_hint() {
@@ -2670,7 +2784,7 @@ mod tests {
     /// Checks that each returned 2D facet handle resolves to the queried edge.
     fn assert_facet_handles_match_edge_2d(
         tri: &Triangulation<FastKernel<f64>, (), (), 2>,
-        edge: EdgeKey,
+        edge: EdgeKey<2>,
         facets: impl IntoIterator<Item = FacetHandle>,
     ) {
         let (v0, v1) = edge.endpoints();
@@ -2993,7 +3107,7 @@ mod tests {
             let vertices = tri.number_of_vertices();
             let occurrences = tri.number_of_simplices() * D * (D + 1) / 2;
             let vertex_pairs = vertices * (vertices + 1) / 2;
-            let reference: FastHashSet<EdgeKey> =
+            let reference: FastHashSet<EdgeKey<D>> =
                 fast_hash_set_with_capacity(occurrences.min(vertex_pairs));
             let edges = tri.collect_edges();
 
@@ -3013,6 +3127,63 @@ mod tests {
         );
         assert_eq!(empty.edge_capacity_hint(), 0);
         assert_eq!(empty.collect_edges().capacity(), 0);
+    }
+
+    #[test]
+    fn edge_queries_match_split_simplex_combinatorics() {
+        fn assert_edges<const D: usize>() {
+            let tri = split_topology_fixture::<D>();
+            let vertices: Vec<_> = tri.vertices().map(|(key, _)| key).collect();
+            let mut positive = [0.2; D];
+            positive[D - 1] = 1.0;
+            let mut negative = [0.2; D];
+            negative[D - 1] = -1.0;
+            let apices = [
+                fixture_vertex_by_coords(&tri, positive),
+                fixture_vertex_by_coords(&tri, negative),
+            ];
+            // Two simplices glued along a facet contain every vertex pair
+            // except the two opposite apices, independently of local ordering.
+            let mut expected = HashSet::new();
+            for (i, &a) in vertices.iter().enumerate() {
+                for &b in &vertices[i + 1..] {
+                    if !(apices.contains(&a) && apices.contains(&b)) {
+                        expected.insert(EdgeKey::from_validated_endpoints(a, b));
+                    }
+                }
+            }
+            assert_eq!(expected.len(), D * (D + 3) / 2);
+            let mut iter = tri.edges();
+            assert_eq!(iter.size_hint(), (expected.len(), Some(expected.len())));
+            let first = iter.next().unwrap();
+            let remaining = expected.len() - 1;
+            assert_eq!(iter.size_hint(), (remaining, Some(remaining)));
+            let mut actual: HashSet<_> = iter.collect();
+            actual.insert(first);
+            assert_eq!(actual, expected);
+            let index = tri.build_edge_index().unwrap();
+            assert_eq!(index.edges().collect::<HashSet<_>>(), expected);
+            for edge in expected {
+                let (a, b) = edge.endpoints();
+                let star_size = if apices.contains(&a) || apices.contains(&b) {
+                    1
+                } else {
+                    2
+                };
+                assert_eq!(edge.displacement(), [0; D]);
+                assert_eq!(
+                    tri.edge_view(edge).unwrap().incident_simplices().len(),
+                    star_size
+                );
+                assert!(index.incident_edges(a).any(|candidate| candidate == edge));
+                assert!(index.incident_edges(b).any(|candidate| candidate == edge));
+            }
+        }
+
+        assert_edges::<2>();
+        assert_edges::<3>();
+        assert_edges::<4>();
+        assert_edges::<5>();
     }
 
     #[test]

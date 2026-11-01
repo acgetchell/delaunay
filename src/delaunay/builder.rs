@@ -1098,10 +1098,15 @@ impl<'v, U, const D: usize> DelaunayTriangulationBuilder<'v, U, D> {
     /// This is not an unchecked topology wrapper. The deferred
     /// [`build`](Self::build) or [`build_with_kernel`](Self::build_with_kernel)
     /// call accepts only Euclidean explicit connectivity and validates the
-    /// assembled triangulation at Levels 1–4, so the supplied connectivity must
-    /// already satisfy the Delaunay empty-circumsphere property. Non-Euclidean
-    /// explicit connectivity is rejected because it requires Level 4 handling
-    /// that is not available for quotient meshes.
+    /// assembled triangulation at Levels 1–4. If that connectivity is not
+    /// Delaunay, these terminals attempt bounded transactional flip repair before
+    /// certifying Level 5, so the returned connectivity can differ from the input.
+    /// Use [`build_triangulation`](Self::build_triangulation) or
+    /// [`build_triangulation_with_kernel`](Self::build_triangulation_with_kernel)
+    /// to retain the supplied simplex connectivity through Levels 1–4 without
+    /// Delaunay repair; orientation canonicalization can still reorder vertices.
+    /// Non-Euclidean explicit connectivity is rejected because this workflow
+    /// does not provide the required quotient-mesh realization handling.
     ///
     /// # Errors
     ///
@@ -1660,16 +1665,21 @@ where
     ///
     /// This is the most common build path. Simplex data type `V` is inferred or
     /// specified at the call site; it is independent of the vertex data type `U`.
+    /// Delaunay-returning terminals always certify Level 5. Use
+    /// [`build_triangulation`](Self::build_triangulation) when only Levels 1–4
+    /// are required.
     ///
     /// # Errors
     ///
     /// Returns [`DelaunayTriangulationConstructionError`] if:
+    /// - Final Level 5 enforcement is disabled in [`ConstructionOptions`]
+    ///   ([`DelaunayTriangulationConstructionError::Level5CertificationDisabled`]).
     /// - The underlying triangulation construction fails (insufficient vertices,
     ///   geometric degeneracy, etc.).
     /// - Explicit-simplex construction is requested with unsupported
     ///   [`ConstructionOptions`], non-Euclidean topology, invalid topology or
     ///   realization, non-convergent bounded Delaunay repair, or failed final
-    ///   Level 5 certification when enforcement is enabled.
+    ///   Level 5 certification.
     ///
     /// # Examples
     ///
@@ -1854,7 +1864,7 @@ where
         kernel: &K,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
     {
         let validation_policy = self.resolved_validation_policy()?;
         let construction_options = self
@@ -1989,6 +1999,10 @@ where
     /// connectivity is first constructed as a Levels 1–4 [`Triangulation`]; if
     /// it is not already Delaunay, the strict terminal attempts transactional
     /// bistellar-flip repair before promotion.
+    /// Disabling final Level 5 enforcement returns
+    /// [`DelaunayTriangulationConstructionError::Level5CertificationDisabled`];
+    /// use [`build_triangulation_with_kernel`](Self::build_triangulation_with_kernel)
+    /// to request a Levels 1–4 owner instead.
     ///
     /// # Examples
     ///
@@ -2019,7 +2033,7 @@ where
         kernel: &K,
     ) -> Result<DelaunayTriangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
     {
         let validation_policy = self.resolved_validation_policy()?;
         if !self.construction_options.enforces_final_delaunay() {
@@ -2167,7 +2181,7 @@ where
         DelaunayTriangulationConstructionErrorWithStatistics,
     >
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
     {
         let construction_started = Instant::now();
         let validation_policy = match self.resolved_validation_policy() {
@@ -2266,7 +2280,7 @@ where
         DelaunayTriangulationConstructionErrorWithStatistics,
     >
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
     {
         let construction_started = Instant::now();
         let validation_policy = match self.resolved_validation_policy() {
@@ -2385,7 +2399,7 @@ where
         validation_policy: ValidationPolicy,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
     {
         triangulation.try_set_validation_policy(validation_policy)?;
         Ok(triangulation)
@@ -2400,7 +2414,7 @@ where
         validation_policy: ValidationPolicy,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
     {
         let topology = Self::periodic_image_global_topology(domain);
         Self::reject_periodic_conflicting_global_topology(
@@ -2472,7 +2486,7 @@ where
         global_topology: GlobalTopology<D>,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
     {
         Self::reject_explicit_non_euclidean_topology(global_topology)?;
 
@@ -2715,7 +2729,7 @@ where
         construction_options: ConstructionOptions,
     ) -> Result<Triangulation<K, U, V, D>, DelaunayTriangulationConstructionError>
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
         M: GlobalTopologyModel<D>,
     {
         // Keep `build_periodic` self-protecting even if future call paths bypass outer validation.
@@ -3558,14 +3572,9 @@ where
                         }
                     })?[*b_idx] = Some(*a_ck);
                 }
-                [(a_ck, a_idx)] => {
-                    // Self-identified periodic facet.
-                    neighbor_updates.get_mut(a_ck).ok_or_else(|| {
-                        TriangulationConstructionError::PeriodicQuotientMissingNeighborVector {
-                            simplex_key: *a_ck,
-                        }
-                    })?[*a_idx] = Some(*a_ck);
-                }
+                // A single occurrence is an open facet, not a self-pairing.
+                // Leave it unassigned so closed quotient publication fails.
+                [_] => {}
                 _ => {
                     return Err(
                         TriangulationConstructionError::PeriodicQuotientFacetMultiplicity {

@@ -94,11 +94,11 @@ Key combinatorial objects:
   [`src/core/tds/validation.rs`](../src/core/tds/validation.rs), and CGAL’s
   [TDS_3](https://doc.cgal.org/latest/TDS_3/index.html)).[^cgal-tds3][^impl-tds]
 - **Boundary vs interior facets**:
-  - An **interior facet** is incident to exactly two simplices.
-  - A **boundary facet** is one-sided and not an admissible periodic
-    self-identification.
-  - A periodic quotient facet may be incident to one stored simplex while a
-    self-neighbor pointer identifies it as closed topology rather than boundary.
+  - An **interior facet** has two distinct simplex-local facet occurrences.
+  - A **boundary facet** is one-sided in a topology that admits boundary.
+  - A periodic self-identification pairs two distinct local occurrences with
+    matching normalized lifted identities and reciprocal neighbor slots. They
+    may belong to the same stored simplex; one occurrence alone is not closed.
 
 These are **combinatorial** notions: they depend only on incidence and adjacency relationships.
 Geometric predicates (orientation / in-sphere tests) are used to construct and validate the
@@ -158,22 +158,26 @@ Cumulative validation is exposed through the `validate` / `validation_report` AP
 [`docs/construction_and_validation.md`](construction_and_validation.md).
 
 The domain owners follow the same layering. A published `Tds` carries the
-Levels 1–2 proof and never represents a partial bootstrap. The empty complex is
-a valid, constructed TDS because its element, mapping, incidence, adjacency,
-and orientation obligations hold vacuously. A draft containing some vertices
-but no full-dimensional simplex is different: it remains unpublished until it
-can prove the complete TDS contract. Canonical storage fields are visible only
-inside the TDS module; every edit that crosses a published domain boundary is a
-checked transition that either preserves Levels 1–2 or reports a typed error
-without publishing the failed state.
+Levels 1–2 proof. Initial nonempty draft or builder construction additionally
+requires a full-dimensional seed before publication. The empty complex is a
+valid, constructed TDS because its element, mapping, incidence, adjacency,
+and orientation obligations hold vacuously. Removing every simplex from an
+existing owner can leave a valid vertex-only `Tds`, and snapshot restoration
+preserves that state without claiming construction is complete. Such a state
+cannot be promoted to `Triangulation`; see the
+[construction-completion restrictions](construction_and_validation.md#level-2-combinatorial-consistency).
+Canonical storage fields are visible only inside the TDS module; every edit
+that crosses a published domain boundary is a checked transition that either
+preserves Levels 1–2 or reports a typed error without publishing the failed state.
 
-This distinction is encoded by a private unpublished wrapper, not only by a
-runtime flag. `TdsDraft` owns `UnverifiedTds<_, _, D>` internally; only its
-consuming `finish()` path can validate and remove that wrapper to return the
-public `Tds`. Snapshot restoration follows the same unpublished path before
-returning a `Tds`. The wrapper is confined to `core::tds`, and the public owner
-therefore keeps its ordinary three-parameter API without exposing publication
-typestate to callers.
+The initial construction boundary is encoded by a private unpublished wrapper,
+not only by a runtime flag. `TdsDraft` owns `UnverifiedTds<_, _, D>` internally;
+its consuming `finish()` validates construction completion before returning the
+public `Tds`. Snapshot restoration also assembles unpublished storage and
+validates Levels 1–2 before returning a `Tds`, including the supported
+vertex-only case. The wrapper is confined to `core::tds`, and the public owner
+keeps its ordinary three-parameter API without exposing publication typestate
+to callers.
 
 `TriangulationBuilder` is the only public TDS → `Triangulation` proof boundary.
 Its default strict mode consumes the Levels 1–2 proof and checks only the missing
@@ -653,14 +657,15 @@ vertex and verifying topological properties of the resulting complex.
 Construction proves vertex-link validity before publishing a `PLManifold` triangulation. Legal
 bistellar moves preserve that PL-manifold class while changed-scope postconditions guard every
 commit. `ValidationPolicy::Always` trades performance for a complete global Levels 1–4 audit after
-every mutation, providing earlier detection and improved diagnosability without inventing a second
-mathematical guarantee.
+every insertion, providing earlier detection and improved diagnosability without inventing a second
+mathematical guarantee. Other checked mutations enforce their own postconditions.
 
 The owner-level public API exposes this certification as
 `Triangulation::validate_vertex_links()` and
 `DelaunayTriangulation::validate_vertex_links()`. These methods use the
 triangulation's declared topology metadata when deciding whether a one-sided
-facet is a true boundary or an admissible periodic identification.
+facet is an allowed boundary or an invalid opening in a closed topology.
+Periodic identifications require two distinct reciprocal facet occurrences.
 
 ### Ridge links
 
@@ -733,7 +738,7 @@ At a high level:
 - **Vertex-link validation** is stronger but significantly more expensive. It is part of every full
   `PLManifold` Level 3 audit.
 - **Always-on auditing** (`ValidationPolicy::Always`) repeats the complete Levels 1–4 audit after
-  each mutation, trading performance for earlier detection and improved diagnosability.
+  each insertion, trading performance for earlier detection and improved diagnosability.
 
 ### Incremental insertion algorithm (cavity-based)
 

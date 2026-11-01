@@ -3,8 +3,7 @@
 //! Manual diagnostics extracted from `profiling_suite`; excluded from release signals.
 //! Fixtures are initialized inside selected Criterion callbacks, before timing.
 
-use criterion::{BatchSize, Throughput};
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use delaunay::prelude::geometry::{AdaptiveKernel, ExactPredicates};
 use std::{hint::black_box, sync::OnceLock};
 #[path = "common/bench_utils.rs"]
@@ -12,9 +11,8 @@ pub mod bench_utils;
 #[path = "common/profiling_fixtures.rs"]
 mod profiling_fixtures;
 use profiling_fixtures::{
-    bench_time, benchmark_vertices_from_generated_points, construct_triangulation,
-    criterion_config, generated_points_in_range, scale_cases, seed_for_case, validated_fixture,
-    wide_bounds,
+    bench_time, construct_triangulation, criterion_config, generated_points_in_range, scale_cases,
+    seed_for_case, validated_fixture, vertices_from_points, wide_bounds,
 };
 
 /// Benchmark triangulation construction time for one dimension/count pair.
@@ -43,7 +41,7 @@ where
         b.iter_batched_ref(
             || {
                 let points = generated_points_in_range::<D>(n_points, wide_bounds(), seed);
-                benchmark_vertices_from_generated_points(&points)
+                vertices_from_points(&points)
             },
             |vertices| {
                 let dt = construct_triangulation::<D>(black_box(vertices.as_slice()), seed);

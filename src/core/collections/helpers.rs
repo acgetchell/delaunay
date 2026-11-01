@@ -24,7 +24,7 @@ use super::{FastBuildHasher, FastHashMap, FastHashSet};
 /// use delaunay::prelude::collections::fast_hash_map_with_capacity;
 ///
 /// let map = fast_hash_map_with_capacity::<u64, usize>(1000);
-/// // Can insert up to ~750 items without rehashing (load factor ~0.75)
+/// // Can insert at least 1000 entries without reallocating.
 /// ```
 #[inline]
 #[must_use]
@@ -49,7 +49,7 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 /// use uuid::Uuid;
 ///
 /// let set = fast_hash_set_with_capacity::<Uuid>(500);
-/// // Can insert up to ~375 UUIDs without rehashing
+/// // Can insert at least 500 UUIDs without reallocating.
 /// ```
 ///
 /// Internal operations (key-based for better performance):
@@ -58,7 +58,7 @@ pub fn fast_hash_map_with_capacity<K, V>(capacity: usize) -> FastHashMap<K, V> {
 /// use delaunay::prelude::tds::SimplexKey;
 ///
 /// let set = fast_hash_set_with_capacity::<SimplexKey>(500);
-/// // Can insert up to ~375 SimplexKeys without rehashing, avoids UUID→Key lookups
+/// // Can insert at least 500 SimplexKeys without reallocating; avoids UUID→Key lookups.
 /// ```
 #[inline]
 #[must_use]

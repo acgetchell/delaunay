@@ -486,7 +486,9 @@ where
         where
             A: MapAccess<'de>,
         {
-            let mut values = fast_hash_map_with_capacity(map.size_hint().unwrap_or(0));
+            // A codec's declared length is untrusted, including usize::MAX in
+            // a truncated CBOR map. Allocate only for entries actually read.
+            let mut values = FastHashMap::default();
 
             while let Some((simplex_uuid, value)) = map.next_entry::<Uuid, T>()? {
                 match values.entry(simplex_uuid) {
@@ -1571,9 +1573,10 @@ mod tests {
     use crate::core::tds::TdsBuilder;
     use crate::geometry::point::Point;
     use crate::vertex;
+    use ciborium::de::Error as CiboriumDecodeError;
     use proptest::prelude::*;
     use slotmap::KeyData;
-    use std::assert_matches;
+    use std::{assert_matches, panic::catch_unwind};
 
     #[derive(Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
     struct NonCopyPayload {
@@ -2018,6 +2021,31 @@ mod tests {
             .expect("missing payload should deserialize");
 
         assert_eq!(raw.data, None);
+    }
+
+    #[test]
+    fn relationship_maps_reject_untrusted_cbor_lengths_without_panicking() {
+        for field in [
+            "simplex_vertices",
+            "simplex_neighbors",
+            "simplex_vertex_offsets",
+        ] {
+            let mut bytes = vec![0xbf];
+            if field.len() < 24 {
+                bytes.push(0x60 + u8::try_from(field.len()).unwrap());
+            } else {
+                bytes.extend([0x78, u8::try_from(field.len()).unwrap()]);
+            }
+            bytes.extend_from_slice(field.as_bytes());
+            bytes.push(0xbb);
+            bytes.extend([0xff; 8]);
+            let result =
+                catch_unwind(|| ciborium::de::from_reader::<Tds<(), (), 2>, _>(bytes.as_slice()));
+            let error = result
+                .expect("a declared map length must not panic before entries arrive")
+                .expect_err("truncated relationship map must fail decoding");
+            assert_matches!(error, CiboriumDecodeError::Io(_));
+        }
     }
 
     #[test]

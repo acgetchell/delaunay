@@ -385,16 +385,21 @@ impl<'a, const D: usize> HilbertQuantizedBatch<'a, D> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::geometry::{CoordinateRange, CoordinateRangeError};
 /// use delaunay::prelude::ordering::{
 ///     HilbertBitDepth, HilbertError, hilbert_quantize_batch_in_range,
 /// };
 ///
-/// # fn main() -> Result<(), HilbertError> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Range(#[from] CoordinateRangeError),
+/// #     #[error(transparent)]
+/// #     Hilbert(#[from] HilbertError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let points = [[0.1_f64, 0.2], [0.9, 0.8], [0.5, 0.5]];
-/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
-/// #     return Ok(());
-/// # };
+/// let bounds = CoordinateRange::try_new(0.0_f64, 1.0)?;
 /// let bits = HilbertBitDepth::try_new(8)?;
 ///
 /// let batch = hilbert_quantize_batch_in_range(&points, bounds, bits, |p| *p)?;
@@ -486,16 +491,21 @@ impl<const D: usize> HilbertQuantizedVec<D> {
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::geometry::{CoordinateRange, CoordinateRangeError};
 /// use delaunay::prelude::ordering::{
 ///     HilbertBitDepth, HilbertError, hilbert_quantize_batch_in_range,
 /// };
 ///
-/// # fn main() -> Result<(), HilbertError> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Range(#[from] CoordinateRangeError),
+/// #     #[error(transparent)]
+/// #     Hilbert(#[from] HilbertError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let points = [[0.0_f64, 0.0], [1.0, 1.0]];
-/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
-/// #     return Ok(());
-/// # };
+/// let bounds = CoordinateRange::try_new(0.0_f64, 1.0)?;
 /// let batch =
 ///     hilbert_quantize_batch_in_range(&points, bounds, HilbertBitDepth::try_new(4)?, |p| *p)?;
 ///
@@ -678,15 +688,20 @@ pub fn try_hilbert_quantize<const D: usize>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::geometry::{CoordinateRange, CoordinateRangeError};
 /// use delaunay::prelude::ordering::{
 ///     HilbertBitDepth, HilbertError, hilbert_quantize_in_range,
 /// };
 ///
-/// # fn main() -> Result<(), HilbertError> {
-/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
-/// #     return Ok(());
-/// # };
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Range(#[from] CoordinateRangeError),
+/// #     #[error(transparent)]
+/// #     Hilbert(#[from] HilbertError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let bounds = CoordinateRange::try_new(0.0_f64, 1.0)?;
 /// let q = hilbert_quantize_in_range(&[0.5_f64, 0.25], bounds, HilbertBitDepth::try_new(2)?)?;
 /// assert!(q[0] <= 3 && q[1] <= 3);
 /// # Ok(())
@@ -867,13 +882,18 @@ pub fn try_hilbert_index<const D: usize>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::geometry::{CoordinateRange, CoordinateRangeError};
 /// use delaunay::prelude::ordering::{HilbertBitDepth, HilbertError, hilbert_index_in_range};
 ///
-/// # fn main() -> Result<(), HilbertError> {
-/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
-/// #     return Ok(());
-/// # };
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Range(#[from] CoordinateRangeError),
+/// #     #[error(transparent)]
+/// #     Hilbert(#[from] HilbertError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let bounds = CoordinateRange::try_new(0.0_f64, 1.0)?;
 /// let idx = hilbert_index_in_range(&[0.0_f64, 0.0], bounds, HilbertBitDepth::try_new(4)?)?;
 /// assert_eq!(idx, 0);
 /// # Ok(())
@@ -1038,16 +1058,21 @@ pub fn try_hilbert_sort_by_stable<Item, const D: usize>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::geometry::{CoordinateRange, CoordinateRangeError};
 /// use delaunay::prelude::ordering::{
 ///     HilbertBitDepth, HilbertError, hilbert_sort_by_stable_in_range,
 /// };
 ///
-/// # fn main() -> Result<(), HilbertError> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Range(#[from] CoordinateRangeError),
+/// #     #[error(transparent)]
+/// #     Hilbert(#[from] HilbertError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let mut points = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
-/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
-/// #     return Ok(());
-/// # };
+/// let bounds = CoordinateRange::try_new(0.0_f64, 1.0)?;
 /// hilbert_sort_by_stable_in_range(&mut points, bounds, HilbertBitDepth::try_new(8)?, |p| *p)?;
 /// assert_eq!(points[0], [0.1, 0.1]);
 /// # Ok(())
@@ -1156,16 +1181,21 @@ pub fn try_hilbert_sort_by_unstable<Item, const D: usize>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::geometry::{CoordinateRange, CoordinateRangeError};
 /// use delaunay::prelude::ordering::{
 ///     HilbertBitDepth, HilbertError, hilbert_sort_by_unstable_in_range,
 /// };
 ///
-/// # fn main() -> Result<(), HilbertError> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Range(#[from] CoordinateRangeError),
+/// #     #[error(transparent)]
+/// #     Hilbert(#[from] HilbertError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let mut points = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
-/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
-/// #     return Ok(());
-/// # };
+/// let bounds = CoordinateRange::try_new(0.0_f64, 1.0)?;
 /// hilbert_sort_by_unstable_in_range(&mut points, bounds, HilbertBitDepth::try_new(8)?, |p| *p)?;
 /// assert_eq!(points[0], [0.1, 0.1]);
 /// # Ok(())
@@ -1422,16 +1452,21 @@ pub fn try_hilbert_sorted_indices<const D: usize>(
 /// # Examples
 ///
 /// ```rust
-/// use delaunay::prelude::geometry::CoordinateRange;
+/// use delaunay::prelude::geometry::{CoordinateRange, CoordinateRangeError};
 /// use delaunay::prelude::ordering::{
 ///     HilbertBitDepth, HilbertError, hilbert_sorted_indices_in_range,
 /// };
 ///
-/// # fn main() -> Result<(), HilbertError> {
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Range(#[from] CoordinateRangeError),
+/// #     #[error(transparent)]
+/// #     Hilbert(#[from] HilbertError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
 /// let coords = vec![[0.9_f64, 0.9], [0.1, 0.1], [0.5, 0.5]];
-/// # let Ok(bounds) = CoordinateRange::try_new(0.0_f64, 1.0) else {
-/// #     return Ok(());
-/// # };
+/// let bounds = CoordinateRange::try_new(0.0_f64, 1.0)?;
 /// let order = hilbert_sorted_indices_in_range(&coords, bounds, HilbertBitDepth::try_new(8)?)?;
 /// assert_eq!(order.len(), coords.len());
 /// # Ok(())

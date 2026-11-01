@@ -18,6 +18,7 @@ use delaunay::prelude::construction::{Vertex, VertexValidationError};
 use delaunay::prelude::geometry::{CoordinateConversionError, Point};
 use delaunay::prelude::tds::UuidValidationError;
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseResult;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
@@ -45,6 +46,34 @@ fn hash_of<T: Hash>(value: &T) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Coordinate equality independently predicts `HashMap`'s last-write-wins value.
+#[expect(
+    clippy::float_cmp,
+    reason = "finite-coordinate equality is the independent oracle for exact hash keys"
+)]
+fn assert_hashmap_values<const D: usize>(coords_list: &[[f64; D]]) -> TestCaseResult {
+    let mut map = HashMap::new();
+    for (index, coords) in coords_list.iter().enumerate() {
+        map.insert(Vertex::<(), D>::try_new(*coords).unwrap(), index);
+    }
+    for coords in coords_list {
+        let expected = coords_list
+            .iter()
+            .rposition(|candidate| candidate == coords);
+        let vertex = Vertex::<(), D>::try_new(*coords).unwrap();
+        prop_assert_eq!(map.get(&vertex).copied(), expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn hashmap_duplicate_coordinates_keep_the_last_value() {
+    assert_hashmap_values(&[[0.0; 2], [1.0; 2], [0.0; 2]]).unwrap();
+    assert_hashmap_values(&[[0.0; 3], [1.0; 3], [0.0; 3]]).unwrap();
+    assert_hashmap_values(&[[0.0; 4], [1.0; 4], [0.0; 4]]).unwrap();
+    assert_hashmap_values(&[[0.0; 5], [1.0; 5], [0.0; 5]]).unwrap();
 }
 
 // =============================================================================
@@ -140,31 +169,7 @@ macro_rules! test_vertex_properties {
                 /// Property: Vertices can be stored in HashMap with consistent lookup
                 #[test]
                 fn [<prop_vertex_hashmap_usage_ $dim d>](coords_list in prop::collection::vec(prop::array::[<uniform $dim>](finite_coordinate()), 1..=10_usize)) {
-                    let mut map: HashMap<Vertex<(), $dim>, usize> = HashMap::new();
-
-                    // Insert vertices with their indices
-                    for (i, coords) in coords_list.iter().enumerate() {
-                        let vertex: Vertex<(), $dim> = Vertex::<(), _>::try_new(*coords).unwrap();
-                        map.insert(vertex, i);
-                    }
-
-                    // Lookup using new vertices with same coordinates
-                    for (expected_index, coords) in coords_list.iter().enumerate() {
-                        let lookup_vertex: Vertex<(), $dim> = Vertex::<(), _>::try_new(*coords).unwrap();
-                        if let Some(&actual_index) = map.get(&lookup_vertex) {
-                            prop_assert_eq!(
-                                actual_index,
-                                expected_index,
-                                "{}D: HashMap lookup should find correct vertex",
-                                $dim
-                            );
-                        } else {
-                            return Err(TestCaseError::fail(format!(
-                                "{}D: HashMap lookup failed for vertex at index {}",
-                                $dim, expected_index
-                            )));
-                        }
-                    }
+                    assert_hashmap_values(&coords_list)?;
                 }
 
                 /// Property: Vertex dimension matches const parameter

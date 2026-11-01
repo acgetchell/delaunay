@@ -101,7 +101,7 @@ pub enum PachnerMove<U, const D: usize> {
     /// Apply the inverse k=2 move from an edge star.
     K2Inverse {
         /// Edge whose star is collapsed by the inverse move.
-        edge: EdgeKey,
+        edge: EdgeKey<D>,
     },
     /// Apply a forward k=3 move around a ridge.
     K3 {
@@ -887,7 +887,7 @@ mod tests {
     fn inserted_edge<const D: usize>(
         dt: &Triangulation<AdaptiveKernel<f64>, (), (), D>,
         inserted_face_vertices: &[VertexKey],
-    ) -> EdgeKey {
+    ) -> EdgeKey<D> {
         let [a, b] = inserted_face_vertices else {
             panic!("k=2 move should report an inserted edge")
         };

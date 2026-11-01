@@ -1,19 +1,20 @@
 //! Compile coverage for minimal payload bounds on queries, refinement, and borrowed wrappers.
 
-use std::{assert_matches, cell::Cell, hash::Hasher, hint::black_box, rc::Rc};
+use std::{assert_matches, cell::Cell, fmt::Debug, hash::Hasher, hint::black_box, rc::Rc};
 
 use delaunay::prelude::Triangulation;
 use delaunay::prelude::algorithms::{LocateError, locate, locate_with_stats};
+use delaunay::prelude::checkpoint::DelaunayCheckpoint;
 use delaunay::prelude::construction::{
     DelaunayIncrementalBuilder, GlobalTopology, TopologyGuarantee, Vertex,
 };
 use delaunay::prelude::geometry::{
-    Coordinate, CoordinateValidationError, FastKernel, Orientation, Point, QualityError,
-    normalized_volume, radius_ratio, simplex_orientation, surface_measure,
+    Coordinate, CoordinateValidationError, ExactPredicates, FastKernel, Orientation, Point,
+    QualityError, normalized_volume, radius_ratio, simplex_orientation, surface_measure,
 };
 use delaunay::prelude::query::{
-    ConvexHull, ConvexHullFacetView, QueryError, TopologyIndexBuildError, extract_edge_set,
-    extract_facet_identifier_set, extract_vertex_coordinate_set,
+    CavityBoundary, ConvexHull, ConvexHullFacetView, QueryError, TopologyIndexBuildError,
+    extract_edge_set, extract_facet_identifier_set, extract_vertex_coordinate_set,
 };
 use delaunay::prelude::tds::{
     AllFacetsIter, BoundaryFacetsIter, FacetToSimplicesIndex, FacetView, OneSidedFacetsIter,
@@ -99,7 +100,7 @@ fn jaccard_extractors_compile(tri: &NotAKernelTriangulation) {
 }
 
 fn convex_hull_constructor_compiles(
-    tri: &Triangulation<NotAKernel, ClonePayload, OpaquePayload, 2>,
+    tri: &Triangulation<NotAKernel, CloneOnlyPayload, OpaquePayload, 2>,
 ) {
     let _ = ConvexHull::try_from_triangulation(tri);
 }
@@ -260,6 +261,53 @@ clone_only_promotion_tests!(4);
 clone_only_promotion_tests!(5);
 
 #[test]
+fn convex_hull_preserves_nan_payloads() {
+    let vertices = [
+        delaunay::vertex![0.0, 0.0; data = f64::NAN].unwrap(),
+        delaunay::vertex![1.0, 0.0; data = f64::NAN].unwrap(),
+        delaunay::vertex![0.0, 1.0; data = f64::NAN].unwrap(),
+    ];
+    let tds = TdsBuilder::new(&vertices, &[vec![0, 1, 2]])
+        .build()
+        .unwrap();
+    let triangulation = TriangulationBuilder::new(tds, FastKernel::new())
+        .canonicalizing()
+        .build()
+        .unwrap();
+    let hull = ConvexHull::try_from_triangulation(&triangulation).unwrap();
+    assert_eq!(hull.facets().count(), 3);
+    assert_eq!(hull.number_of_vertices(), 3);
+    for vertex in hull.facets().flat_map(ConvexHullFacetView::vertices) {
+        assert!(vertex.data().unwrap().is_nan());
+        assert!(vertices.iter().any(|source| source.uuid() == vertex.uuid()));
+    }
+}
+
+#[test]
+fn payload_independent_debug_and_topology_reports_have_minimal_bounds() {
+    fn assert_debug<T: Debug>() {}
+    fn topology_report<K, U, V, const D: usize>(builder: &DelaunayIncrementalBuilder<K, U, V, D>) {
+        let _ = builder.owner_topology_report();
+    }
+    fn check<const D: usize>()
+    where
+        FastKernel<f64>: ExactPredicates<D>,
+    {
+        assert_debug::<CavityBoundary<'_, Payload, OpaquePayload, D>>();
+        assert_debug::<DelaunayCheckpoint<Payload, OpaquePayload, D>>();
+        assert_debug::<TdsBuilder<'_, (), D, OpaquePayload>>();
+        let builder: DelaunayIncrementalBuilder<_, Payload, OpaquePayload, D> =
+            DelaunayIncrementalBuilder::with_kernel(FastKernel::new());
+        topology_report(&builder);
+        assert!(builder.owner_topology_report().is_none());
+    }
+    check::<2>();
+    check::<3>();
+    check::<4>();
+    check::<5>();
+}
+
+#[test]
 fn coordinate_trait_has_minimal_bounds() {
     let coordinate = MinimalCoordinate::<2>::try_new([1.0, 2.0]).unwrap();
 
@@ -311,7 +359,7 @@ fn storage_and_validation_methods_have_payload_agnostic_contracts() {
 #[test]
 fn jaccard_and_convex_hull_extractors_have_minimal_payload_bounds() {
     let jaccard: fn(&NotAKernelTriangulation) = jaccard_extractors_compile;
-    let hull: fn(&Triangulation<NotAKernel, ClonePayload, OpaquePayload, 2>) =
+    let hull: fn(&Triangulation<NotAKernel, CloneOnlyPayload, OpaquePayload, 2>) =
         convex_hull_constructor_compiles;
 
     black_box((jaccard, hull));

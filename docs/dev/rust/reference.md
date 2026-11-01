@@ -220,14 +220,14 @@ or, when the returned iterator only borrows a derived index whose internal data
 borrows the owner:
 
 ```rust
-fn indexed_edges<'idx, 'tds>(
-    index: &'idx EdgeIndex<'tds>,
-) -> impl Iterator<Item = EdgeKey> + 'idx
+fn indexed_edges<'idx, 'tds, const D: usize>(
+    index: &'idx EdgeIndex<'tds, D>,
+) -> impl Iterator<Item = EdgeKey<D>> + 'idx
 ```
 
 Prefer first-class borrowed views such as `IncidenceView<'tds>`,
-`EdgeIndex<'tds>`, `SimplexNeighborIndex<'tds>`, and composite
-`TriangulationAdjacency<'tds>` when a caller should build derived traversal
+`EdgeIndex<'tds, D>`, `SimplexNeighborIndex<'tds>`, and composite
+`TriangulationAdjacency<'tds, D>` when a caller should build derived traversal
 state once and query it many times. The view should own only the data it needs
 and either borrow canonical relations for `'tds` or carry a lifetime tie to the
 source snapshot for derived maps, so mutation through the same owner is
@@ -543,7 +543,7 @@ The public sample default should look like:
 
 ```rust
 let vertex = vertex![0.0, 1.0]?;
-let labeled: Vertex<&str, 2> = vertex![0.0, 1.0; data = "boundary"]?;
+let labeled: Vertex<u32, 2> = vertex![0.0, 1.0; data = 7]?;
 ```
 
 Keep `Vertex::try_new` and `Vertex::try_new_with_data` visible in their own
@@ -920,12 +920,14 @@ Example:
 /// # Examples
 ///
 /// ```rust
-/// # use delaunay::prelude::construction::{DelaunayTriangulation};
-/// # use delaunay::prelude::insertion::InsertionError;
-/// # fn main() -> Result<(), InsertionError> {
-/// let mut triangulation = DelaunayTriangulation::<_, _, _, 2>::default();
-/// let key = triangulation.insert_vertex([0.0, 0.0])?;
-/// assert!(triangulation.contains_vertex(key));
+/// # use delaunay::prelude::construction::{
+/// #     DelaunayResult, DelaunayTriangulationBuilder, vertex,
+/// # };
+/// # fn main() -> DelaunayResult<()> {
+/// let vertices = [vertex![0.0, 0.0]?, vertex![1.0, 0.0]?, vertex![0.0, 1.0]?];
+/// let mut triangulation = DelaunayTriangulationBuilder::new(&vertices).build()?;
+/// let key = triangulation.insert_vertex(vertex![0.25, 0.25]?)?;
+/// assert!(triangulation.contains_vertex_key(key));
 /// # Ok(())
 /// # }
 /// ```

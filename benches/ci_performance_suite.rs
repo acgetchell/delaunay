@@ -1005,9 +1005,8 @@ fn emit_construction_metric<const D: usize>(
 }
 
 /// Fixed seeds for deterministic triangulation generation across benchmark runs.
-/// Using seeded random number generation reduces variance in performance measurements
-/// and improves regression detection accuracy in CI environments.
-/// Different seeds per dimension ensure triangulations are uncorrelated.
+/// Reusing each seed keeps fixture selection reproducible for performance comparisons.
+/// Each dimension has its own seed; this does not establish statistical independence.
 ///
 /// Macro to reduce duplication in dimensional benchmark functions
 macro_rules! benchmark_tds_new_dimension {

@@ -18,17 +18,18 @@ use super::{
     RidgeHandle, RobustKernel, SimplexKey, SimplexKeyBuffer, Tds, TdsRollbackTransaction,
     TdsRollbackWindow, TopologicalOperation, TopologyGuarantee, TriangleHandle, VecDeque,
     VertexKey, apply_delaunay_flip_k2, build_k2_flip_context, build_k2_flip_context_from_edge,
-    build_k3_flip_context, build_k3_flip_context_from_triangle, debug_postcondition_facet_context,
-    debug_ridge_context, default_max_flips, delaunay_violation_k2_for_facet,
-    delaunay_violation_k3_for_ridge, duration_nanos_saturating, emit_repair_debug_summary,
-    enqueue_facet, enqueue_simplex_facets, env, facet_key_from_vertices,
-    facet_vertices_from_simplex, flip_signature, flip_would_create_degenerate_simplex,
-    is_delaunay_violation_k2, is_delaunay_violation_k3, k2_flip_would_create_degenerate_simplex,
-    non_convergent_error, pop_queue, removed_simplex_frame, repair_flip_is_unavailable,
-    repair_ridge_debug_enabled, repair_trace_enabled, ridge_vertices_from_simplex,
-    run_next_edge_repair_step, run_next_facet_repair_step, run_next_ridge_repair_step,
-    run_next_triangle_repair_step, seed_repair_queues, validate_delaunay_flip_dynamic,
+    build_k3_flip_context, contexts::build_k3_flip_context_from_triangle_key,
+    debug_postcondition_facet_context, debug_ridge_context, default_max_flips,
+    delaunay_violation_k2_for_facet, delaunay_violation_k3_for_ridge, duration_nanos_saturating,
+    emit_repair_debug_summary, enqueue_facet, enqueue_simplex_facets, env, flip_signature,
+    flip_would_create_degenerate_simplex, is_delaunay_violation_k2, is_delaunay_violation_k3,
+    k2_flip_would_create_degenerate_simplex, non_convergent_error, pop_queue,
+    removed_simplex_frame, repair_flip_is_unavailable, repair_ridge_debug_enabled,
+    repair_trace_enabled, ridge_vertices_from_simplex, run_next_edge_repair_step,
+    run_next_facet_repair_step, run_next_ridge_repair_step, run_next_triangle_repair_step,
+    seed_repair_queues, validate_delaunay_flip_dynamic,
 };
+use crate::core::util::facet_keys::simplex_face_key;
 
 /// Run a single flip-repair attempt using k=2 (and k=3 in 3D+).
 pub(super) fn repair_delaunay_with_flips_k2_k3_attempt<K, U, V, const D: usize>(
@@ -365,25 +366,26 @@ pub(super) fn resolve_facet_handle_for_key<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     handle: FacetHandle,
     key: u64,
-) -> Option<FacetHandle>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Option<FacetHandle> {
     let simplex_key = handle.simplex_key();
     let simplex = tds.simplex(simplex_key)?;
 
     let facet_index = usize::from(handle.facet_index());
-    if facet_index < simplex.number_of_vertices() {
-        let facet_vertices = facet_vertices_from_simplex(simplex, facet_index);
-        if facet_key_from_vertices(&facet_vertices) == key {
-            return Some(handle);
-        }
+    if facet_index < simplex.number_of_vertices()
+        && tds
+            .facet_key_for_simplex_facet(simplex_key, facet_index)
+            .ok()
+            == Some(key)
+    {
+        return Some(handle);
     }
 
     for candidate_idx in 0..simplex.number_of_vertices() {
-        let facet_vertices = facet_vertices_from_simplex(simplex, candidate_idx);
-        if facet_key_from_vertices(&facet_vertices) == key {
+        if tds
+            .facet_key_for_simplex_facet(simplex_key, candidate_idx)
+            .ok()
+            == Some(key)
+        {
             let facet_index = u8::try_from(candidate_idx).ok()?;
             return Some(FacetHandle::from_validated(simplex_key, facet_index));
         }
@@ -401,11 +403,7 @@ pub(super) fn resolve_ridge_handle_for_key<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     handle: RidgeHandle,
     key: u64,
-) -> Option<RidgeHandle>
-where
-    U: DataType,
-    V: DataType,
-{
+) -> Option<RidgeHandle> {
     if D < 3 {
         return None;
     }
@@ -418,7 +416,12 @@ where
     let omit_b = usize::from(handle.omit_b());
     if omit_a < vertex_count && omit_b < vertex_count && omit_a != omit_b {
         let ridge_vertices = ridge_vertices_from_simplex(simplex, omit_a, omit_b);
-        if ridge_vertices.len() == D - 1 && facet_key_from_vertices(&ridge_vertices) == key {
+        if ridge_vertices.len() == D - 1
+            && simplex_face_key(
+                simplex,
+                (0..vertex_count).filter(|&i| i != omit_a && i != omit_b),
+            ) == key
+        {
             return Some(handle);
         }
     }
@@ -429,7 +432,11 @@ where
             if ridge_vertices.len() != D - 1 {
                 continue;
             }
-            if facet_key_from_vertices(&ridge_vertices) == key {
+            if simplex_face_key(
+                simplex,
+                (0..vertex_count).filter(|&slot| slot != i && slot != j),
+            ) == key
+            {
                 let omit_a = u8::try_from(i).ok()?;
                 let omit_b = u8::try_from(j).ok()?;
                 return Some(RidgeHandle::from_validated(simplex_key, omit_a, omit_b));
@@ -582,7 +589,7 @@ pub(crate) struct DelaunayRepairRun {
 /// postcondition diagnostics can relate the first unresolved local violation to
 /// the last repair move that modified the TDS.
 #[derive(Debug)]
-pub(super) struct RepairAttemptOutcome {
+pub(crate) struct RepairAttemptOutcome {
     pub(super) postcondition_required: bool,
     pub(super) stats: DelaunayRepairStats,
     pub(super) last_applied_flip: Option<LastAppliedFlip>,
@@ -1016,12 +1023,6 @@ where
         max_flips_override,
     };
 
-    let attempt2 = RepairAttemptConfig {
-        attempt: 2,
-        queue_order: RepairQueueOrder::Lifo,
-        max_flips_override,
-    };
-
     let topology_model = global_topology.model();
 
     let attempt1_result = if D == 2 {
@@ -1042,7 +1043,35 @@ where
         )
     };
 
-    match attempt1_result {
+    complete_first_repair_attempt(
+        transaction,
+        kernel,
+        seed_simplices,
+        global_topology,
+        max_flips_override,
+        attempt1_result,
+    )
+}
+
+/// Verifies the first attempt or restores the rollback window for a LIFO retry.
+///
+/// The caller has already checked dimension and topology admissibility. Both
+/// attempts share the original rollback window and the same flip budget.
+pub(crate) fn complete_first_repair_attempt<K, U, V, W, const D: usize>(
+    transaction: &mut W,
+    kernel: &K,
+    seed_simplices: Option<&[SimplexKey]>,
+    global_topology: GlobalTopology<D>,
+    max_flips_override: Option<usize>,
+    first_attempt: Result<RepairAttemptOutcome, DelaunayRepairError>,
+) -> Result<DelaunayRepairRun, DelaunayRepairError>
+where
+    K: Kernel<D, Scalar = f64>,
+    U: DataType,
+    V: DataType,
+    W: TdsRollbackWindow<U, V, D>,
+{
+    match first_attempt {
         Ok(outcome) => {
             if verify_repair_postcondition_with_topology(
                 transaction.rollback_tds_mut(),
@@ -1077,6 +1106,11 @@ where
     }
 
     // Retry with LIFO + full reseed.
+    let attempt2 = RepairAttemptConfig {
+        attempt: 2,
+        queue_order: RepairQueueOrder::Lifo,
+        max_flips_override,
+    };
     run_full_reseed_retry(transaction, kernel, global_topology, &attempt2)
 }
 
@@ -1833,7 +1867,7 @@ pub(super) fn verify_postcondition_inverse_k2_edges<K, U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     kernel: &K,
     topology_model: &GlobalTopologyModelAdapter<D>,
-    queue: &mut VecDeque<(EdgeKey, u64)>,
+    queue: &mut VecDeque<(EdgeKey<D>, u64)>,
     config: &RepairAttemptConfig,
     diagnostics: &mut RepairDiagnostics,
     mode: PostconditionMode,
@@ -1905,7 +1939,9 @@ where
                 }
                 return Err(DelaunayRepairError::PostconditionFailed {
                     reason: Box::new(
-                        DelaunayRepairPostconditionFailure::LocalInverseK2Violation { edge },
+                        DelaunayRepairPostconditionFailure::LocalInverseK2Violation {
+                            edge: edge.lifted_endpoints(),
+                        },
                     ),
                 });
             }
@@ -1949,8 +1985,8 @@ pub(super) fn verify_postcondition_inverse_k3_triangles<K, U, V, const D: usize>
 where
     K: Kernel<D, Scalar = f64>,
 {
-    while let Some((triangle, _key)) = pop_queue(queue, config.queue_order) {
-        let context = match build_k3_flip_context_from_triangle(tds, triangle) {
+    while let Some((triangle, key)) = pop_queue(queue, config.queue_order) {
+        let context = match build_k3_flip_context_from_triangle_key(tds, triangle, Some(key)) {
             Ok(ctx) => ctx,
             Err(
                 FlipError::InvalidTriangleMultiplicity { .. }

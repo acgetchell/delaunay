@@ -13,6 +13,8 @@ use delaunay::prelude::generators::generate_random_points_in_range_seeded;
 use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateRange, ExactPredicates, Point};
 use delaunay::try_vertices_from_points;
 use std::{env, num::NonZeroUsize, sync::OnceLock, time::Duration};
+#[cfg(feature = "bench-logging")]
+use tracing_subscriber::EnvFilter;
 
 pub const DEFAULT_SEED: u64 = 42;
 /// Builds a benchmark point from hard-coded finite coordinates.
@@ -144,7 +146,7 @@ where
     AdaptiveKernel<f64>: ExactPredicates<D>,
 {
     let points = generated_points_in_range::<D>(count, wide_bounds(), seed);
-    let vertices = benchmark_vertices_from_generated_points(&points);
+    let vertices = vertices_from_points(&points);
     let dt = construct_triangulation::<D>(&vertices, seed);
     assert_eq!(dt.number_of_vertices(), count);
     dt.validate().or_abort();
@@ -152,9 +154,7 @@ where
 }
 
 /// Converts generated point fixtures into benchmark vertices without attaching data.
-pub fn benchmark_vertices_from_generated_points<const D: usize>(
-    points: &[Point<D>],
-) -> Vec<Vertex<(), D>> {
+pub fn vertices_from_points<const D: usize>(points: &[Point<D>]) -> Vec<Vertex<(), D>> {
     try_vertices_from_points(points).or_abort()
 }
 
@@ -220,8 +220,7 @@ pub fn gen_points<const D: usize>(
 pub fn criterion_config() -> Criterion {
     #[cfg(feature = "bench-logging")]
     {
-        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
         let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
     }
     let sample_size = env::var("BENCH_SAMPLE_SIZE")

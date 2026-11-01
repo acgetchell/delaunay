@@ -1017,17 +1017,17 @@ impl PachnerStressReporter {
 
 /// Randomized live topology frontier used for move proposals.
 #[derive(Default)]
-struct MoveSampler {
+struct MoveSampler<const D: usize> {
     simplex_keys: Vec<SimplexKey>,
     vertex_keys: Vec<VertexKey>,
     facet_handles: Vec<FacetHandle>,
-    edge_keys: Vec<EdgeKey>,
+    edge_keys: Vec<EdgeKey<D>>,
     ridge_handles: Vec<RidgeHandle>,
 }
 
-impl MoveSampler {
+impl<const D: usize> MoveSampler<D> {
     /// Capture the current live key frontier used for randomized move proposals.
-    fn try_from_triangulation<const D: usize>(
+    fn try_from_triangulation(
         dt: &PachnerStressTriangulation<D>,
     ) -> Result<Self, PachnerStressError> {
         let mut sampler = Self::default();
@@ -1036,10 +1036,7 @@ impl MoveSampler {
     }
 
     /// Refresh cached keys after enough accepted moves may have stale candidates.
-    fn refresh<const D: usize>(
-        &mut self,
-        dt: &PachnerStressTriangulation<D>,
-    ) -> Result<(), PachnerStressError> {
+    fn refresh(&mut self, dt: &PachnerStressTriangulation<D>) -> Result<(), PachnerStressError> {
         self.simplex_keys.clear();
         self.simplex_keys
             .extend(dt.simplices().map(|(simplex_key, _)| simplex_key));
@@ -1079,7 +1076,7 @@ impl MoveSampler {
     }
 
     /// Select a cached edge key uniformly from the last refresh.
-    fn random_edge(&self, rng: &mut (impl Rng + ?Sized)) -> Option<EdgeKey> {
+    fn random_edge(&self, rng: &mut (impl Rng + ?Sized)) -> Option<EdgeKey<D>> {
         random_cached(&self.edge_keys, rng)
     }
 
@@ -1461,7 +1458,7 @@ fn stress_validation_context(
 /// Choose a forward move whose inverse can be derived from its result.
 fn random_round_trip_move<const D: usize>(
     dt: &PachnerStressTriangulation<D>,
-    sampler: &MoveSampler,
+    sampler: &MoveSampler<D>,
     rng: &mut (impl Rng + ?Sized),
 ) -> Option<PachnerMove<(), D>> {
     let move_kind_count = if D >= 4 { 3 } else { 2 };
@@ -1480,7 +1477,7 @@ fn random_round_trip_move<const D: usize>(
 /// Choose one raw Pachner request from the current cached topology frontier.
 fn random_pachner_move<const D: usize>(
     dt: &PachnerStressTriangulation<D>,
-    sampler: &MoveSampler,
+    sampler: &MoveSampler<D>,
     rng: &mut (impl Rng + ?Sized),
     config: PachnerStressConfig,
 ) -> Option<PachnerMove<(), D>> {
@@ -1515,7 +1512,7 @@ fn random_pachner_move<const D: usize>(
 /// Choose a random simplex and insert a vertex at its centroid.
 fn random_k1_insert<const D: usize>(
     dt: &PachnerStressTriangulation<D>,
-    sampler: &MoveSampler,
+    sampler: &MoveSampler<D>,
     rng: &mut (impl Rng + ?Sized),
 ) -> Option<PachnerMove<(), D>> {
     let simplex_key = sampler.random_simplex_key(rng)?;
@@ -1530,7 +1527,7 @@ fn random_k1_insert<const D: usize>(
 /// Choose three vertices from a random simplex as an inverse k=3 triangle candidate.
 fn random_k3_inverse<const D: usize>(
     dt: &PachnerStressTriangulation<D>,
-    sampler: &MoveSampler,
+    sampler: &MoveSampler<D>,
     rng: &mut (impl Rng + ?Sized),
 ) -> Option<PachnerMove<(), D>> {
     let simplex_key = sampler.random_simplex_key(rng)?;
@@ -1567,7 +1564,7 @@ fn inverse_move_from_forward_result<const D: usize>(
 fn inserted_edge<const D: usize>(
     dt: &PachnerStressTriangulation<D>,
     vertices: &[VertexKey],
-) -> Result<EdgeKey, PachnerStressError> {
+) -> Result<EdgeKey<D>, PachnerStressError> {
     let [a, b] = vertices else {
         return Err(PachnerStressError::InsertedFaceArity {
             context: PachnerStressInsertedFaceContext::K2Move,

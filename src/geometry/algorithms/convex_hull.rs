@@ -116,8 +116,8 @@ pub enum ConvexHullConstructionError {
         /// Canonical facet identifier.
         facet_key: u64,
     },
-    /// One stable vertex identity resolved to conflicting copied values.
-    #[error("vertex {vertex_uuid} resolved to conflicting point or payload values")]
+    /// One stable vertex identity resolved to conflicting point coordinates.
+    #[error("vertex {vertex_uuid} resolved to conflicting point coordinates")]
     ConflictingVertexIdentity {
         /// Conflicting stable vertex identity.
         vertex_uuid: Uuid,
@@ -369,7 +369,7 @@ impl<U, const D: usize> ConvexHull<U, D> {
 
 impl<U, const D: usize> ConvexHull<U, D>
 where
-    U: Clone + PartialEq,
+    U: Clone,
 {
     /// Parses and certifies a convex hull from a triangulation boundary.
     ///
@@ -384,10 +384,11 @@ where
     /// the input is empty or closed, a facet is malformed or degenerate, or a
     /// source vertex disproves boundary convexity.
     ///
-    /// Vertex payloads are cloned into the owned hull and compared only when
-    /// one stable vertex identity appears in multiple boundary records. Thus
-    /// `U` requires [`Clone`] and [`PartialEq`], while source simplex payloads
-    /// are not inspected and impose no bound on `V`.
+    /// Vertex payloads are cloned once per source vertex into the owned hull.
+    /// Stable UUIDs and certified coordinates identify repeated boundary
+    /// vertices; application payload equality is not part of that identity.
+    /// Thus `U` requires only [`Clone`], and source simplex payloads impose no
+    /// bound on `V`.
     ///
     /// # Performance
     ///
@@ -496,7 +497,7 @@ where
 
                 let stored_index = if let Some(&stored_index) = vertex_indices.get(&vertex_uuid) {
                     let stored = &vertices[stored_index];
-                    if stored.point() != vertex.point() || stored.data() != vertex.data() {
+                    if stored.point() != vertex.point() {
                         return Err(ConvexHullConstructionError::ConflictingVertexIdentity {
                             vertex_uuid,
                         });

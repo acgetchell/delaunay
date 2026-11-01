@@ -211,6 +211,9 @@ fn retryable_conflict_trace_detail(error: &InsertionError) -> Option<String> {
 /// Formats a compact summary for cavity-boundary extraction failures.
 fn cavity_conflict_error_summary(error: &ConflictError) -> String {
     match error {
+        ConflictError::UnsupportedTopology { topology } => {
+            format!("unsupported_topology {topology:?}")
+        }
         ConflictError::NonManifoldFacet {
             facet_hash,
             simplex_count,
@@ -633,7 +636,7 @@ where
         clippy::too_many_arguments,
         reason = "Internal scaffolding insertion extends the detailed retry context"
     )]
-    pub(crate) fn insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
+    pub(crate) fn insert_detailed_with_retry_policy(
         &mut self,
         vertex: Vertex<U, D>,
         conflict_simplices: Option<&SimplexKeyBuffer>,
@@ -2489,11 +2492,11 @@ where
             (LocateResult::InsideSimplex(start_simplex), None) => {
                 // Interior point: compute conflict region automatically.
                 //
-                // IMPORTANT:
-                // `find_conflict_region()` (Bowyer–Watson style) can legitimately return an empty
-                // set when the point lies inside the triangulation but is not strictly inside any
-                // existing simplex circumsphere (e.g., obtuse tetrahedra whose circumsphere does not
-                // contain all interior points).
+                // A circumsphere's closed ball is convex and contains every simplex vertex,
+                // hence its convex hull. Every strict interior point of a nondegenerate
+                // simplex is strictly inside that sphere, including for obtuse simplices.
+                // An empty conflict set here therefore indicates an inconsistent or
+                // unsupported classification; this fallback is defensive recovery.
                 //
                 // An empty conflict region would produce an empty cavity boundary, create no new
                 // simplices, and leave the inserted vertex isolated (not incident to any simplex), which
@@ -3967,7 +3970,7 @@ mod tests {
 
         let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
         let detail = tri
-            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
+            .insert_detailed_with_retry_policy(
                 vertex!([2.0, 2.0, 2.0]).unwrap(),
                 None,
                 hint,
@@ -4021,7 +4024,7 @@ mod tests {
         let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
         let empty_conflicts = SimplexKeyBuffer::new();
         let detail = tri
-            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
+            .insert_detailed_with_retry_policy(
                 vertex!([2.0, 2.0, 2.0]).unwrap(),
                 Some(&empty_conflicts),
                 hint,
@@ -4075,7 +4078,7 @@ mod tests {
         let mut conflict_simplices = SimplexKeyBuffer::new();
         conflict_simplices.push(start_simplex);
         let detail = tri
-            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
+            .insert_detailed_with_retry_policy(
                 vertex!([0.25, 0.25]).unwrap(),
                 Some(&conflict_simplices),
                 Some(start_simplex),

@@ -1423,7 +1423,7 @@ fn find_live_edge<const D: usize>(
     dt: &FlipTriangulation<D>,
     a: VertexKey,
     b: VertexKey,
-) -> Result<EdgeKey, EdgeKeyError> {
+) -> Result<EdgeKey<D>, EdgeKeyError> {
     dt.edge_key(a, b)
 }
 

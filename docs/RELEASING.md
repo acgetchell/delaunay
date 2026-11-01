@@ -276,8 +276,9 @@ git --no-pager diff
 ```
 
 Expected release artifacts include package metadata and lockfiles,
-`CITATION.cff`, `CHANGELOG.md`, `README.md`, `docs/performance.md`, and generated
-files under `docs/archive/` and `docs/assets/bench/`. Stage only reviewed paths;
+`CITATION.cff`, `CHANGELOG.md`, `README.md`, `docs/performance_current.md`, and generated
+files under `docs/performance-runs/`, `docs/archives/changelog/`, and
+`docs/assets/bench/`. Stage only reviewed paths;
 do not stage unrelated work or the entire `docs/` tree without inspecting it.
 
 Then inspect and commit the staged release delta:

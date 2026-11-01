@@ -14,12 +14,12 @@ use crate::core::algorithms::insertion::{
 use crate::core::algorithms::locate::{ConflictError, LocateError};
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::simplex::SimplexValidationError;
+pub use crate::core::tds::PeriodicQuotientFacetKeyDerivationFailure;
 use crate::core::tds::{
     SimplexKey, Tds, TdsConstructionError, TdsDraft, TdsDraftError, TdsDraftInsertionError,
     TdsError, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
-use crate::core::util::PeriodicFacetKeyDerivationError;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
 use crate::geometry::point::Point;
@@ -92,60 +92,6 @@ impl std::fmt::Display for FinalDelaunayValidationContext {
             }
             Self::PeriodicQuotientDelaunay => {
                 f.write_str("periodic quotient failed final Level 5 Delaunay validation")
-            }
-        }
-    }
-}
-
-/// Structured reason periodic quotient facet-key derivation failed.
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PeriodicQuotientFacetKeyDerivationFailure {
-    /// The lifted simplex does not have the expected simplex arity (`D + 1` vertices).
-    #[error("invalid lifted simplex arity: expected {expected} vertices, got {actual}")]
-    InvalidLiftedSimplexArity {
-        /// Expected number of lifted vertices (`D + 1`).
-        expected: usize,
-        /// Actual lifted vertex count provided by the caller.
-        actual: usize,
-    },
-
-    /// The requested facet index exceeds the lifted-vertex count.
-    #[error("facet index {facet_index} out of bounds for lifted vertex count {vertex_count}")]
-    FacetIndexOutOfBounds {
-        /// Requested facet index.
-        facet_index: usize,
-        /// Number of lifted vertices available.
-        vertex_count: usize,
-    },
-
-    /// Relative periodic offset component is outside the encodable byte-delta range.
-    #[error(
-        "periodic offset component {component} (axis {axis}) is out of encodable range 0..=255"
-    )]
-    RelativeOffsetOutOfRange {
-        /// Axis whose shifted component failed.
-        axis: usize,
-        /// Shifted component value.
-        component: i16,
-    },
-}
-
-impl From<PeriodicFacetKeyDerivationError> for PeriodicQuotientFacetKeyDerivationFailure {
-    fn from(source: PeriodicFacetKeyDerivationError) -> Self {
-        match source {
-            PeriodicFacetKeyDerivationError::InvalidLiftedSimplexArity { expected, actual } => {
-                Self::InvalidLiftedSimplexArity { expected, actual }
-            }
-            PeriodicFacetKeyDerivationError::FacetIndexOutOfBounds {
-                facet_index,
-                vertex_count,
-            } => Self::FacetIndexOutOfBounds {
-                facet_index,
-                vertex_count,
-            },
-            PeriodicFacetKeyDerivationError::RelativeOffsetOutOfRange { axis, component } => {
-                Self::RelativeOffsetOutOfRange { axis, component }
             }
         }
     }
@@ -695,7 +641,7 @@ where
         if vertices.len() < D + 1 {
             return Err(TriangulationConstructionError::InsufficientVertices {
                 dimension: D,
-                source: SimplexValidationError::InsufficientVertices {
+                source: SimplexValidationError::VertexCountMismatch {
                     actual: vertices.len(),
                     expected: D + 1,
                     dimension: D,
@@ -872,7 +818,7 @@ mod tests {
     fn insufficient_vertices_exposes_typed_source() {
         let error = TriangulationConstructionError::InsufficientVertices {
             dimension: 3,
-            source: SimplexValidationError::InsufficientVertices {
+            source: SimplexValidationError::VertexCountMismatch {
                 actual: 3,
                 expected: 4,
                 dimension: 3,
@@ -883,7 +829,7 @@ mod tests {
             .and_then(|source| source.downcast_ref::<SimplexValidationError>());
         assert_matches!(
             source,
-            Some(SimplexValidationError::InsufficientVertices {
+            Some(SimplexValidationError::VertexCountMismatch {
                 actual: 3,
                 expected: 4,
                 dimension: 3,
@@ -893,7 +839,7 @@ mod tests {
 
     #[test]
     fn failed_initial_simplex_creation_exposes_typed_source() {
-        let simplex_source = SimplexValidationError::InsufficientVertices {
+        let simplex_source = SimplexValidationError::VertexCountMismatch {
             actual: 2,
             expected: 3,
             dimension: 2,

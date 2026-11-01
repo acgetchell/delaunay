@@ -8,14 +8,23 @@
 
 #![forbid(unsafe_code)]
 
-use crate::core::collections::{NeighborBuffer, SimplexVertexKeyBuffer, ViolationBuffer};
-use crate::core::simplex::{NeighborSlot, SimplexValidationError};
+use crate::core::collections::{
+    KeyBasedVertexMap, NeighborBuffer, SimplexVertexKeyBuffer, ViolationBuffer,
+};
+use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{SimplexKey, Tds, TdsError, VertexKey};
+use crate::geometry::matrix::{BigRational, LaError, rational_from_f64};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, circumsphere_coordinate_bounds};
 use crate::geometry::robust_predicates::{robust_insphere, strict_insphere_consistency_enabled};
 use crate::geometry::traits::coordinate::CoordinateConversionError;
+use crate::geometry::util::circumsphere::exact_circumcenter_from_coordinates;
+use crate::topology::traits::global_topology_model::{
+    GlobalTopologyModel, GlobalTopologyModelAdapter, GlobalTopologyModelError,
+};
+use crate::topology::traits::topological_space::{GlobalTopology, TopologyKind};
 use smallvec::SmallVec;
+use std::array::from_fn;
 use thiserror::Error;
 
 /// Errors that can occur during Delaunay property validation.
@@ -39,6 +48,40 @@ use thiserror::Error;
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum DelaunayValidationError {
+    /// Stored periodic metadata is incompatible with the requested model.
+    #[error("Incompatible geometry model for simplex {simplex_key:?}: {source}")]
+    IncompatibleTopology {
+        /// Simplex carrying incompatible periodic metadata.
+        simplex_key: SimplexKey,
+        /// Established model/offset boundary error.
+        source: GlobalTopologyModelError,
+    },
+    /// This topology has no implemented global empty-sphere report.
+    #[error("Global Delaunay reports are unsupported for {topology:?} topology")]
+    UnsupportedTopology {
+        /// Requested geometry model.
+        topology: TopologyKind,
+    },
+    /// A lifted covering-space chart could not be represented.
+    #[error("Cannot lift vertex {vertex_key:?} in simplex {simplex_key:?}: {source}")]
+    TopologyModel {
+        /// Simplex being checked.
+        simplex_key: SimplexKey,
+        /// Vertex whose chart construction failed.
+        vertex_key: VertexKey,
+        /// Typed model failure.
+        source: GlobalTopologyModelError,
+    },
+    /// The exact circumsphere certificate could not be formed.
+    #[error("Cannot form circumsphere of simplex {simplex_key:?}: {source}")]
+    Circumsphere {
+        /// Simplex being checked.
+        simplex_key: SimplexKey,
+        /// Typed exact linear algebra failure. Boxed because its alignment
+        /// otherwise inflates every report-error variant, including common
+        /// structural failures that do not carry this cold diagnostic.
+        source: Box<LaError>,
+    },
     /// A simplex violates the Delaunay property (has an external vertex inside its circumsphere).
     #[error(
         "Simplex {simplex_key:?} violates Delaunay property; offending vertex: {offending_vertex:?}"
@@ -192,8 +235,9 @@ pub struct DelaunayViolationDetail {
     pub simplex_key: SimplexKey,
     /// Vertex keys stored by the violating simplex at report time.
     pub simplex_vertices: SimplexVertexKeyBuffer,
-    /// First external vertex found inside the simplex circumsphere, if one could
-    /// be identified.
+    /// First vertex with an image strictly inside the simplex circumsphere, if
+    /// identified. In a periodic model this can be another image of one of the
+    /// simplex's own quotient vertices.
     pub offending_vertex: Option<VertexKey>,
     /// Neighbor slots of the violating simplex, preserving facet-index order.
     pub neighbor_simplices: NeighborBuffer<NeighborSlot>,
@@ -364,6 +408,7 @@ pub fn is_delaunay_property_only<U, V, const D: usize>(
 /// # Arguments
 ///
 /// * `tds` - The triangulation data structure
+/// * `topology` - The geometry model and periodic domain belonging to this storage.
 /// * `simplices_to_check` - Optional subset of simplices to check. If `None`, checks all simplices.
 ///   Missing simplices (e.g., already removed during refinement) are silently skipped.
 ///
@@ -377,6 +422,11 @@ pub fn is_delaunay_property_only<U, V, const D: usize>(
 /// - A simplex references a non-existent vertex (TDS corruption)
 /// - A simplex has invalid structure (simplex-level corruption)
 /// - Robust geometric predicates fail (numerical issues)
+/// - The requested geometry is unsupported
+///   ([`DelaunayValidationError::UnsupportedTopology`]) or incompatible with stored offsets
+///   ([`DelaunayValidationError::IncompatibleTopology`])
+/// - A periodic chart cannot be represented ([`DelaunayValidationError::TopologyModel`])
+///   or its exact circumsphere cannot be formed ([`DelaunayValidationError::Circumsphere`])
 ///
 /// Note: Missing simplices in `simplices_to_check` are silently skipped and do not cause errors,
 /// as they may have been legitimately removed during iterative refinement.
@@ -403,8 +453,16 @@ pub fn is_delaunay_property_only<U, V, const D: usize>(
 /// ```
 pub fn find_delaunay_violations<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
+    topology: &GlobalTopology<D>,
     simplices_to_check: Option<&[SimplexKey]>,
 ) -> Result<ViolationBuffer, DelaunayValidationError> {
+    validate_report_model(tds, topology)?;
+    if matches!(topology, GlobalTopology::Toroidal { .. }) {
+        return Ok(
+            periodic_delaunay_violation_report(tds, &topology.model(), simplices_to_check)?
+                .violating_simplices,
+        );
+    }
     let mut violating_simplices = ViolationBuffer::new();
     let mut simplex_vertex_points: SmallVec<[Point<D>; 8]> = SmallVec::with_capacity(D + 1);
     let use_bounds = can_bound_circumsphere_scan(tds);
@@ -472,6 +530,7 @@ pub fn find_delaunay_violations<U, V, const D: usize>(
 /// # Arguments
 ///
 /// * `tds` - The triangulation data structure to inspect.
+/// * `topology` - The geometry model and periodic domain belonging to this storage.
 /// * `simplices_to_check` - Optional subset of simplices to check. Missing simplices are
 ///   skipped by the underlying scan but still counted in
 ///   [`DelaunayViolationReport::checked_simplices`].
@@ -480,7 +539,12 @@ pub fn find_delaunay_violations<U, V, const D: usize>(
 ///
 /// Returns [`DelaunayValidationError`] if the underlying Delaunay scan finds
 /// invalid simplex structure, missing vertex references, or robust predicate
-/// conversion failures.
+/// conversion failures. Unsupported geometry returns
+/// [`DelaunayValidationError::UnsupportedTopology`]; offsets incompatible with the
+/// geometry return [`DelaunayValidationError::IncompatibleTopology`]. Periodic
+/// chart and exact circumsphere failures return
+/// [`DelaunayValidationError::TopologyModel`] and
+/// [`DelaunayValidationError::Circumsphere`], respectively.
 ///
 /// # Examples
 ///
@@ -503,9 +567,14 @@ pub fn find_delaunay_violations<U, V, const D: usize>(
 /// ```
 pub fn delaunay_violation_report<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
+    topology: &GlobalTopology<D>,
     simplices_to_check: Option<&[SimplexKey]>,
 ) -> Result<DelaunayViolationReport, DelaunayValidationError> {
-    let violating_simplices = find_delaunay_violations(tds, simplices_to_check)?;
+    if matches!(topology, GlobalTopology::Toroidal { .. }) {
+        validate_report_model(tds, topology)?;
+        return periodic_delaunay_violation_report(tds, &topology.model(), simplices_to_check);
+    }
+    let violating_simplices = find_delaunay_violations(tds, topology, simplices_to_check)?;
     let checked_simplices =
         simplices_to_check.map_or_else(|| tds.number_of_simplices(), <[_]>::len);
     let violation_details: Vec<_> = violating_simplices
@@ -520,6 +589,182 @@ pub fn delaunay_violation_report<U, V, const D: usize>(
         violating_simplices,
         violation_details,
     })
+}
+
+/// Rejects missing/incompatible geometry context before a bare-TDS scan.
+fn validate_report_model<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    topology: &GlobalTopology<D>,
+) -> Result<(), DelaunayValidationError> {
+    let model = topology.model();
+    if !model.supports_affine_chart_realization_validation() {
+        return Err(DelaunayValidationError::UnsupportedTopology {
+            topology: topology.kind(),
+        });
+    }
+    if !model.supports_periodic_orientation_offsets()
+        && let Some((simplex_key, _)) = tds
+            .simplices()
+            .find(|(_, simplex)| simplex.periodic_vertex_offsets().is_some())
+        && let Err(source) = model.lift_for_orientation([0.0; D], Some([0; D]))
+    {
+        return Err(DelaunayValidationError::IncompatibleTopology {
+            simplex_key,
+            source,
+        });
+    }
+    Ok(())
+}
+
+/// Scans the entire periodic covering set, including other images of vertices
+/// belonging to the tested simplex. Squared distance separates by coordinate:
+/// rounding each exact (center - point) / period to the nearest integer finds
+/// a nearest lattice image. All ties have equal distance, so one suffices for
+/// this strict empty-sphere report (which deliberately does not apply `SoS`).
+fn periodic_delaunay_violation_report<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    model: &GlobalTopologyModelAdapter<D>,
+    simplices_to_check: Option<&[SimplexKey]>,
+) -> Result<DelaunayViolationReport, DelaunayValidationError> {
+    let mut report = DelaunayViolationReport {
+        number_of_vertices: tds.number_of_vertices(),
+        number_of_simplices: tds.number_of_simplices(),
+        checked_simplices: simplices_to_check.map_or_else(|| tds.number_of_simplices(), <[_]>::len),
+        violating_simplices: ViolationBuffer::new(),
+        violation_details: Vec::new(),
+    };
+    let periods = model
+        .periodic_domain()
+        .expect("periodic report requires a periodic model")
+        .into_periods()
+        .map(|value| rational_from_f64(value).expect("validated finite period"));
+    // This report borrows immutable storage, so one exact conversion per vertex
+    // remains valid for every simplex and candidate image in the scan.
+    let exact_points: KeyBasedVertexMap<[BigRational; D]> = tds
+        .vertices()
+        .map(|(key, vertex)| {
+            (
+                key,
+                vertex
+                    .point()
+                    .coords()
+                    .map(|value| rational_from_f64(value).expect("validated finite point")),
+            )
+        })
+        .collect();
+    let mut scan_simplex = |simplex_key| -> Result<(), DelaunayValidationError> {
+        let Some(simplex) = tds.simplex(simplex_key) else {
+            return Ok(());
+        };
+        simplex
+            .is_valid()
+            .map_err(|source| DelaunayValidationError::InvalidSimplex {
+                simplex_key,
+                source,
+            })?;
+        let points = exact_periodic_simplex_points(
+            tds,
+            simplex_key,
+            simplex,
+            model,
+            &periods,
+            &exact_points,
+        )?;
+        let center =
+            exact_circumcenter_from_coordinates(&points[0], points.iter().skip(1).cloned())
+                .map_err(|source| DelaunayValidationError::Circumsphere {
+                    simplex_key,
+                    source: Box::new(source),
+                })?
+                .into_array();
+        let radius_squared: BigRational = center
+            .iter()
+            .zip(&points[0])
+            .map(|(center, point)| {
+                let delta = center - point;
+                &delta * &delta
+            })
+            .sum();
+        let offending_vertex = tds.vertex_keys().find(|&vertex_key| {
+            let point = &exact_points[&vertex_key];
+            let distance_squared: BigRational = (0..D)
+                .map(|axis| {
+                    let delta = &center[axis] - &point[axis];
+                    let image = (&delta / &periods[axis]).round();
+                    let residual = delta - &periods[axis] * image;
+                    &residual * &residual
+                })
+                .sum();
+            distance_squared < radius_squared
+        });
+        if let Some(offending_vertex) = offending_vertex {
+            report.violating_simplices.push(simplex_key);
+            report.violation_details.push(DelaunayViolationDetail {
+                simplex_key,
+                simplex_vertices: simplex.vertices().iter().copied().collect(),
+                offending_vertex: Some(offending_vertex),
+                neighbor_simplices: simplex
+                    .neighbor_slots()
+                    .map_or_else(NeighborBuffer::new, |slots| slots.iter().copied().collect()),
+            });
+        }
+        Ok(())
+    };
+    if let Some(keys) = simplices_to_check {
+        for &key in keys {
+            scan_simplex(key)?;
+        }
+    } else {
+        for key in tds.simplex_keys() {
+            scan_simplex(key)?;
+        }
+    }
+    Ok(report)
+}
+
+/// Constructs corners in the same exact lattice geometry used for candidate
+/// images, while enforcing the model's chart representability boundary first.
+fn exact_periodic_simplex_points<U, V, const D: usize>(
+    tds: &Tds<U, V, D>,
+    simplex_key: SimplexKey,
+    simplex: &Simplex<V, D>,
+    model: &GlobalTopologyModelAdapter<D>,
+    periods: &[BigRational; D],
+    exact_points: &KeyBasedVertexMap<[BigRational; D]>,
+) -> Result<SmallVec<[[BigRational; D]; 8]>, DelaunayValidationError> {
+    simplex
+        .vertices()
+        .iter()
+        .enumerate()
+        .map(|(slot, &vertex_key)| {
+            let vertex = tds.vertex(vertex_key).ok_or_else(|| {
+                DelaunayValidationError::TriangulationState {
+                    source: TdsError::VertexNotFound {
+                        vertex_key,
+                        context: format!("periodic Delaunay report for {simplex_key:?}"),
+                    },
+                }
+            })?;
+            let offset = simplex
+                .periodic_vertex_offsets()
+                .filter(|_| model.supports_periodic_orientation_offsets())
+                .map_or([0; D], |offsets| offsets[slot]);
+            model
+                .lift_for_orientation(
+                    *vertex.point().coords(),
+                    simplex.periodic_vertex_offsets().map(|_| offset),
+                )
+                .map_err(|source| DelaunayValidationError::TopologyModel {
+                    simplex_key,
+                    vertex_key,
+                    source,
+                })?;
+            Ok(from_fn(|axis| {
+                &exact_points[&vertex_key][axis]
+                    + &periods[axis] * BigRational::from_integer(offset[axis].into())
+            }))
+        })
+        .collect()
 }
 
 /// Builds the compact detail record for a violating simplex that still exists in the TDS.
@@ -587,9 +832,10 @@ impl From<DelaunayViolationDetail> for DelaunayValidationError {
 /// ```rust
 /// use delaunay::prelude::tds::Tds;
 /// use delaunay::prelude::diagnostics::debug_print_first_delaunay_violation;
+/// use delaunay::prelude::topology::spaces::GlobalTopology;
 ///
 /// let tds: Tds<(), (), 3> = Tds::empty();
-/// debug_print_first_delaunay_violation(&tds, None);
+/// debug_print_first_delaunay_violation(&tds, &GlobalTopology::Euclidean, None);
 /// ```
 #[cfg(feature = "diagnostics")]
 #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
@@ -599,10 +845,11 @@ impl From<DelaunayViolationDetail> for DelaunayValidationError {
 )]
 pub fn debug_print_first_delaunay_violation<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
+    topology: &GlobalTopology<D>,
     simplices_subset: Option<&[SimplexKey]>,
 ) {
     // First, build the structured report used by downstream diagnostics.
-    let report = match delaunay_violation_report(tds, simplices_subset) {
+    let report = match delaunay_violation_report(tds, topology, simplices_subset) {
         Ok(report) => report,
         Err(e) => {
             tracing::warn!(
@@ -683,7 +930,7 @@ pub fn debug_print_first_delaunay_violation<U, V, const D: usize>(
         return;
     };
 
-    let offending = first_offending_vertex(tds, first_simplex_key).and_then(|vkey| {
+    let offending = report.first_violation().and_then(|detail| detail.offending_vertex).and_then(|vkey| {
         tds.vertex(vkey)
             .map(|vertex| (vkey, *vertex.point()))
             .or_else(|| {
@@ -743,16 +990,307 @@ pub fn debug_print_first_delaunay_violation<U, V, const D: usize>(
 mod tests {
     use super::*;
     use crate::core::algorithms::insertion::repair_neighbor_pointers;
-    use crate::core::simplex::{NeighborSlot, Simplex};
+    use crate::core::tds::TdsBuilder;
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::DelaunayTriangulation;
+    use crate::delaunay_test_support::init_tracing;
     use crate::geometry::kernel::FastKernel;
-    use crate::geometry::point::Point;
-    use crate::geometry::traits::coordinate::{CoordinateConversionError, InvalidCoordinateValue};
+    use crate::geometry::traits::coordinate::InvalidCoordinateValue;
+    use crate::geometry::util::circumsphere::CircumcenterError;
+    use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::triangulation::Triangulation;
     use crate::vertex;
     use slotmap::KeyData;
-    use std::{assert_matches, ptr, sync::Once};
+    use std::{
+        assert_matches,
+        error::Error,
+        mem::{align_of, size_of},
+        ptr,
+    };
+    #[cfg(feature = "diagnostics")]
+    use std::{
+        io::{self, Write},
+        sync::{Arc, Mutex},
+    };
+
+    #[test]
+    fn periodic_traversal_singular_chart_keeps_exact_source() {
+        // Three collinear corners have no finite circle, independently of
+        // lattice images. This is a property-scan error fixture, not Level 4.
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![0.25, 0.0].unwrap(),
+            vertex![0.5, 0.0].unwrap(),
+        ];
+        let tds: Tds<(), (), 2> = TdsBuilder::new(&vertices, &[vec![0, 1, 2]])
+            .build()
+            .unwrap();
+        let key = tds.simplex_keys().next().unwrap();
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let error = delaunay_violation_report(&tds, &topology, None).unwrap_err();
+        assert!(
+            matches!(&error, DelaunayValidationError::Circumsphere { simplex_key, source } if *simplex_key == key && matches!(source.as_ref(), LaError::Singular { .. }))
+        );
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<LaError>>()
+            .unwrap();
+        assert!(matches!(source.as_ref(), LaError::Singular { .. }));
+        println!(
+            "error layout bytes: broad_circumcenter={} exact_la={} broad_source_with_key={} exact_source_with_key={} report_error={} exact_source_alignment={} report_alignment={}",
+            size_of::<CircumcenterError>(),
+            size_of::<LaError>(),
+            size_of::<(SimplexKey, CircumcenterError)>(),
+            size_of::<(SimplexKey, LaError)>(),
+            size_of::<DelaunayValidationError>(),
+            align_of::<LaError>(),
+            align_of::<DelaunayValidationError>()
+        );
+    }
+
+    #[test]
+    fn periodic_traversal_free_reports_require_compatible_geometry_context() {
+        let (tds, _) = Tds::periodic_grid_t2_for_test(false);
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        assert!(
+            delaunay_violation_report(&tds, &topology, None)
+                .unwrap()
+                .is_valid()
+        );
+        assert!(
+            find_delaunay_violations(&tds, &topology, None)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            delaunay_violation_report(&tds, &GlobalTopology::Euclidean, None),
+            Err(DelaunayValidationError::IncompatibleTopology {
+                source: GlobalTopologyModelError::PeriodicOffsetsUnsupported {
+                    kind: TopologyKind::Euclidean
+                },
+                ..
+            })
+        ));
+        assert!(matches!(
+            find_delaunay_violations(&tds, &GlobalTopology::Euclidean, None),
+            Err(DelaunayValidationError::IncompatibleTopology { .. })
+        ));
+    }
+
+    #[test]
+    fn property_reports_reject_unsupported_geometry_even_for_empty_storage() {
+        let tds: Tds<(), (), 2> = Tds::empty();
+        for topology in [GlobalTopology::Spherical, GlobalTopology::Hyperbolic] {
+            let expected = DelaunayValidationError::UnsupportedTopology {
+                topology: topology.kind(),
+            };
+            assert_eq!(
+                delaunay_violation_report(&tds, &topology, None),
+                Err(expected.clone())
+            );
+            assert_eq!(
+                find_delaunay_violations(&tds, &topology, None),
+                Err(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn periodic_report_counts_missing_requested_simplices_without_scanning_them() {
+        let (tds, _) = Tds::periodic_one_vertex_t2_for_test();
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let live = tds.simplex_keys().next().unwrap();
+        let keys = [SimplexKey::default(), live];
+        let report = delaunay_violation_report(&tds, &topology, Some(&keys)).unwrap();
+        assert_eq!(report.checked_simplices, keys.len());
+        assert_eq!(report.number_of_simplices, tds.number_of_simplices());
+        assert!(report.is_valid());
+        assert_eq!(report.violation_details, [] as [DelaunayViolationDetail; 0]);
+    }
+
+    #[test]
+    fn periodic_report_retains_missing_vertex_error_context() {
+        let (mut tds, vertex_key) = Tds::periodic_one_vertex_t2_for_test();
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        tds.remove_vertex_storage_only_for_test(vertex_key);
+        let error = delaunay_violation_report(&tds, &topology, Some(&[simplex_key])).unwrap_err();
+        assert_matches!(error, DelaunayValidationError::TriangulationState {
+            source: TdsError::VertexNotFound { vertex_key: missing, ref context },
+        } if missing == vertex_key && context.contains(&format!("{simplex_key:?}")));
+    }
+
+    #[test]
+    fn periodic_report_rejects_malformed_simplex_before_exact_geometry() {
+        let (mut tds, _) = Tds::periodic_one_vertex_t2_for_test();
+        let simplex_key = tds.simplex_keys().next().unwrap();
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        tds.simplex_mut(simplex_key)
+            .unwrap()
+            .ensure_neighbors_buffer_mut()
+            .truncate(2);
+        assert_eq!(
+            delaunay_violation_report(&tds, &topology, Some(&[simplex_key])),
+            Err(DelaunayValidationError::InvalidSimplex {
+                simplex_key,
+                source: SimplexValidationError::InvalidNeighborsLength {
+                    actual: 2,
+                    expected: 3,
+                    dimension: 2,
+                }
+            })
+        );
+    }
+
+    #[cfg(feature = "diagnostics")]
+    #[derive(Clone, Default)]
+    struct DiagnosticBuffer(Arc<Mutex<Vec<u8>>>);
+
+    #[cfg(feature = "diagnostics")]
+    impl Write for DiagnosticBuffer {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "diagnostics")]
+    #[test]
+    fn periodic_debug_report_preserves_the_periodic_image_witness() {
+        // Every quotient vertex belongs to the simplex. Only another periodic
+        // image can witness this violation, so a Euclidean rescan finds none.
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![0.75, 0.0].unwrap(),
+            vertex![0.5, 1.0 / 1024.0].unwrap(),
+        ];
+        let tds: Tds<(), (), 2> = TdsBuilder::new(&vertices, &[vec![0, 1, 2]])
+            .build()
+            .unwrap();
+        let topology =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let report = delaunay_violation_report(&tds, &topology, None).unwrap();
+        let detail = report.first_violation().unwrap();
+        let offending = detail.offending_vertex.unwrap();
+        assert_eq!(first_offending_vertex(&tds, detail.simplex_key), None);
+
+        let output = DiagnosticBuffer::default();
+        let writer = output.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(move || writer.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            debug_print_first_delaunay_violation(&tds, &topology, None);
+        });
+        let text = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            text.contains(&format!("Offending external vertex: vkey={offending:?}")),
+            "{text}"
+        );
+        assert!(!text.contains("No offending external vertex"));
+    }
+
+    #[test]
+    fn periodic_traversal_skinny_cells_test_other_images_of_their_own_vertices() {
+        fn check<const D: usize>() {
+            let vertices: Vec<_> = (0..=D)
+                .map(|slot| {
+                    let mut point = [0.0; D];
+                    if slot == 1 {
+                        point[0] = 0.75;
+                    }
+                    if slot == 2 {
+                        point[0] = 0.5;
+                        point[1] = 1.0 / 1024.0;
+                    }
+                    if slot > 2 {
+                        point[slot - 1] = 0.25;
+                    }
+                    vertex!(point).unwrap()
+                })
+                .collect();
+            let tds: Tds<(), (), D> = TdsBuilder::new(&vertices, &[(0..=D).collect()])
+                .build()
+                .unwrap();
+            let model = GlobalTopology::try_toroidal(
+                [1.0; D],
+                ToroidalConstructionMode::PeriodicImagePoint,
+            )
+            .unwrap()
+            .model();
+            let report = periodic_delaunay_violation_report(&tds, &model, None).unwrap();
+            // Center coordinate y = -64 + 1/2048. The origin's image at
+            // y=-64 is strictly inside, although the only quotient vertices
+            // are the simplex's own vertices.
+            assert_eq!(report.violating_simplices.len(), 1);
+            assert!(report.first_violation().unwrap().offending_vertex.is_some());
+        }
+        check::<2>();
+        check::<3>();
+        check::<4>();
+        check::<5>();
+    }
+
+    #[test]
+    fn periodic_traversal_unrepresentable_chart_returns_typed_model_error() {
+        let (mut tds, _) = Tds::periodic_grid_t2_for_test(false);
+        let key = tds.simplex_keys().next().unwrap();
+        let mut offsets = tds
+            .simplex(key)
+            .unwrap()
+            .periodic_vertex_offsets()
+            .unwrap()
+            .to_vec();
+        offsets[0][0] = 2;
+        tds.simplex_mut(key)
+            .unwrap()
+            .set_periodic_vertex_offsets(offsets)
+            .unwrap();
+        let model = GlobalTopology::try_toroidal(
+            [f64::MAX, 1.0],
+            ToroidalConstructionMode::PeriodicImagePoint,
+        )
+        .unwrap()
+        .model();
+        assert!(
+            matches!(periodic_delaunay_violation_report(&tds, &model, Some(&[key])), Err(DelaunayValidationError::TopologyModel { simplex_key, source: GlobalTopologyModelError::NonFiniteCoordinate { axis: 0, .. }, .. }) if simplex_key == key)
+        );
+    }
+
+    #[test]
+    fn periodic_traversal_nearest_image_ties_remain_raw_boundaries() {
+        let (tds, _) = Tds::periodic_one_vertex_t2_for_test();
+        let model =
+            GlobalTopology::try_toroidal([1.0; 2], ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap()
+                .model();
+        // Four nearest images tie on the circle centered at (1/2,1/2),
+        // radius squared 1/2. The detailed report does not apply SoS.
+        assert!(
+            periodic_delaunay_violation_report(&tds, &model, None)
+                .unwrap()
+                .is_valid()
+        );
+    }
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
@@ -814,7 +1352,7 @@ mod tests {
             first_delaunay_violation_witness(&tds, simplex, &mut buffer, false).unwrap(),
             Some(inside)
         );
-        let report = delaunay_violation_report(&tds, None).unwrap();
+        let report = delaunay_violation_report(&tds, &GlobalTopology::Euclidean, None).unwrap();
         assert_eq!(report.checked_simplices, 1);
         assert_eq!(report.violating_simplices.as_slice(), &[simplex]);
         assert_eq!(
@@ -899,18 +1437,6 @@ mod tests {
         // summary indicating that no violations were found.
         #[cfg(feature = "diagnostics")]
         dt.debug_print_first_delaunay_violation(None);
-    }
-
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
     }
 
     fn build_non_delaunay_quad_2d() -> (Tds<(), (), 2>, SimplexKey, SimplexKey) {
@@ -1007,8 +1533,12 @@ mod tests {
             .unwrap();
         tds.assign_incident_simplices().unwrap();
 
-        let violations =
-            find_delaunay_violations(&tds, Some(&[simplex_1, SimplexKey::default()])).unwrap();
+        let violations = find_delaunay_violations(
+            &tds,
+            &GlobalTopology::Euclidean,
+            Some(&[simplex_1, SimplexKey::default()]),
+        )
+        .unwrap();
         assert_eq!(violations.len(), 1);
         assert!(violations.contains(&simplex_1));
     }
@@ -1019,7 +1549,7 @@ mod tests {
         let tds: Tds<(), (), 2> = Tds::empty();
 
         assert!(is_delaunay_property_only(&tds).is_ok());
-        let violations = find_delaunay_violations(&tds, None).unwrap();
+        let violations = find_delaunay_violations(&tds, &GlobalTopology::Euclidean, None).unwrap();
         assert!(violations.is_empty());
     }
 
@@ -1028,7 +1558,7 @@ mod tests {
         init_tracing();
         let (tds, simplex_1, simplex_2) = build_non_delaunay_quad_2d();
 
-        let violations = find_delaunay_violations(&tds, None).unwrap();
+        let violations = find_delaunay_violations(&tds, &GlobalTopology::Euclidean, None).unwrap();
         assert_eq!(violations.len(), 1);
         let violating_simplex = violations[0];
         let non_violating_simplex = if violating_simplex == simplex_1 {
@@ -1037,7 +1567,12 @@ mod tests {
             simplex_1
         };
 
-        let subset = find_delaunay_violations(&tds, Some(&[non_violating_simplex])).unwrap();
+        let subset = find_delaunay_violations(
+            &tds,
+            &GlobalTopology::Euclidean,
+            Some(&[non_violating_simplex]),
+        )
+        .unwrap();
         assert!(subset.is_empty());
     }
 
@@ -1094,7 +1629,7 @@ mod tests {
         init_tracing();
         let (tds, _, _) = build_non_delaunay_quad_2d();
 
-        debug_print_first_delaunay_violation(&tds, None);
+        debug_print_first_delaunay_violation(&tds, &GlobalTopology::Euclidean, None);
     }
 
     #[test]
@@ -1122,7 +1657,7 @@ mod tests {
         init_tracing();
         let (tds, simplex_1, simplex_2) = build_non_delaunay_quad_2d();
 
-        let report = delaunay_violation_report(&tds, None).unwrap();
+        let report = delaunay_violation_report(&tds, &GlobalTopology::Euclidean, None).unwrap();
 
         assert!(!report.is_valid());
         assert_eq!(report.violating_simplices.len(), 1);
@@ -1190,8 +1725,12 @@ mod tests {
         init_tracing();
         let (tds, simplex_1, _) = build_non_delaunay_quad_2d();
 
-        let report =
-            delaunay_violation_report(&tds, Some(&[simplex_1, SimplexKey::default()])).unwrap();
+        let report = delaunay_violation_report(
+            &tds,
+            &GlobalTopology::Euclidean,
+            Some(&[simplex_1, SimplexKey::default()]),
+        )
+        .unwrap();
 
         assert_eq!(report.checked_simplices, 2);
         assert_eq!(report.violating_simplices.as_slice(), &[simplex_1]);

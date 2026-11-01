@@ -194,8 +194,11 @@ def _metadata(data: JsonObject) -> JsonObject:
     if metadata.get("schema") != "delaunay.simplicial_complex":
         raise ValueError(f"unsupported visualization schema: {metadata.get('schema')!r}")
     schema_version = exact_integer(metadata.get("schema_version"), "visualization schema_version")
-    if schema_version != 1:
+    if schema_version not in {1, 2}:
         raise ValueError(f"unsupported visualization schema_version: {schema_version!r}")
+    if metadata.get("topology_kind") == "Toroidal" or data.get("periodic") is not None:
+        msg = "periodic visualization requires lifted simplex charts; this 3D plotter supports only nonperiodic coordinates"
+        raise ValueError(msg)
     dimension = exact_integer(metadata.get("dimension"), "visualization dimension")
     if dimension != 3:
         raise ValueError(f"unsupported visualization dimension: {dimension!r}")
@@ -672,7 +675,7 @@ def render_readme_figure(
 
 
 def load_visualization_3d(path: Path) -> Visualization3D:
-    """Parse a complete generic 3D simplicial-complex visualization artifact."""
+    """Parse a nonperiodic v1/v2 3D simplicial-complex visualization artifact."""
     data = load_json_object(path)
     metadata = _metadata(data)
     coordinates = _vertex_coordinates(data)

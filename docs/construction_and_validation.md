@@ -440,7 +440,6 @@ repeats the cumulative Levels 1–3 audit; `validate_realization()` adds Level 4
 use delaunay::prelude::construction::{
     DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
 };
-use delaunay::prelude::validation::ValidationPolicy;
 
 fn main() -> DelaunayResult<()> {
     let vertices = vec![
@@ -607,14 +606,24 @@ Validates basic data integrity of individual vertices and simplices.
 
 ### What It Checks
 
-- **Vertices**: Coordinate validity, UUID presence, dimension consistency
-- **Simplices**: Correct number of vertices (D+1), no duplicate vertices, valid UUID
-- **Resolved simplex coordinates**: Distinct vertex keys in one simplex resolve to distinct points
+- **Vertices**: Finite coordinates, non-nil version-4 UUIDs, dimension consistency
+- **Simplices**: Exactly D+1 local vertices and a non-nil version-4 UUID.
+  Ordinary simplices require distinct vertex keys; periodic simplices require
+  distinct lifted `(vertex key, lattice offset)` identities, so a canonical key
+  may occur at multiple offsets.
+- **Resolved simplex coordinates**: Different canonical vertex keys in one
+  simplex resolve to different stored points. Repeated occurrences of the same
+  key are distinguished by their periodic offsets, not by this coordinate check.
 
 ### Complexity
 
-- **Time**: O(1) per standalone element; O(N×D²) for the cumulative TDS coordinate roll-up
-- **Space**: O(1)
+- Standalone element checks have constant cost only when dimension D is fixed.
+  They inspect coordinate arrays, local vertex identities, UUIDs, and slots.
+- The cumulative TDS coordinate roll-up compares O(D²) vertex pairs per simplex;
+  each coordinate comparison inspects up to D components, giving O(N×D³) work
+  for this component over N maximal simplices.
+- Standalone and pairwise-check workspace is bounded for fixed D; this does not
+  include the maps used by cumulative Level 2 validation.
 
 ### When to Use
 
@@ -625,10 +634,7 @@ Validates basic data integrity of individual vertices and simplices.
 ### Example
 
 ```rust
-use delaunay::prelude::construction::{
-    DelaunayTriangulation, TopologyGuarantee, vertex,
-};
-use delaunay::prelude::validation::ValidationPolicy;
+use delaunay::prelude::construction::vertex;
 
 let v = vertex![0.0, 0.0, 0.0]?;
 assert!(v.is_valid().is_ok());
@@ -735,7 +741,9 @@ failures. `try_into_delaunay` restores `RobustKernel<f64>`;
 `try_into_delaunay_with_kernel` restores the same TDS, topology guarantee,
 global topology, and validation policy with a caller-supplied exact kernel.
 Within `DelaunayCheckpointLoadError::Checkpoint`, malformed embedded CBOR returns
-`DelaunayCheckpointError::TdsCodec`, while an authenticated value rejected by the
+`DelaunayCheckpointError::TdsCodec` with a typed `DelaunayCheckpointCodecError`
+source: I/O kind, syntax byte offset, semantic detail with an optional byte
+offset, or recursion-limit failure. An authenticated value rejected by the
 requested vertex or simplex payload type returns `PayloadDeserialization`. Its
 `DelaunayCheckpointPayloadError` source retains the concrete Ciborium error.
 Schema and digest checks run before user payload deserialization.
@@ -789,17 +797,25 @@ until trusted periodic construction is available in those dimensions.
 
 - **Vertex Validity**: All vertices pass `Vertex::is_valid()`
 - **Simplex Validity**: All simplices pass `Simplex::is_valid()`
-- **Simplex Coordinate Uniqueness**: No simplex contains two vertices with identical coordinates
-  (exact `OrderedFloat` comparison). SoS can distinguish repeated coordinates by
-  vertex identity symbolically, but the unperturbed simplex is still zero-volume
-  and not a valid realization for Pachner moves.
+- **Simplex Coordinate Uniqueness**: Different canonical vertex keys in a simplex
+  must have different stored coordinates (exact `OrderedFloat` comparison).
+  Periodic occurrences of the same key are permitted at distinct lattice
+  offsets. SoS does not replace this storage check or certify nondegenerate
+  unperturbed geometry; Level 4 checks the realized simplex in its chart.
   **Note**: Level 2 `is_valid()` and `structure_report()` do **not** check coordinate uniqueness.
   Use cumulative `validate()` or `validation_report()` for the stronger Level 1 guarantee.
 
 ### Complexity
 
-- **Time**: O(N×D²) where N = number of simplices, D = dimension
-- **Space**: O(N×D) for facet-to-simplices map
+- With N maximal simplices, there are O(N×D) local facet occurrences to inspect.
+  Identity construction, neighbor matching, and orientation parity add
+  dimension-dependent work. Coherent orientation alone performs O(D²) parity
+  work per facet, an O(N×D³) component; this is not a tight bound for all checks.
+- Space follows stored facet identities, incidence entries, and UUID/key maps.
+  At fixed D these maps grow with the numbers of vertices and simplices; when D
+  varies, each facet identity also contains dimension-dependent data.
+- Cumulative `Tds::validate()` additionally includes the Level 1 coordinate
+  roll-up described above. No O(N×D²) bound is claimed for either API.
 
 ### When to Use
 
@@ -811,9 +827,8 @@ until trusted periodic construction is available in those dimensions.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::validation::ValidationPolicy;
 
 fn main() -> DelaunayResult<()> {
     let vertices = vec![
@@ -925,8 +940,15 @@ and `dt.validate_vertex_links()` directly.
 
 ### Complexity
 
-- **Time**: O(N×D²) dominated by simplex counting (connectedness adds O(N·D))
-- **Space**: O(N×D) for edge/facet sets
+- Work depends on the enumerated faces and the sizes of vertex/ridge links.
+  A D-simplex has `2^(D+1) - 1` nonempty faces; f-vector construction enumerates
+  intermediate faces and deduplicates their identities. This dependence is
+  exponential in D, even though D is fixed in each compiled triangulation type.
+- Connectedness traverses O(N×D) neighbor slots. Link construction and validation
+  add work determined by incident stars and link complexes, so no single tight
+  total bound is asserted here.
+- Space follows the distinct face identities, incidence maps, and temporary
+  link complexes. Cumulative `Triangulation::validate()` adds Levels 1–2 costs.
 
 ### When to Use
 
@@ -939,9 +961,8 @@ and `dt.validate_vertex_links()` directly.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::validation::ValidationPolicy;
 
 fn main() -> DelaunayResult<()> {
     let vertices = vec![
@@ -1128,9 +1149,13 @@ enough for future regular, weighted, Gabriel, alpha, constrained, or related pre
 - **Layered after Levels 1-4**: `validate()` checks elements, combinatorics, intrinsic topology,
   and realization before the geometric-predicate layer.
 - **Flip-based repair**: Insertions run k=2/k=3 flip repairs with inverse edge/triangle queues in
-  higher dimensions by default. Delaunay validation can still fail if repair is disabled, if repair
-  fails to converge, or if inputs are highly degenerate/duplicate-heavy. See
-  [Issue #120 Investigation](archive/issue_120_investigation.md).
+  higher dimensions by default. Published Delaunay owners certify Levels 1–5
+  before committing an insertion or deletion; repair or certification failure
+  returns a typed error and restores the prior owner. Batch construction repair
+  cadence applies to unpublished candidates and does not disable this guarantee.
+  A Levels 1–4 `Triangulation` may still require Delaunay refinement. The
+  [Issue #120 investigation](archive/issue_120_investigation.md) records
+  historical repair limitations.
 - **Fallback rebuild**: If flip-based conversion does not converge, a Levels
   1–4 `Triangulation` can opt into bounded rebuild recovery through
   `DelaunayRefinementBuilder::new(tri).repair_by_flips().fallback_rebuild(true).build()`.
@@ -1195,9 +1220,8 @@ fallback rebuild additionally snapshots vertices and simplex payload identity.
 
 ```rust
 use delaunay::prelude::construction::{
-    DelaunayResult, DelaunayTriangulationBuilder, TopologyGuarantee, vertex,
+    DelaunayResult, DelaunayTriangulationBuilder, vertex,
 };
-use delaunay::prelude::validation::ValidationPolicy;
 
 fn main() -> DelaunayResult<()> {
     let vertices = vec![
@@ -1249,8 +1273,11 @@ Start: Do you need to validate?
 
 ## Performance notes
 
-- Level 2 Combinatorial Consistency and Level 3 Intrinsic PL Topology validation are dominated by
-  combinatorial bookkeeping (roughly O(simplices × D²)).
+- Level 2 Combinatorial Consistency processes facet occurrences, neighbor slots,
+  and dimension-dependent parity checks. Level 3 Intrinsic PL Topology also
+  enumerates lower-dimensional faces and validates links. Treat D as fixed
+  when comparing scaling with simplex count; these are not uniformly quadratic
+  algorithms in D. See the component costs under each validation level.
 - Level 4 Valid Realization checks simplex degeneracy and pairwise realized-simplex
   intersections, using bounding boxes before exact rational witness construction.
 - Level 5 `DelaunayTriangulation::is_valid_delaunay()` audits only the implemented
@@ -1411,11 +1438,13 @@ but the validator itself does not mutate the triangulation.
 ### Validation Passes Level 4, Fails at Level 5
 
 **Problem**: Delaunay property violated (vertex inside circumsphere)
-**Likely Cause**: Repair disabled or non-convergent, geometric degeneracy, numerical precision,
-or missing higher-dimensional flip coverage
-**Fix**: Keep flip repair enabled, handle insertion errors, check for near-coplanar/collinear points,
-and select the kernel whose tie-handling and diagnostic policy matches the
-workflow. Flip-repair refinement requires `K: ExactPredicates`; `AdaptiveKernel`,
+**Likely Cause**: A Levels 1–4 `Triangulation` has not yet been refined, or an
+unpublished candidate needs repair that cannot converge within its budget.
+Successful mutation of a published Delaunay owner certifies Levels 1–5; failure
+returns a typed error and restores the prior owner.
+**Fix**: Handle the typed construction or mutation error, inspect its geometric
+diagnostics, and select the kernel whose tie-handling and diagnostic policy
+matches the workflow. Flip-repair refinement requires `K: ExactPredicates`; `AdaptiveKernel`,
 `RobustKernel`, and `FastKernel` satisfy that bound through D ≤ 6. If conversion
 fails to converge, enable the opt-in rebuild through
 `.repair_by_flips().fallback_rebuild(true)` (requires
@@ -1427,14 +1456,14 @@ PL-manifold + `ExactPredicates`).
 
 | Level | Method | Module | Complexity |
 |-------|--------|--------|------------|
-| 1 | `Simplex::is_valid()` / `simplex_report()` | `tds` | O(1) |
-| 1 | `Vertex::is_valid()` / `vertex_report()` | `tds` | O(1) |
-| 2 | `Tds::is_valid()` | `tds` | O(N×D²) |
-| 2 | `Tds::validate()` | `tds` | O(N×D²) |
-| 3 | `Triangulation::is_valid_topology()` | `triangulation` | O(N×D²) |
-| 3 | `Triangulation::validate()` | `triangulation` | O(N×D²) |
+| 1 | `Simplex::is_valid()` / `simplex_report()` | `tds` | Constant only for fixed D; local identities/slots |
+| 1 | `Vertex::is_valid()` / `vertex_report()` | `tds` | O(D) coordinate scan plus UUID check |
+| 2 | `Tds::is_valid()` | `tds` | Facet/neighbor/map work; see [Level 2](#level-2-combinatorial-consistency) |
+| 2 | `Tds::validate()` | `tds` | Level 2 plus element checks and O(N×D³) coordinate roll-up |
+| 3 | `Triangulation::is_valid_topology()` | `triangulation` | Face enumeration and link checks; see [Level 3](#level-3-intrinsic-pl-topology) |
+| 3 | `Triangulation::validate()` | `triangulation` | Levels 1–2 plus face enumeration and link checks |
 | 4 | `Triangulation::is_valid_realization()` | `triangulation` | O(simplices² × f(D)) |
-| 4 | `Triangulation::validate_realization()` | `triangulation` | O(simplices × D²) + O(simplices² × f(D)) |
+| 4 | `Triangulation::validate_realization()` | `triangulation` | Levels 1–3 plus O(simplices² × f(D)) |
 | 5 | `DelaunayTriangulation::is_valid_delaunay()` | `delaunay` | O(simplices) certified fast path; O(simplices × vertices) fallback |
 | 5 | `DelaunayTriangulation::validate()` | `delaunay` | Levels 1-4 + certified fast path or exact fallback |
 | — | `DelaunayTriangulation::validation_report()` | `delaunay` | Levels 1-4 + O(simplices) certified fast path; O(simplices × vertices) fallback |

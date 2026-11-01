@@ -68,13 +68,34 @@ use num_traits::Zero;
 ///
 /// # Arguments
 ///
-/// * `points` - Exactly `D+1` points (as f64 coordinate arrays) forming the
+/// * `points` - Exactly `D+1` [`Point`] values forming the
 ///   degenerate simplex.  The index of each point in this slice determines its
 ///   symbolic perturbation priority.
 ///
 /// # Returns
 ///
 /// `Ok(1)` or `Ok(-1)`.  Never returns `Ok(0)`.
+///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{
+///     CoordinateConversionError, CoordinateValidationError, Point, sos_orientation_sign,
+/// };
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Conversion(#[from] CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Validation(#[from] CoordinateValidationError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let origin = Point::try_new([0.0, 0.0])?;
+/// // The symbolic row order resolves coincident points without moving them.
+/// assert_eq!(sos_orientation_sign(&[origin; 3])?, -1);
+/// # Ok(())
+/// # }
+/// ```
 ///
 /// # Errors
 ///
@@ -86,6 +107,12 @@ use num_traits::Zero;
 pub fn sos_orientation_sign<const D: usize>(
     points: &[Point<D>],
 ) -> Result<i32, CoordinateConversionError> {
+    if D > 6 {
+        return Err(CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: D.saturating_add(1),
+            max: 7,
+        });
+    }
     if points.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
             actual: points.len(),
@@ -106,13 +133,6 @@ pub fn sos_orientation_sign<const D: usize>(
                 });
             }
         }
-    }
-
-    if D > 6 {
-        return Err(CoordinateConversionError::UnsupportedMatrixDimension {
-            requested: D + 1,
-            max: 7,
-        });
     }
 
     // The ordinary exact determinant is the constant term of the symbolic
@@ -189,6 +209,32 @@ pub fn sos_orientation_sign<const D: usize>(
 ///
 /// `Ok(1)` or `Ok(-1)` (raw determinant sign).  Never returns `Ok(0)`.
 ///
+/// # Examples
+///
+/// ```rust
+/// use delaunay::prelude::geometry::{
+///     CoordinateConversionError, CoordinateValidationError, Point, sos_insphere_sign,
+/// };
+/// # #[derive(Debug, thiserror::Error)]
+/// # enum ExampleError {
+/// #     #[error(transparent)]
+/// #     Conversion(#[from] CoordinateConversionError),
+/// #     #[error(transparent)]
+/// #     Validation(#[from] CoordinateValidationError),
+/// # }
+/// # fn main() -> Result<(), ExampleError> {
+/// let simplex = [
+///     Point::try_new([0.0, 0.0])?,
+///     Point::try_new([1.0, 0.0])?,
+///     Point::try_new([0.0, 1.0])?,
+/// ];
+/// let boundary = Point::try_new([1.0, 1.0])?;
+/// // This is a raw determinant sign, not an INSIDE/OUTSIDE classification.
+/// assert_eq!(sos_insphere_sign(&simplex, &boundary)?, -1);
+/// # Ok(())
+/// # }
+/// ```
+///
 /// # Errors
 ///
 /// - [`CoordinateConversionError::InvalidSimplexPointCount`] if
@@ -200,6 +246,12 @@ pub fn sos_insphere_sign<const D: usize>(
     simplex: &[Point<D>],
     test: &Point<D>,
 ) -> Result<i32, CoordinateConversionError> {
+    if D > 6 {
+        return Err(CoordinateConversionError::UnsupportedMatrixDimension {
+            requested: D.saturating_add(2),
+            max: 8,
+        });
+    }
     if simplex.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
             actual: simplex.len(),
@@ -226,13 +278,6 @@ pub fn sos_insphere_sign<const D: usize>(
                 coordinate_value: InvalidCoordinateValue::from_debug(&val),
             });
         }
-    }
-
-    if D > 6 {
-        return Err(CoordinateConversionError::UnsupportedMatrixDimension {
-            requested: D + 2,
-            max: 8,
-        });
     }
 
     // As for orientation, the unperturbed exact determinant is the constant
@@ -545,10 +590,10 @@ mod tests {
                 fn [<test_sos_insphere_ $dim d_cospherical_nonzero>]() {
                     let (simplex, test) = cospherical_points::<$dim>();
                     let sign = sos_insphere_sign(&simplex, &test).unwrap();
-                    assert!(
-                        sign == 1 || sign == -1,
-                        "SoS insphere must return ±1, got {sign}"
-                    );
+                    // Perturbing the origin's first coordinate contributes the
+                    // first monomial. Its absolute cofactor is (-1)^D (D-1);
+                    // converting to the relative convention gives -(D-1).
+                    assert_eq!(sign, -1);
                 }
 
                 #[test]
@@ -577,7 +622,11 @@ mod tests {
                 #[test]
                 fn [<test_sos_orientation_ $dim d_all_identical_is_symbolically_ordered>]() {
                     let points = vec![Point::try_new([0.0; $dim]).expect("finite point coordinates"); $dim + 1];
-                    assert_ne!(sos_orientation_sign(&points).unwrap(), 0);
+                    // The least monomial uses the last row's homogeneous 1
+                    // and reversed coordinate columns in the first D rows.
+                    // Its degree is D and its coefficient is the reversal sign.
+                    let expected = if ($dim * ($dim - 1) / 2) % 2 == 0 { 1 } else { -1 };
+                    assert_eq!(sos_orientation_sign(&points).unwrap(), expected);
                 }
 
                 #[test]
@@ -600,6 +649,9 @@ mod tests {
         let points = degenerate_orient_points::<6>();
         let sign = sos_orientation_sign(&points).unwrap();
         assert!(matches!(sign, -1 | 1));
+        let identical = vec![Point::try_new([0.0; 6]).unwrap(); 7];
+        // Reversing six columns takes 15 transpositions.
+        assert_eq!(sos_orientation_sign(&identical).unwrap(), -1);
     }
 
     #[test]
@@ -703,7 +755,31 @@ mod tests {
     fn complete_insphere_expansion_supports_6d() {
         let (simplex, test) = cospherical_points::<6>();
         let sign = sos_insphere_sign(&simplex, &test).unwrap();
-        assert!(matches!(sign, -1 | 1));
+        // The first relative cofactor is -(6 - 1).
+        assert_eq!(sign, -1);
+    }
+
+    #[test]
+    fn orientation_rejects_unsupported_dimension_before_checking_point_count() {
+        assert_eq!(
+            sos_orientation_sign::<7>(&[]),
+            Err(CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: 8,
+                max: 7,
+            })
+        );
+    }
+
+    #[test]
+    fn insphere_rejects_unsupported_dimension_before_checking_point_count() {
+        let query = Point::try_new([0.0; 7]).unwrap();
+        assert_eq!(
+            sos_insphere_sign::<7>(&[], &query),
+            Err(CoordinateConversionError::UnsupportedMatrixDimension {
+                requested: 9,
+                max: 8,
+            })
+        );
     }
 
     #[test]

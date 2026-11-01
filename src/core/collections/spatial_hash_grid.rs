@@ -295,9 +295,11 @@ impl<const D: usize, K> HashGridIndex<D, K> {
                 return None;
             }
 
-            // If the cell coordinate is too large to have unit resolution, neighbor
-            // enumeration would be lossy (cell_coord + 1 == cell_coord). Disable.
-            if (cell_coord + 1.0).ordered_eq(&cell_coord) {
+            // Both neighbors must be distinct: at the negative unit-resolution
+            // boundary, subtracting one can round back to the original cell.
+            if (cell_coord + 1.0).ordered_eq(&cell_coord)
+                || (cell_coord - 1.0).ordered_eq(&cell_coord)
+            {
                 return None;
             }
 
@@ -374,6 +376,39 @@ mod tests {
     use approx::assert_abs_diff_eq;
     use slotmap::SlotMap;
     use std::assert_matches;
+
+    /// Count callbacks directly so repeated neighboring cells cannot hide in a set.
+    fn assert_unit_resolution_boundary<const D: usize>() {
+        let boundary = 9_007_199_254_740_992.0;
+        for sign in [-1.0, 1.0] {
+            let mut grid = HashGridIndex::<D, usize>::try_new(1.0).unwrap();
+            let near = [sign * (boundary - 1.0); D];
+            grid.insert_vertex(7, &near);
+            let mut visits = Vec::new();
+            assert!(grid.for_each_candidate_vertex_key(&near, |key| {
+                visits.push(key);
+                true
+            }));
+            assert_eq!(visits, vec![7]);
+
+            visits.clear();
+            assert!(
+                !grid.for_each_candidate_vertex_key(&[sign * boundary; D], |key| {
+                    visits.push(key);
+                    true
+                })
+            );
+            assert_eq!(visits, [] as [usize; 0]);
+        }
+    }
+
+    #[test]
+    fn unit_resolution_boundaries_never_repeat_candidates() {
+        assert_unit_resolution_boundary::<2>();
+        assert_unit_resolution_boundary::<3>();
+        assert_unit_resolution_boundary::<4>();
+        assert_unit_resolution_boundary::<5>();
+    }
 
     #[test]
     fn test_rounded_distance_coverage_requires_a_conservative_key_range() {

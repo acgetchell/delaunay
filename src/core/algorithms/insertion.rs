@@ -41,8 +41,8 @@ use crate::core::collections::{
 use crate::core::facet::{FacetError, FacetHandle};
 use crate::core::simplex::{Simplex, SimplexValidationError};
 use crate::core::tds::{
-    EntityKind, GeometricError, NeighborValidationError, SimplexKey, Tds, TdsConstructionError,
-    TdsError, TdsErrorKind, VertexKey,
+    EntityKind, GeometricError, NeighborValidationError, PeriodicQuotientFacetKeyDerivationFailure,
+    SimplexKey, Tds, TdsConstructionError, TdsError, TdsErrorKind, VertexKey,
 };
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::VertexValidationError;
@@ -61,14 +61,16 @@ use crate::triangulation::construction::{
     FinalDelaunayValidationContext, FinalTopologyValidationContext, TriangulationConstructionError,
 };
 use crate::triangulation::realization::TriangulationRealizationValidationError;
-use crate::triangulation::validation::TriangulationValidationError;
-use crate::triangulation::validation::TriangulationValidationErrorKind;
-use crate::validation::DelaunayTriangulationValidationError;
-use crate::validation::DelaunayValidationErrorKind;
+use crate::triangulation::validation::{
+    TriangulationValidationError, TriangulationValidationErrorKind,
+};
+use crate::validation::{DelaunayTriangulationValidationError, DelaunayValidationErrorKind};
 use crate::validation_report::InvariantError;
 use slotmap::Key;
 #[cfg(debug_assertions)]
 use std::cmp::Ordering;
+#[cfg(debug_assertions)]
+use std::env::var_os;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -186,6 +188,17 @@ impl fmt::Display for InsertionTopologyValidationContext {
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum TdsValidationFailure {
+    /// A lifted facet identity cannot fit the periodic signature encoding.
+    #[error("periodic facet key failed for simplex {simplex_uuid}, facet {facet_index}: {source}")]
+    PeriodicFacetKey {
+        /// Stable identity of the source simplex.
+        simplex_uuid: uuid::Uuid,
+        /// Facet slot on that simplex.
+        facet_index: usize,
+        /// Structured derivation failure.
+        #[source]
+        source: PeriodicQuotientFacetKeyDerivationFailure,
+    },
     /// The triangulation contains an invalid vertex.
     #[error("invalid vertex {vertex_id}: {source}")]
     InvalidVertex {
@@ -488,6 +501,15 @@ impl From<TdsError> for TdsValidationFailure {
     )]
     fn from(source: TdsError) -> Self {
         match source {
+            TdsError::PeriodicFacetKey {
+                simplex_uuid,
+                facet_index,
+                source,
+            } => Self::PeriodicFacetKey {
+                simplex_uuid,
+                facet_index,
+                source,
+            },
             TdsError::InvalidVertex { vertex_id, source } => {
                 Self::InvalidVertex { vertex_id, source }
             }
@@ -2456,7 +2478,7 @@ where
 
     #[cfg(debug_assertions)]
     {
-        let log_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
+        let log_enabled = var_os("DELAUNAY_DEBUG_CAVITY").is_some();
         // Check for duplicate boundary facets
         let mut seen_facets: FastHashMap<u64, Vec<FacetHandle>> = FastHashMap::default();
         for facet_handle in boundary_facets {
@@ -2641,7 +2663,7 @@ where
         // vertex ordering, geometric orientation, and source boundary facet.
         // Helps trace which insertion step produces negative-orientation simplices.
         #[cfg(debug_assertions)]
-        if std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some()
+        if var_os("DELAUNAY_DEBUG_CAVITY").is_some()
             && let Some(created_simplex) = tds.simplex(simplex_key)
         {
             let simplex_points: SmallBuffer<Point<D>, MAX_PRACTICAL_DIMENSION_SIZE> =
@@ -2752,9 +2774,9 @@ where
     let _conflict_simplices = conflict_simplices;
 
     #[cfg(debug_assertions)]
-    let log_enabled = std::env::var_os("DELAUNAY_DEBUG_CAVITY").is_some();
+    let log_enabled = var_os("DELAUNAY_DEBUG_CAVITY").is_some();
     #[cfg(debug_assertions)]
-    let ridge_link_debug = std::env::var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some();
+    let ridge_link_debug = var_os("DELAUNAY_DEBUG_RIDGE_LINK").is_some();
     // Index all facets of new simplices.
     for &simplex_key in new_simplices {
         let simplex = tds
@@ -2928,7 +2950,7 @@ where
     }
 
     #[cfg(debug_assertions)]
-    if std::env::var_os("DELAUNAY_DEBUG_NEIGHBORS").is_some() {
+    if var_os("DELAUNAY_DEBUG_NEIGHBORS").is_some() {
         let mut mismatches = 0usize;
         for &simplex_key in new_simplices {
             let Some(simplex) = tds.simplex(simplex_key) else {
@@ -3963,7 +3985,7 @@ where
         Ok(facets) => facets,
         Err(err) => {
             #[cfg(debug_assertions)]
-            if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+            if var_os("DELAUNAY_DEBUG_HULL").is_some() {
                 tracing::debug!(error = ?err, "extend_hull: visibility computation failed");
             }
             return Err(err);
@@ -3971,7 +3993,7 @@ where
     };
 
     #[cfg(debug_assertions)]
-    if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+    if var_os("DELAUNAY_DEBUG_HULL").is_some() {
         let total_boundary = tds
             .one_sided_facets()
             .map_err(|e| InsertionError::HullExtension {
@@ -4070,7 +4092,7 @@ where
     let _ = point;
 
     #[cfg(debug_assertions)]
-    if std::env::var_os("DELAUNAY_DEBUG_HULL").is_some() {
+    if var_os("DELAUNAY_DEBUG_HULL").is_some() {
         tracing::debug!(
             point = ?point,
             simplex_key = ?edge_facet.simplex_key(),
@@ -4422,9 +4444,9 @@ where
     let mut visible_facets = Vec::new();
 
     #[cfg(debug_assertions)]
-    let log_enabled = std::env::var_os("DELAUNAY_DEBUG_HULL").is_some();
+    let log_enabled = var_os("DELAUNAY_DEBUG_HULL").is_some();
     #[cfg(debug_assertions)]
-    let detail_enabled = std::env::var_os("DELAUNAY_DEBUG_HULL_DETAIL").is_some();
+    let detail_enabled = var_os("DELAUNAY_DEBUG_HULL_DETAIL").is_some();
     #[cfg(debug_assertions)]
     let track_orientations = detail_enabled || log_enabled;
     #[cfg(debug_assertions)]
@@ -6338,7 +6360,7 @@ mod tests {
 
     #[test]
     fn test_initial_simplex_construction_error_preserves_simplex_and_bookkeeping_failures() {
-        let simplex_source = SimplexValidationError::InsufficientVertices {
+        let simplex_source = SimplexValidationError::VertexCountMismatch {
             actual: 2,
             expected: 3,
             dimension: 2,

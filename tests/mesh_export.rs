@@ -4,22 +4,25 @@
 
 use std::{
     assert_matches,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     error::Error as StdError,
 };
 
+use approx::assert_ulps_eq;
 use delaunay::prelude::construction::{
     DelaunayError, DelaunayResult, DelaunayTriangulationBuilder,
     DelaunayTriangulationConstructionError, TopologyGuarantee, Vertex, vertex,
 };
 use delaunay::prelude::export::{
-    AdjacencyRecord, InvalidCoordinateValue, SimplexRecord, VISUALIZATION_SCHEMA,
-    VISUALIZATION_SCHEMA_VERSION, ValidatedVisualizationData, VertexRecord, VisualizationData,
-    VisualizationDataValidationError, VisualizationExportError, VisualizationMetadata,
-    VisualizationTopologyGuarantee, VisualizationTopologyKind,
+    AdjacencyRecord, InvalidCoordinateValue, PeriodicVisualizationData, SimplexRecord,
+    VISUALIZATION_SCHEMA, VISUALIZATION_SCHEMA_VERSION, ValidatedVisualizationData, VertexRecord,
+    VisualizationData, VisualizationDataValidationError, VisualizationExportError,
+    VisualizationMetadata, VisualizationTopologyGuarantee, VisualizationTopologyKind,
 };
-use delaunay::prelude::geometry::{AdaptiveKernel, CoordinateConversionError, ExactPredicates};
-use delaunay::prelude::topology::spaces::TopologyKind;
+use delaunay::prelude::geometry::{
+    AdaptiveKernel, CoordinateConversionError, ExactPredicates, RobustKernel,
+};
+use delaunay::prelude::topology::spaces::{TopologyKind, ToroidalDomainError};
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -28,6 +31,8 @@ enum MeshExportTestError {
     Construction(#[from] DelaunayTriangulationConstructionError),
     #[error(transparent)]
     Coordinate(#[from] CoordinateConversionError),
+    #[error(transparent)]
+    Domain(#[from] ToroidalDomainError),
     #[error(transparent)]
     Export(#[from] VisualizationExportError),
     #[error(transparent)]
@@ -152,7 +157,100 @@ fn reciprocal_self_neighbor_export() -> VisualizationData<2> {
                 attributes: None,
             },
         ],
+        periodic: None,
     }
+}
+
+/// Triangulates one fundamental square along its diagonal, identifying corners.
+fn one_vertex_torus_export() -> VisualizationData<2> {
+    let vertex_id = Uuid::from_u128(1);
+    let simplex_ids = [Uuid::from_u128(2), Uuid::from_u128(3)];
+    VisualizationData {
+        metadata: VisualizationMetadata {
+            schema: VISUALIZATION_SCHEMA.to_owned(),
+            schema_version: VISUALIZATION_SCHEMA_VERSION,
+            producer: "delaunay-test".to_owned(),
+            dimension: 2,
+            vertex_count: 1,
+            simplex_count: 2,
+            topology_kind: VisualizationTopologyKind::Toroidal,
+            topology_guarantee: VisualizationTopologyGuarantee::PLManifold,
+            attributes: None,
+        },
+        vertices: vec![VertexRecord {
+            id: vertex_id,
+            coordinates: vec![0.0, 0.0],
+            attributes: None,
+        }],
+        simplices: simplex_ids
+            .iter()
+            .map(|id| SimplexRecord {
+                id: *id,
+                vertex_ids: vec![vertex_id; 3],
+                attributes: None,
+            })
+            .collect(),
+        adjacency: simplex_ids
+            .iter()
+            .enumerate()
+            .flat_map(|(index, id)| {
+                let neighbor_simplex_id = Some(simplex_ids[1 - index]);
+                (0..3).map(move |facet_index| AdjacencyRecord {
+                    simplex_id: *id,
+                    facet_index,
+                    neighbor_simplex_id,
+                    attributes: None,
+                })
+            })
+            .collect(),
+        periodic: Some(PeriodicVisualizationData {
+            periods: vec![2.0, 3.0],
+            simplex_vertex_offsets: BTreeMap::from([
+                (simplex_ids[0], vec![vec![0, 0], vec![1, 0], vec![1, 1]]),
+                (simplex_ids[1], vec![vec![0, 0], vec![1, 1], vec![0, 1]]),
+            ]),
+        }),
+    }
+}
+
+/// Checks text-codec precision separately from the export's exact source copy.
+fn assert_mesh_json_round_trip<const D: usize>(
+    export: &VisualizationData<D>,
+) -> Result<(), MeshExportTestError> {
+    let decoded: VisualizationData<D> = serde_json::from_str(&serde_json::to_string(export)?)?;
+    let decoded = decoded.into_validated()?.into_raw();
+    assert_eq!(decoded.metadata, export.metadata);
+    assert_eq!(decoded.simplices, export.simplices);
+    assert_eq!(decoded.adjacency, export.adjacency);
+    assert_eq!(
+        serde_json::to_value(&decoded.periodic)?,
+        serde_json::to_value(&export.periodic)?
+    );
+    assert_eq!(decoded.vertices.len(), export.vertices.len());
+    // Without float_roundtrip the default serde_json decimal parser can differ
+    // by one ULP on this fixture. Preserve every other field exactly and admit
+    // no absolute tolerance for the parsed coordinates.
+    for (decoded_vertex, exported_vertex) in decoded.vertices.iter().zip(&export.vertices) {
+        assert_eq!(decoded_vertex.id, exported_vertex.id);
+        assert_eq!(decoded_vertex.attributes, exported_vertex.attributes);
+        assert_eq!(
+            decoded_vertex.coordinates.len(),
+            exported_vertex.coordinates.len()
+        );
+        for (decoded_coordinate, exported_coordinate) in decoded_vertex
+            .coordinates
+            .iter()
+            .zip(&exported_vertex.coordinates)
+        {
+            assert_ulps_eq!(
+                *decoded_coordinate,
+                *exported_coordinate,
+                epsilon = 0.0,
+                max_ulps = 1
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Verifies const-generic export invariants and serde round-trip behavior.
@@ -272,6 +370,263 @@ fn mesh_export_json_contains_schema_ids_and_connectivity() -> Result<(), MeshExp
             .is_some_and(|adjacency| !adjacency.is_empty())
     );
 
+    Ok(())
+}
+
+#[test]
+fn mesh_export_periodic_source_retains_domain_and_ordered_offsets()
+-> Result<(), MeshExportTestError> {
+    let vertices = (0_u32..7)
+        .map(|index| {
+            let index = f64::from(index);
+            vertex!([
+                0.9_f64.mul_add(((index + 1.0) * 0.618_033_988_749_894_8).fract(), 0.05),
+                0.9_f64.mul_add(((index + 1.0) * 0.414_213_562_373_095_03).fract(), 0.05),
+            ])
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let triangulation = DelaunayTriangulationBuilder::new(&vertices)
+        .try_toroidal([1.0; 2])?
+        .build_with_kernel(&RobustKernel::new())?;
+    let export = triangulation.to_visualization_data()?;
+    export.validate()?;
+    for (_, vertex) in triangulation.vertices() {
+        let record = export
+            .vertices
+            .iter()
+            .find(|record| record.id == vertex.uuid())
+            .expect("exported source vertex");
+        assert_eq!(
+            record
+                .coordinates
+                .iter()
+                .map(|coordinate| coordinate.to_bits())
+                .collect::<Vec<_>>(),
+            vertex.point().coords().map(f64::to_bits).to_vec()
+        );
+    }
+    let periodic = export
+        .periodic
+        .as_ref()
+        .expect("toroidal exports need realization data");
+    assert_eq!(
+        periodic
+            .periods
+            .iter()
+            .map(|period| period.to_bits())
+            .collect::<Vec<_>>(),
+        vec![1.0_f64.to_bits(); 2]
+    );
+    for (_, simplex) in triangulation.simplices() {
+        let offsets = simplex
+            .periodic_vertex_offsets()
+            .expect("periodic source offsets");
+        let exported = &periodic.simplex_vertex_offsets[&simplex.uuid()];
+        assert_eq!(
+            exported,
+            &offsets
+                .iter()
+                .map(|offset| offset.to_vec())
+                .collect::<Vec<_>>()
+        );
+        let record = export
+            .simplices
+            .iter()
+            .find(|record| record.id == simplex.uuid())
+            .expect("exported simplex");
+        for (vertex_key, vertex_id) in simplex.vertices().iter().zip(&record.vertex_ids) {
+            assert_eq!(
+                triangulation
+                    .vertex(*vertex_key)
+                    .expect("source vertex")
+                    .uuid(),
+                *vertex_id
+            );
+        }
+    }
+    assert_mesh_json_round_trip(&export)?;
+    Ok(())
+}
+
+#[test]
+fn mesh_export_periodic_quotient_distinguishes_repeated_vertex_images()
+-> Result<(), MeshExportTestError> {
+    let export = one_vertex_torus_export();
+    let decoded: VisualizationData<2> = serde_json::from_str(&serde_json::to_string(&export)?)?;
+    decoded.validate()?;
+    assert_eq!(decoded.vertices.len(), 1);
+    assert_eq!(
+        serde_json::to_value(decoded.into_validated()?)?,
+        serde_json::to_value(&export)?
+    );
+
+    // Different simplex charts can be separated by more than an i8 delta.
+    let mut translated = export;
+    for (index, offsets) in translated
+        .periodic
+        .as_mut()
+        .unwrap()
+        .simplex_vertex_offsets
+        .values_mut()
+        .enumerate()
+    {
+        let shift = if index == 0 { i8::MIN } else { i8::MAX - 1 };
+        for offset in offsets {
+            for value in offset {
+                *value += shift;
+            }
+        }
+    }
+    translated.validate()?;
+    Ok(())
+}
+
+#[test]
+fn mesh_export_periodic_offsets_must_identify_distinct_matching_images() {
+    let mut duplicate = one_vertex_torus_export();
+    let simplex_id = duplicate.simplices[0].id;
+    let vertex_id = duplicate.vertices[0].id;
+    let offsets = duplicate
+        .periodic
+        .as_mut()
+        .unwrap()
+        .simplex_vertex_offsets
+        .get_mut(&simplex_id)
+        .unwrap();
+    offsets[1] = offsets[0].clone();
+    assert_eq!(
+        duplicate.validate(),
+        Err(VisualizationDataValidationError::DuplicateSimplexVertex {
+            simplex_id,
+            vertex_id
+        })
+    );
+
+    let mut mismatched = one_vertex_torus_export();
+    mismatched
+        .periodic
+        .as_mut()
+        .unwrap()
+        .simplex_vertex_offsets
+        .get_mut(&simplex_id)
+        .unwrap()[0][0] = 2;
+    assert_matches!(
+        mismatched.validate(),
+        Err(VisualizationDataValidationError::InvalidPeriodicFacetSharing { .. })
+    );
+}
+
+#[test]
+fn mesh_export_periodic_shape_is_checked_before_vertex_slots() {
+    let original = one_vertex_torus_export();
+    let simplex_id = original.simplices[0].id;
+    let mut missing = original.clone();
+    missing.periodic = None;
+    assert_eq!(
+        missing.validate(),
+        Err(VisualizationDataValidationError::MissingPeriodicData {})
+    );
+    for period in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        let mut invalid = original.clone();
+        invalid.periodic.as_mut().unwrap().periods[1] = period;
+        assert_eq!(
+            invalid.validate(),
+            Err(VisualizationDataValidationError::InvalidPeriod { axis: 1 })
+        );
+    }
+    let mut short_domain = original.clone();
+    short_domain.periodic.as_mut().unwrap().periods.pop();
+    assert_eq!(
+        short_domain.validate(),
+        Err(VisualizationDataValidationError::InvalidPeriodCount {
+            expected: 2,
+            actual: 1
+        })
+    );
+    let mut missing = original.clone();
+    missing
+        .periodic
+        .as_mut()
+        .unwrap()
+        .simplex_vertex_offsets
+        .remove(&simplex_id);
+    assert_eq!(
+        missing.validate(),
+        Err(VisualizationDataValidationError::MissingPeriodicOffsets { simplex_id })
+    );
+    let mut short_offsets = original.clone();
+    short_offsets
+        .periodic
+        .as_mut()
+        .unwrap()
+        .simplex_vertex_offsets
+        .get_mut(&simplex_id)
+        .unwrap()
+        .pop();
+    assert_eq!(
+        short_offsets.validate(),
+        Err(
+            VisualizationDataValidationError::InvalidPeriodicOffsetCount {
+                simplex_id,
+                expected: 3,
+                actual: 2
+            }
+        )
+    );
+    let mut short_offset = original.clone();
+    short_offset
+        .periodic
+        .as_mut()
+        .unwrap()
+        .simplex_vertex_offsets
+        .get_mut(&simplex_id)
+        .unwrap()[0]
+        .pop();
+    assert_eq!(
+        short_offset.validate(),
+        Err(
+            VisualizationDataValidationError::InvalidPeriodicOffsetDimension {
+                simplex_id,
+                vertex_index: 0,
+                expected: 2,
+                actual: 1
+            }
+        )
+    );
+    let mut unknown = original;
+    let simplex_id = Uuid::from_u128(99);
+    unknown
+        .periodic
+        .as_mut()
+        .unwrap()
+        .simplex_vertex_offsets
+        .insert(simplex_id, vec![vec![0; 2]; 3]);
+    assert_eq!(
+        unknown.validate(),
+        Err(VisualizationDataValidationError::UnknownPeriodicSimplex { simplex_id })
+    );
+}
+
+#[test]
+fn mesh_export_v1_compatibility_requires_nonperiodic_data() -> Result<(), MeshExportTestError> {
+    let mut legacy = serde_json::to_value(sample_export()?)?;
+    legacy["metadata"]["schema_version"] = serde_json::json!(1);
+    let decoded: VisualizationData<2> = serde_json::from_value(legacy)?;
+    decoded.validate()?;
+    assert!(decoded.periodic.is_none());
+
+    let mut legacy_torus = one_vertex_torus_export();
+    legacy_torus.metadata.schema_version = 1;
+    assert_eq!(
+        legacy_torus.validate(),
+        Err(VisualizationDataValidationError::MissingPeriodicData {})
+    );
+    let mut nonperiodic = one_vertex_torus_export();
+    nonperiodic.metadata.topology_kind = VisualizationTopologyKind::Euclidean;
+    assert_eq!(
+        nonperiodic.validate(),
+        Err(VisualizationDataValidationError::UnexpectedPeriodicData {})
+    );
     Ok(())
 }
 
@@ -861,6 +1216,7 @@ fn visualization_validation_does_not_require_attribute_traits() -> Result<(), Me
         vertices,
         simplices,
         adjacency,
+        periodic,
     } = sample_export()?;
 
     let export: VisualizationData<
@@ -906,6 +1262,7 @@ fn visualization_validation_does_not_require_attribute_traits() -> Result<(), Me
                 attributes: None,
             })
             .collect(),
+        periodic,
     };
 
     export.validate()?;

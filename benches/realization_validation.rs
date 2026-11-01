@@ -1,4 +1,4 @@
-//! Criterion benchmarks for Level 4 realization validation.
+//! Criterion benchmarks for Level 4 realization and periodic Level 5 validation.
 //!
 //! The narrow-phase cases isolate exact shared-face intersection decisions,
 //! while the whole-triangulation cases measure the public Level 4 validator on
@@ -236,7 +236,10 @@ fn bench_realization_validation(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures covering-chart comparisons on a certified periodic T² quotient.
+/// Measures Level 4 and Level 5 scans on a certified periodic T² quotient.
+///
+/// This fixture covers the public periodic construction workflow in 2D; the
+/// exact periodic property tests separately cover the arithmetic in 2D–5D.
 fn bench_periodic_realization_validation(c: &mut Criterion) {
     let vertices: Vec<_> = (1..=7)
         .map(|index| {
@@ -252,8 +255,12 @@ fn bench_periodic_realization_validation(c: &mut Criterion) {
         .try_toroidal([1.0; 2])
         .or_abort()
         .build()
-        .or_abort()
-        .into_triangulation();
+        .or_abort();
+    triangulation.validate().or_abort();
+    c.bench_function("periodic_property_validation/t2_7v", |b| {
+        b.iter(|| black_box(black_box(&triangulation).delaunay_violation_report(None)).or_abort());
+    });
+    let triangulation = triangulation.into_triangulation();
     triangulation.validate_realization().or_abort();
     c.bench_function("periodic_realization_validation/t2_7v", |b| {
         b.iter(|| {

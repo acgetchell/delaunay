@@ -61,7 +61,8 @@ fn main() -> Result<(), ExampleError> {
 
 ## JSON Shape
 
-The v1 schema has four top-level fields:
+The v2 schema has four common top-level fields and an additional field for
+toroidal realization data:
 
 - `metadata`: schema name, schema version, producer, dimension, counts,
   topology kind, and topology guarantee. In Rust, the topology fields are
@@ -70,6 +71,10 @@ The v1 schema has four top-level fields:
 - `simplices`: stable simplex UUID and ordered vertex UUID membership.
 - `adjacency`: one record per simplex facet, with nullable neighbor simplex
   UUIDs for boundary facets.
+- `periodic`: required for toroidal exports and absent otherwise. Contains
+  `periods`, the positive finite domain lengths in dimension order, and
+  `simplex_vertex_offsets`, an object keyed by simplex UUID whose value is an
+  ordered list of integer lattice offsets.
 
 Example, abbreviated:
 
@@ -77,7 +82,7 @@ Example, abbreviated:
 {
   "metadata": {
     "schema": "delaunay.simplicial_complex",
-    "schema_version": 1,
+    "schema_version": 2,
     "producer": "delaunay",
     "dimension": 2,
     "vertex_count": 3,
@@ -122,9 +127,33 @@ The export sorts vertices and simplices by UUID for deterministic output.
 Simplex `vertex_ids` preserve the simplex's stored vertex order because that
 order carries orientation and facet-slot meaning.
 
+Export copies the source `f64` coordinates unchanged. Bit-exact JSON coordinate
+round trips depend on the reader; for `serde_json`, enable its `float_roundtrip`
+feature when exact recovery is required. UUIDs and integer periodic offsets
+round-trip exactly.
+
 `adjacency[*].facet_index` is aligned with the simplex's vertex list: facet
 `i` is opposite `simplices[*].vertex_ids[i]`. A `null` neighbor marks a
 boundary facet.
+
+For a toroidal simplex, slot `i` is realized at
+`vertex.coordinates + periodic.simplex_vertex_offsets[simplex.id][i] * periodic.periods`,
+component by component. Offsets are signed 8-bit integers, matching the source
+triangulation, with one `D`-component offset for each of its `D + 1` vertex
+slots. The same quotient vertex UUID can occur more than once in a simplex
+when its offsets differ. Neighbor facets must have the same lifted vertex
+identities after a common integer translation of their charts. A plotting
+consumer must apply these offsets or explicitly reject toroidal data; plotting
+the stored quotient coordinates alone loses the realized mesh.
+
+An absent source offset buffer denotes a zero-offset chart. Export writes its
+offsets explicitly as zero vectors, preserving the same realization.
+
+Exports now use schema v2. Nonperiodic v1 JSON remains readable and valid.
+Toroidal v1 JSON lacks the domain and offsets required to recover its
+realization and is rejected by validation; regenerate it from the original
+triangulation. Rust callers constructing `VisualizationData` literals must
+supply the new `periodic` field (`None` for nonperiodic data).
 
 After deserializing JSON from another process or file, call `into_validated()`
 before handing records to topology-aware code. It parses the raw DTO into a
@@ -133,7 +162,12 @@ a one-off check is enough. Validation checks schema metadata, topology category
 strings, dimensional arity, counts, non-nil and duplicate ids, finite
 coordinate values, connectivity references, one adjacency record per simplex
 facet, and reciprocal non-boundary adjacency whose neighbor actually contains
-the source facet vertices. It does not turn the records into canonical Rust
+the source facet vertices. Toroidal validation additionally checks domain and
+offset arities, distinct lifted vertex identities, and exactly one reciprocal
+facet with matching identities modulo lattice translation. Unsupported
+dimensions fail before simplex-arity arithmetic, including empty snapshots.
+This interchange validation does not certify geometric orientation, absence of
+intersections, or the Delaunay property. It does not turn the records into canonical Rust
 `Tds` storage, but the validated wrapper does canonicalize detached record order
 by stable ids for deterministic serialization. Use triangulation/TDS serde when
 the goal is validated Rust hydration.

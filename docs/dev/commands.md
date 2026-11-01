@@ -472,8 +472,8 @@ irreducible cold-path work can cross the default boundary on hosted runners.
 `test-integration` runs a focused release-profile nextest bucket. Selected 4D
 property families retain that default coverage with a Windows-only 60-second
 override because their release runtimes sit at the 10-second boundary on
-Windows runners. The 5D local-neighbor repair guardrail has the same focused
-Windows-only override. The cospherical 3D `OnSuspicion` sequence property has
+Windows runners. The 5D local-neighbor repair guardrail has a focused
+platform-neutral 60-second override. The cospherical 3D `OnSuspicion` sequence property has
 a focused cross-platform 60-second override for the same hosted-runner boundary.
 The isolated downstream checkpoint fixture has a focused 120-second override
 because it compiles a standalone crate in a separate target directory to prove
@@ -484,15 +484,18 @@ cross that boundary on hosted runners. Unaffected tests keep the normal budget.
 `test-cli` owns the feature-gated binary unit and CLI integration tests, and
 `test-rust` composes every Rust test class once.
 
-`test-features` composes `test-unit-features` and `test-doc-features` with
+`test-features` composes `test-unit-features`, `test-doc-features`, and
+`test-allocation`. The unit and doctest lanes use
 `diagnostics,count-allocations,bench`. The unit lane uses a focused nextest
 filter in debug and release modes; the doctest lane selects allocation
 measurement and diagnostics examples. These selections exclude default tests
 and leave `slow-tests` in its existing bucket. Adding or moving feature-gated
 tests requires checking nextest discovery with and without these features and
 updating `_feature_unit_filter` to cover the difference. Likewise, update the
-doctest filters when adding feature-only examples. The native CI matrix reaches
-both lanes through `just ci` → `just test` → `just test-rust`.
+doctest filters when adding feature-only examples. The allocation lane executes
+the public `allocation_api` integration target with `count-allocations`.
+The native CI matrix reaches all three lanes once through
+`just ci` → `just test` → `just test-rust`.
 
 The LLVM-instrumented coverage profile retains its 300-second default watchdog.
 The exact 20-point 4D exterior-insertion regression has a 900-second override
@@ -578,9 +581,11 @@ cargo bench --profile perf --features bench --bench pl_manifold_repair -- --nopl
 ```
 
 Use `just perf-large-scale-smoke [max_secs]` for a coarse local wall-clock guard
-over the release-mode large-scale debug harness. It runs the same 2D-5D defaults
-as `just debug-large-scale-{2,3,4,5}d`, caps each test runtime at 60 seconds by
-default, and reports all failing dimensions before exiting. It does not compare
+over the release-mode large-scale debug harness. The recipe owns its distinct
+2D-5D workloads of 32,000, 9,000, 1,000, and 160 vertices, respectively, and
+selects construction-only validation (Levels 1-3 plus Level 5). It caps each test
+runtime at 60 seconds by default and reports all failing dimensions before
+exiting. It does not compare
 against a baseline and should not be treated as benchmark data. Run it before
 pushing Rust or benchmark changes to catch obvious local performance drift early.
 
@@ -1068,7 +1073,7 @@ JSON/SARIF reports from `target/security/` for seven days, including on findings
 | Run CLI-feature binary unit and integration tests | `just test-cli` |
 | Run Rust lib unit tests only | `just test-unit` |
 | Run doctests only | `just test-doc` |
-| Run feature-only library tests and doctests | `just test-features` |
+| Run feature-only library tests, doctests, and allocation integrations | `just test-features` |
 | Run integration tests | `just test-integration` |
 | Compile benchmark harnesses | `just bench-compile` |
 | Compile release integration tests without running | `just test-integration-compile` |

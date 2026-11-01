@@ -456,8 +456,9 @@ rules:
         - "/src/geometry/**/*.rs"
         - "/src/topology/**/*.rs"
         - "/src/delaunay/**/*.rs"
+        - "/src/triangulation/**/*.rs"
     patterns:
-      - pattern-regex: '\bcrate::(?:core|delaunay|geometry|topology)::[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+){1,}\b'
+      - pattern-regex: '\bcrate::(?:core|delaunay|geometry|topology|triangulation)::[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+){1,}\b'
       - pattern-inside: |
           fn $FUNC(...) {
               ...

@@ -916,7 +916,9 @@ impl<U, V, const D: usize> Tds<U, V, D> {
         self.clear_surviving_neighbor_backrefs(&simplex_removals, &simplices_to_remove);
 
         // 4) Remove the simplices and update UUID mappings.
-        let removed_count = self.remove_simplices_and_update_uuid_mappings(&simplex_removals);
+        let mut deferred_drops = Vec::new();
+        let removed_count =
+            self.remove_simplices_and_update_uuid_mappings(&simplex_removals, &mut deferred_drops);
         if removed_count == 0 {
             return Ok(0);
         }
@@ -926,6 +928,10 @@ impl<U, V, const D: usize> Tds<U, V, D> {
 
         // Bump generation once for all removals (neighbors + incidence + simplex storage).
         self.bump_generation();
+
+        // User payloads may unwind from Drop; storage, reverse maps, incidence,
+        // neighbor links, hints, and generation must already describe the result.
+        drop(deferred_drops);
 
         Ok(removed_count)
     }
@@ -1101,11 +1107,14 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     fn remove_simplices_and_update_uuid_mappings(
         &mut self,
         simplex_removals: &[SimplexRemovalRecord],
+        deferred_drops: &mut Vec<Simplex<V, D>>,
     ) -> usize {
         let mut removed_count = 0;
 
         for (simplex_key, _) in simplex_removals {
-            if let Some(removed_uuid) = self.remove_simplex_storage_transactionally(*simplex_key) {
+            if let Some(removed_uuid) =
+                self.remove_simplex_storage_transactionally(*simplex_key, deferred_drops)
+            {
                 self.uuid_to_simplex_key.remove(&removed_uuid);
                 removed_count += 1;
             }
@@ -1371,13 +1380,6 @@ impl<U, V, const D: usize> Tds<U, V, D> {
                     });
                 }
             };
-
-            if proposed_neighbor == Some(simplex_key)
-                && expected_neighbor.is_none()
-                && Self::allows_periodic_self_neighbor(simplex)
-            {
-                continue;
-            }
 
             if proposed_neighbor != expected_neighbor {
                 return Err(TdsError::InvalidNeighbors {
@@ -2480,7 +2482,9 @@ mod tests {
     use crate::core::facet::facet_key_from_vertices;
     use crate::core::simplex::Simplex;
     use crate::core::tds::TdsBuilder;
-    use crate::core::tds::errors::TriangulationConstructionState;
+    use crate::core::tds::errors::{
+        PeriodicQuotientFacetKeyDerivationFailure, TriangulationConstructionState,
+    };
     use crate::core::tds::rollback::test_support::NonClonePayload;
     use crate::vertex;
     use slotmap::KeyData;
@@ -4098,9 +4102,16 @@ mod tests {
 
         assert_matches!(
             err,
-            TdsConstructionError::ValidationError { source: TdsError::InconsistentDataStructure {
-                message
-            } } if message.contains("Failed to derive periodic facet key")
+            TdsConstructionError::ValidationError {
+                source: TdsError::PeriodicFacetKey {
+                    simplex_uuid,
+                    facet_index: 1,
+                    source: PeriodicQuotientFacetKeyDerivationFailure::RelativeOffsetOutOfRange {
+                        axis: 0,
+                        component: 256,
+                    },
+                },
+            } if simplex_uuid == tds.simplex(existing).unwrap().uuid()
         );
         assert_eq!(tds.number_of_simplices(), 1);
         assert_eq!(tds.generation(), generation_before);

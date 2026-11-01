@@ -64,7 +64,7 @@ algorithm machinery that operates on it:
   alongside the focused flip module.
 - `traits/` - core boundary and data trait definitions.
 - `util/` - shared helpers for UUIDs, hashing, deduplication, allocation
-  measurement, facet keys, Jaccard diagnostics, Hilbert ordering, canonical
+  measurement, facet keys, Hilbert ordering, canonical
   point order, and permutation parity for TDS validation and flip orientation.
 - `operations.rs` - semantic classification and telemetry for topological
   operations.
@@ -130,7 +130,7 @@ receiving raw access to canonical TDS storage:
   used by generic Level 4 validation.
 - `kernel.rs` - kernel abstraction (`AdaptiveKernel`, `RobustKernel`,
   `FastKernel`) and `ExactPredicates` marker trait.
-- `point.rs` - finite/NaN-aware point operations.
+- `point.rs` - finite `f64` points with checked coordinate construction.
 - `predicates.rs` and `robust_predicates.rs` - geometric predicates and robust
   predicate plumbing.
 - `sos.rs` - Simulation of Simplicity for deterministic degeneracy resolution.
@@ -276,7 +276,7 @@ diagnostic, and `just run` workflows execute with the repository lockfile.
   `S^D` realized in `R^(D+1)`.
 - `traits/topological_space.rs` - public `GlobalTopology<D>` metadata enum and
   `TopologyKind`.
-- `traits/global_topology_model.rs` - internal scalar-generic
+- `traits/global_topology_model.rs` - internal dimension-generic, `f64`-coordinate
   `GlobalTopologyModel<D>` trait and concrete topology models.
 
 Proof-owner dependencies should remain

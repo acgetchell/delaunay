@@ -611,9 +611,7 @@ mod core {
                 PeriodicOffsetBuffer, SimplexKeyBuffer, SmallBuffer,
             };
             use crate::core::edge::{EdgeKey, EdgeKeyError};
-            use crate::core::facet::{
-                AllFacetsIter, FacetError, FacetHandle, facet_key_from_vertices,
-            };
+            use crate::core::facet::{AllFacetsIter, FacetError, FacetHandle};
             use crate::core::operations::TopologicalOperation;
             use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
             use crate::core::tds::{
@@ -1043,6 +1041,24 @@ pub mod diagnostics;
 /// Unpublished Level 5 proof state.
 #[path = "delaunay/draft.rs"]
 mod draft;
+
+#[cfg(test)]
+mod delaunay_test_support {
+    use std::sync::Once;
+    use tracing_subscriber::EnvFilter;
+
+    pub fn init_tracing() {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let filter =
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_test_writer()
+                .try_init();
+        });
+    }
+}
 #[path = "delaunay/incremental_builder.rs"]
 pub mod incremental_builder;
 /// Triangulation editing operations (bistellar flips).
@@ -1120,10 +1136,10 @@ pub use crate::delaunayize::DelaunayRefinementBuilder;
 pub use crate::deletion::DeleteVertexError;
 pub use crate::incremental_builder::{DelaunayIncrementalBuilder, DelaunayIncrementalBuilderError};
 pub use crate::io::visualization::{
-    AdjacencyRecord, SimplexRecord, VISUALIZATION_SCHEMA, VISUALIZATION_SCHEMA_VERSION,
-    ValidatedVisualizationData, VertexRecord, VisualizationData, VisualizationDataValidationError,
-    VisualizationExportError, VisualizationMetadata, VisualizationTopologyGuarantee,
-    VisualizationTopologyKind,
+    AdjacencyRecord, PeriodicVisualizationData, SimplexRecord, VISUALIZATION_SCHEMA,
+    VISUALIZATION_SCHEMA_VERSION, ValidatedVisualizationData, VertexRecord, VisualizationData,
+    VisualizationDataValidationError, VisualizationExportError, VisualizationMetadata,
+    VisualizationTopologyGuarantee, VisualizationTopologyKind,
 };
 pub use crate::refinement::RefinementError;
 pub use crate::repair::{DelaunayCheckPolicy, DelaunayRepairOperation, DelaunayRepairPolicy};
@@ -1576,8 +1592,8 @@ pub mod prelude {
         pub use crate::checkpoint::{
             DELAUNAY_CHECKPOINT_DIGEST_ALGORITHM, DELAUNAY_CHECKPOINT_DIGEST_VERSION,
             DELAUNAY_CHECKPOINT_MANIFEST_VERSION, DELAUNAY_CHECKPOINT_SCHEMA_VERSION,
-            DelaunayCheckpoint, DelaunayCheckpointDecodeError, DelaunayCheckpointDigest,
-            DelaunayCheckpointDigestAlgorithm, DelaunayCheckpointError,
+            DelaunayCheckpoint, DelaunayCheckpointCodecError, DelaunayCheckpointDecodeError,
+            DelaunayCheckpointDigest, DelaunayCheckpointDigestAlgorithm, DelaunayCheckpointError,
             DelaunayCheckpointLoadError, DelaunayCheckpointManifest,
             DelaunayCheckpointPayloadError, DelaunayCheckpointTdsHydrationError,
             DelaunayCheckpointV1,
@@ -2243,10 +2259,10 @@ pub mod prelude {
     pub mod export {
         pub use crate::geometry::traits::coordinate::InvalidCoordinateValue;
         pub use crate::io::visualization::{
-            AdjacencyRecord, SimplexRecord, VISUALIZATION_SCHEMA, VISUALIZATION_SCHEMA_VERSION,
-            ValidatedVisualizationData, VertexRecord, VisualizationData,
-            VisualizationDataValidationError, VisualizationExportError, VisualizationMetadata,
-            VisualizationTopologyGuarantee, VisualizationTopologyKind,
+            AdjacencyRecord, PeriodicVisualizationData, SimplexRecord, VISUALIZATION_SCHEMA,
+            VISUALIZATION_SCHEMA_VERSION, ValidatedVisualizationData, VertexRecord,
+            VisualizationData, VisualizationDataValidationError, VisualizationExportError,
+            VisualizationMetadata, VisualizationTopologyGuarantee, VisualizationTopologyKind,
         };
     }
 
@@ -2495,8 +2511,8 @@ mod tests {
         assert_normal::<TriangulationBuilder<FastKernel<f64>, (), (), 3>>();
         assert_normal::<DelaunayRefinementBuilder<FastKernel<f64>, (), (), 3>>();
         assert_normal::<ConvexHull<(), 3>>();
-        assert_normal::<EdgeKey>();
-        assert_normal::<TriangulationAdjacency<'static>>();
+        assert_normal::<EdgeKey<3>>();
+        assert_normal::<TriangulationAdjacency<'static, 3>>();
         assert_normal::<DelaunayizeOutcome>();
         assert_normal::<DelaunayizeError>();
         assert_normal::<RefinementError<u8, DelaunayizeError>>();

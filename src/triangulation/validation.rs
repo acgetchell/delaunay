@@ -4598,7 +4598,7 @@ mod tests {
                             .unwrap();
 
                         let detail = tri
-                            .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
+                            .insert_detailed_with_retry_policy(
                                 unit_simplex_interior_vertex::<$dim>(),
                                 None,
                                 None,
@@ -4903,7 +4903,7 @@ mod tests {
 
             let hint = tri.simplices().next().map(|(simplex_key, _)| simplex_key);
             let detail = tri
-                .insert_with_statistics_seeded_indexed_detailed_with_retry_policy(
+                .insert_detailed_with_retry_policy(
                     test_vertex([0.25, 0.25]),
                     None,
                     hint,

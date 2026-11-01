@@ -43,7 +43,7 @@ fn main() -> DelaunayResult<()> {
 Two knobs are commonly used for insertion-time safety vs performance:
 
 - `TopologyGuarantee`: what Level 3 Intrinsic PL Topology invariants are enforced.
-- `ValidationPolicy`: when Level 3 Intrinsic PL Topology validation runs automatically during incremental insertion.
+- `ValidationPolicy`: when cumulative global Levels 1–4 audits run automatically during insertion.
 
 Use the `try_set_*` policy setters when changing both axes programmatically; they
 return a typed error for incoherent combinations such as
@@ -75,7 +75,8 @@ fn main() -> DelaunayResult<()> {
 - `TopologyGuarantee::PLManifold` *(default)*:
   adds **ridge- and vertex-link validation**. Every full Level 3 audit checks the
   same PL-manifold contract; `ValidationPolicy::Always` repeats complete Levels
-  1–4 audits after every mutation.
+  1–4 audits after every insertion. Other checked mutations enforce their own
+  postconditions independently of this policy.
 
 See [`construction_and_validation.md`](construction_and_validation.md) for the precise invariants and which methods validate which
 levels.
@@ -487,12 +488,13 @@ For guidance on retry/skip behavior and choosing `RobustKernel`, see
 
 ## Builder API: deleting a vertex
 
-Vertex deletion is supported and preserves Levels 1–3. It uses an inverse k=1 fast path when
-possible and fan retriangulation otherwise, then runs flip-based Delaunay repair when the active
-`DelaunayRepairPolicy` allows it. If automatic repair is disabled, deletion still runs Level 4
-realization validation and the Level 5 Delaunay predicate, rolling back on any violation. If
-post-deletion repair, validation, or orientation canonicalization fails, the operation rolls back to
-the pre-deletion triangulation.
+Successful vertex deletion preserves Levels 1–5. It uses an inverse k=1 fast
+path when possible and fan retriangulation otherwise, followed by the checked
+Delaunay repair/certification path. Unsupported dimension/topology cases and
+failed repair, realization validation, or orientation canonicalization return
+typed errors and restore the pre-deletion owner. The configurable
+`ConstructionOptions::with_batch_repair_policy` controls batch construction
+cadence; published owners expose no policy for disabling deletion repair.
 
 ```rust
 use delaunay::prelude::construction::{
@@ -518,14 +520,17 @@ fn main() -> DelaunayResult<()> {
     // Topology should still be valid:
     assert!(dt.as_triangulation().validate().is_ok());
 
-    // If automatic repair is enabled, successful deletion has already attempted to
-    // restore the Delaunay property.
+    // Successful deletion has already certified the Delaunay property.
     assert!(dt.is_valid_delaunay().is_ok());
     Ok(())
 }
 ```
 
-When automatic repair fails after the mutation, `delete_vertex` reports
+Published Delaunay owners expose no option to disable deletion repair. When
+the topology and dimension permit flip repair, deletion attempts it before
+certifying Levels 1–5; otherwise, it certifies the candidate without flip repair.
+Any failure restores the pre-deletion owner. When automatic repair fails after
+the mutation, `delete_vertex` reports
 `DeleteVertexError::InvariantViolation { source:
 Box::new(InvariantError::Delaunay { source:
 DelaunayTriangulationValidationError::RepairOperationFailed {

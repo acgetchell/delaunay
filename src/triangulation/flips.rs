@@ -39,8 +39,7 @@ use crate::core::algorithms::flips::{
     validate_bistellar_flip_dynamic, validate_bistellar_flip_k1_insert,
     validate_bistellar_flip_k1_inverse, validate_bistellar_flip_k2, validate_bistellar_flip_k3,
 };
-use crate::core::operations::SuspicionFlags;
-use crate::core::operations::TopologicalOperation;
+use crate::core::operations::{SuspicionFlags, TopologicalOperation};
 use crate::core::traits::data_type::DataType;
 use crate::core::vertex::Vertex;
 use crate::geometry::kernel::Kernel;
@@ -523,25 +522,35 @@ pub trait BistellarFlips<const D: usize> {
     ///
     /// # Example
     ///
+    /// A boundary ridge of a single tetrahedron has insufficient incidence for
+    /// a k=3 flip. This rejected attempt leaves the triangulation unchanged.
+    ///
     /// ```rust
-    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder};
-    /// use delaunay::flips::{BistellarFlips, RidgeHandle};
+    /// use delaunay::flips::{BistellarFlips, FlipError};
+    /// use delaunay::prelude::construction::{DelaunayResult, DelaunayTriangulationBuilder, vertex};
+    /// use std::assert_matches;
     ///
     /// # fn main() -> DelaunayResult<()> {
     /// let vertices = vec![
-    ///     delaunay::vertex![0.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![1.0, 0.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 1.0, 0.0]?,
-    ///     delaunay::vertex![0.0, 0.0, 1.0]?,
-    ///     delaunay::vertex![1.0, 1.0, 1.0]?,
+    ///     vertex![0.0, 0.0, 0.0]?,
+    ///     vertex![1.0, 0.0, 0.0]?,
+    ///     vertex![0.0, 1.0, 0.0]?,
+    ///     vertex![0.0, 0.0, 1.0]?,
     /// ];
-    /// let dt = DelaunayTriangulationBuilder::new(&vertices)
+    /// let mut dt = DelaunayTriangulationBuilder::new(&vertices)
     ///     .build()?
     ///     .into_triangulation();
     ///
-    /// // k=3 flips require specific ridge configurations in 3D and above
-    /// // This is an illustrative example; actual ridge selection depends on topology
-    /// let _ = dt;  // Use dt to prevent unused variable warning
+    /// // Copy keys so no borrowed traversal remains live during mutation.
+    /// let simplex_keys: Vec<_> = dt.simplices().map(|(key, _)| key).collect();
+    /// assert_eq!(simplex_keys.len(), 1);
+    /// for simplex_key in simplex_keys {
+    ///     let ridge = dt.ridge_handle(simplex_key, 0, 1)?;
+    ///     let result = dt.flip_k3(ridge);
+    ///     assert_matches!(result, Err(FlipError::InvalidRidgeMultiplicity { .. }));
+    /// }
+    /// assert_eq!(dt.number_of_simplices(), 1);
+    /// assert_matches!(dt.validate_realization(), Ok(()));
     /// # Ok(())
     /// # }
     /// ```
@@ -598,7 +607,7 @@ pub trait BistellarFlips<const D: usize> {
     ///
     /// Returns [`FlipError`] if the edge star is invalid or the inverse flip
     /// would create invalid topology.
-    fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError>;
+    fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey<D>) -> Result<FlipInfo<D>, FlipError>;
 
     /// Validate an inverse k=2 edge-star flip without mutating topology.
     ///
@@ -638,8 +647,10 @@ pub trait BistellarFlips<const D: usize> {
     /// # Ok(())
     /// # }
     /// ```
-    fn can_flip_k2_inverse_from_edge(&self, edge: EdgeKey)
-    -> Result<FlipFeasibility<D>, FlipError>;
+    fn can_flip_k2_inverse_from_edge(
+        &self,
+        edge: EdgeKey<D>,
+    ) -> Result<FlipFeasibility<D>, FlipError>;
 
     /// Apply an inverse k=3 flip from a triangle star (D >= 4).
     ///
@@ -777,7 +788,7 @@ where
         validate_bistellar_flip_k3(&self.tds, &context)
     }
 
-    fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey) -> Result<FlipInfo<D>, FlipError> {
+    fn flip_k2_inverse_from_edge(&mut self, edge: EdgeKey<D>) -> Result<FlipInfo<D>, FlipError> {
         if D < 3 {
             return Err(FlipError::UnsupportedDimension { dimension: D });
         }
@@ -790,7 +801,7 @@ where
 
     fn can_flip_k2_inverse_from_edge(
         &self,
-        edge: EdgeKey,
+        edge: EdgeKey<D>,
     ) -> Result<FlipFeasibility<D>, FlipError> {
         if D < 3 {
             return Err(FlipError::UnsupportedDimension { dimension: D });

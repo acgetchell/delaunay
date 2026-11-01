@@ -272,6 +272,10 @@ pub(crate) fn periodic_simplex_key(lifted_vertices: &[LiftedVertexId]) -> u64 {
     }
 
     let keys = normalize_lifted_vertices(lifted_vertices);
+    if keys.iter().all(LiftedVertexId::is_base) {
+        let bare_vertices: VertexKeyBuffer = keys.iter().map(|id| id.vertex_key).collect();
+        return facet_key_from_vertices(&bare_vertices);
+    }
     let mut hasher = FastHasher::default();
     for key in &keys {
         key.hash(&mut hasher);
@@ -304,16 +308,24 @@ pub(crate) fn anchored_lifted_simplex_key(lifted_vertices: &[LiftedVertexId]) ->
 /// lifted vertex, making periodic simplex identities translation invariant.
 pub(crate) fn normalize_lifted_vertices(lifted_vertices: &[LiftedVertexId]) -> LiftedVertexBuffer {
     let mut keys: LiftedVertexBuffer = lifted_vertices.iter().cloned().collect();
-    keys.sort_unstable();
+    let axes = keys.iter().map(|key| key.offset.len()).max().unwrap_or(0);
+    // Compact base-image storage must compare as a zero vector: an empty
+    // slice sorts before negative offsets and would choose a different anchor
+    // after translating a repeated quotient key across zero.
+    keys.sort_unstable_by(|a, b| {
+        a.vertex_key
+            .data()
+            .as_ffi()
+            .cmp(&b.vertex_key.data().as_ffi())
+            .then_with(|| {
+                (0..axes)
+                    .map(|axis| a.offset.get(axis).copied().unwrap_or(0))
+                    .cmp((0..axes).map(|axis| b.offset.get(axis).copied().unwrap_or(0)))
+            })
+    });
     let anchor_offset: SmallBuffer<i16, 8> = keys
         .first()
         .map_or_else(SmallBuffer::new, |key| key.offset.clone());
-    let axes = keys
-        .iter()
-        .map(|key| key.offset.len())
-        .max()
-        .unwrap_or(0)
-        .max(anchor_offset.len());
 
     let mut normalized = LiftedVertexBuffer::with_capacity(keys.len());
     for key in keys {
@@ -525,6 +537,50 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
     use slotmap::KeyData;
+
+    #[test]
+    fn periodic_structure_identity_is_translation_and_permutation_invariant() {
+        let vertex = VertexKey::from(KeyData::from_ffi(1));
+        for axes in 2..=5 {
+            let original: LiftedVertexBuffer = [-1_i16, 0, 1]
+                .map(|x| {
+                    lifted_vertex_id(vertex, (0..axes).map(|axis| if axis == 0 { x } else { 0 }))
+                })
+                .into_iter()
+                .collect();
+            let expected = normalize_lifted_vertices(&original);
+            for shift in -2_i16..=2 {
+                let mut translated: LiftedVertexBuffer = [-1_i16, 0, 1]
+                    .map(|x| {
+                        lifted_vertex_id(
+                            vertex,
+                            (0..axes).map(|axis| if axis == 0 { x + shift } else { shift }),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                for _ in 0..3 {
+                    translated.rotate_left(1);
+                    assert_eq!(normalize_lifted_vertices(&translated), expected);
+                    translated.reverse();
+                    assert_eq!(
+                        periodic_simplex_key(&translated),
+                        periodic_simplex_key(&original)
+                    );
+                }
+            }
+        }
+        let other = VertexKey::from(KeyData::from_ffi(2));
+        let base = [LiftedVertexId::base(vertex), LiftedVertexId::base(other)];
+        let translated = [
+            lifted_vertex_id(vertex, [1, -1]),
+            lifted_vertex_id(other, [1, -1]),
+        ];
+        assert_eq!(
+            periodic_simplex_key(&base),
+            periodic_simplex_key(&translated)
+        );
+    }
 
     #[test]
     fn test_anchored_lifted_simplex_key_preserves_vertex_link_offsets() {

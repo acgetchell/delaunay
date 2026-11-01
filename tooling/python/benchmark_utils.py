@@ -85,6 +85,13 @@ run_cargo_live = partial(run_command_live, "cargo")
 run_git_command = partial(run_safe_command, "git")
 
 
+def _print_benchmark_message(message: str, *, error: bool = False, end: str = "\n", flush: bool = False) -> None:
+    """Render benchmark status safely without changing retained scientific bytes."""
+    stream = sys.stderr if error else sys.stdout
+    encoding = stream.encoding or "utf-8"
+    print(message.encode(encoding, errors="backslashreplace").decode(encoding), file=stream, end=end, flush=flush)
+
+
 class ProjectRootNotFoundError(Exception):
     """The benchmark command was invoked outside a Cargo repository."""
 
@@ -286,22 +293,16 @@ class PerformanceReportId:
         return f"{self.current_tag}-vs-{self.baseline_tag}.md"
 
 
-type BaselineSource = Literal["local", "github-assets"]
-
-
 @dataclass(frozen=True)
 class ReleaseReportConfig:
-    """Configuration for generating a release-comparison report."""
+    """Configuration for inspecting a pair of historical GitHub release assets."""
 
     repo_root: Path
     current_tag: str
     baseline_tag: str
-    worktree_ref: str
     suite: str = "release-signal"
     scope: str = "release-signal"
     stat: str = "median"
-    apply_current_diff: bool = True
-    baseline_source: BaselineSource = "local"
 
     def __post_init__(self) -> None:
         """Reject unsupported artifact settings before any workflow effects."""
@@ -313,9 +314,6 @@ class ReleaseReportConfig:
             raise ValueError(msg)
         if self.stat != "median":
             msg = f"release artifact workflows require the median statistic, got {self.stat!r}"
-            raise ValueError(msg)
-        if self.baseline_source not in ("local", "github-assets"):
-            msg = f"unsupported release baseline source: {self.baseline_source!r}"
             raise ValueError(msg)
 
 
@@ -380,11 +378,10 @@ class ReleaseAssetLoadRequest:
 
 @dataclass(frozen=True)
 class ResolvedPerformanceRequest:
-    """Release pair and checkout ref resolved from CLI arguments."""
+    """Release pair resolved from CLI arguments."""
 
     current_tag: str
     baseline_tag: str
-    worktree_ref: str
     tags_to_fetch: tuple[str, ...] = ()
 
 
@@ -397,7 +394,6 @@ class PerformanceRequestOptions:
     published_latest: bool
     infer_release: bool
     current_vs_latest: bool
-    worktree_ref: str
     repo_root: Path
 
 
@@ -679,13 +675,13 @@ def _load_criterion_estimate(estimates_path: Path) -> CriterionEstimate | None:
     return CriterionEstimate(mean_ns=estimate.point, low_ns=estimate.lower, high_ns=estimate.upper, confidence_level=estimate.confidence_level)
 
 
-def _collect_ci_suite_estimates(criterion_dir: Path) -> list[tuple[tuple[str, ...], Path]]:
-    """Collect deduplicated ci_performance_suite estimates, preferring new over base."""
+def _collect_ci_suite_estimates(criterion_dir: Path, sample_name: str | None = None) -> list[tuple[tuple[str, ...], Path]]:
+    """Collect the selected sample, or prefer new over base for exploratory rows."""
     manifest_ids = _load_ci_performance_manifest_ids(criterion_dir)
     estimates_by_id: dict[tuple[str, ...], tuple[str, Path]] = {}
 
     for estimates_path in sorted(criterion_dir.glob("**/estimates.json")):
-        if estimates_path.parent.name not in {"base", "new"}:
+        if estimates_path.parent.name not in ({sample_name} if sample_name is not None else {"base", "new"}):
             continue
 
         try:
@@ -789,13 +785,14 @@ class BenchmarkPlanSectionEvidence:
         return bool(self.result_ids) and not self.missing_group_prefixes
 
 
-def _criterion_result_ids(criterion_dir: Path) -> tuple[str, ...]:
-    """Return valid Criterion result IDs, preferring ``new`` over ``base``."""
+def _criterion_result_ids(criterion_dir: Path, sample_name: str | None = None) -> tuple[str, ...]:
+    """Return coverage for the selected sample, or exploratory new/base results."""
     # Directory names escape slashes in group/function IDs. Reuse the canonical
     # metadata reader so report coverage and release comparisons agree.
     # Stale samples without usable identity metadata cannot contribute coverage.
-    samples = _criterion_estimates_by_id(criterion_dir, "base", skip_invalid_metadata=True)
-    samples.update(_criterion_estimates_by_id(criterion_dir, "new", skip_invalid_metadata=True))
+    samples: dict[str, CriterionSample] = {}
+    for name in ("base", "new") if sample_name is None else (sample_name,):
+        samples.update(_criterion_estimates_by_id(criterion_dir, name, skip_invalid_metadata=True))
     return tuple(sorted(result_id for result_id, sample in samples.items() if _load_criterion_estimate(sample.estimates) is not None))
 
 
@@ -842,7 +839,7 @@ class PerformanceSummaryEvidence:
 def preflight_release_signal(project_root: Path, *, cargo_profile: str, bench_timeout: int) -> None:
     """Execute every fixture once; do not publish timing or measurement metadata."""
     for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN:
-        print(f"🔎 Preflight release-signal target {measurement.target}...", flush=True)
+        _print_benchmark_message(f"🔎 Preflight release-signal target {measurement.target}...", flush=True)
         run_cargo_live(
             ["bench", "--profile", cargo_profile, "--bench", measurement.target, "--", "--test"],
             cwd=project_root,
@@ -950,6 +947,8 @@ def _measure_suite_into(
         SavedSamplePlan("target/criterion", options.save_baseline, CompletePolicy(("name-validation",)))
     controller = Path(__file__).resolve()
     controller_digest = _sha256_file(controller)
+    configuration_digest = _benchmark_configuration_digest(project_root)
+    plan_inputs_digest = _sampling_plan_digest(targets, cargo_profile=options.cargo_profile)
     command = (
         sys.executable,
         str(controller),
@@ -973,7 +972,11 @@ def _measure_suite_into(
         timeout=options.bench_timeout * len(targets),
         probes=(("rustc", ("rustc", "--version")),),
         dependencies=(("criterion", "Cargo.lock"),),
-        context=(("delaunay.controller-sha256", controller_digest), ("delaunay.cargo-profile", options.cargo_profile)),
+        context=(
+            ("delaunay.controller-sha256", controller_digest),
+            ("delaunay.cargo-profile", options.cargo_profile),
+            ("delaunay.configuration-sha256", configuration_digest),
+        ),
     )
     tag = _current_package_tag(project_root)
     before = capture_provenance(project_root, configuration, tag, mode="independent-release")
@@ -986,9 +989,10 @@ def _measure_suite_into(
     try:
         inventory = discover_inventory(project_root, discovery, env=_benchmark_env(project_root))
     except subprocess.SubprocessError as error:
-        print(format_exception_diagnostics(error), file=sys.stderr)
+        _print_benchmark_message(format_exception_diagnostics(error), error=True)
         raise
     policy = _sampling_policy(inventory.expected)
+    plan_digest = _sampling_plan_digest(targets, cargo_profile=options.cargo_profile, policy=policy)
     for target in targets:
         run_cargo_live(
             ["bench", "--profile", options.cargo_profile, "--bench", target, "--", "--test"],
@@ -999,11 +1003,22 @@ def _measure_suite_into(
     if any(criterion.iterdir()):
         msg = "discovery or scientific preflight produced timing output"
         raise ValueError(msg)
-    if _sha256_file(controller) != controller_digest or capture_provenance(project_root, configuration, tag, mode="independent-release") != before:
+    if (
+        _sha256_file(controller) != controller_digest
+        or _benchmark_configuration_digest(project_root) != configuration_digest
+        or _sampling_plan_digest(targets, cargo_profile=options.cargo_profile) != plan_inputs_digest
+        or _sampling_plan_digest(targets, cargo_profile=options.cargo_profile, policy=_sampling_policy(inventory.expected)) != plan_digest
+        or capture_provenance(project_root, configuration, tag, mode="independent-release") != before
+    ):
         msg = "measurement inputs or host/tool identity changed during discovery or scientific preflight"
         raise ValueError(msg)
     _, provenance = measure_checkout(project_root, configuration, tag, mode="independent-release")
-    if _sha256_file(controller) != controller_digest or provenance != before:
+    if (
+        _sha256_file(controller) != controller_digest
+        or _benchmark_configuration_digest(project_root) != configuration_digest
+        or _sampling_plan_digest(targets, cargo_profile=options.cargo_profile, policy=_sampling_policy(inventory.expected)) != plan_digest
+        or provenance != before
+    ):
         msg = "measurement inputs, controller or host/tool identity changed during measurement"
         raise ValueError(msg)
     complete = collect_complete_sample(criterion, "new", policy)
@@ -1016,6 +1031,7 @@ def _measure_suite_into(
         provenance,
         context=(
             *provenance.context,
+            ("delaunay.measurement-plan-sha256", plan_digest),
             ("delaunay.inventory", json.dumps(json.loads(serialize_inventory(inventory)), separators=(",", ":"))),
             ("delaunay.sampling-policy", serialize_policy(policy).decode("utf-8")),
             ("delaunay.scientific-preflight", "passed"),
@@ -1114,7 +1130,7 @@ def _sample_delaunay_targets(project_root: Path, criterion: Path, targets: tuple
         if criterion_arguments:
             cargo_args.extend(["--", *criterion_arguments])
 
-        print(f"Running Delaunay benchmark target {target}...", flush=True)
+        _print_benchmark_message(f"Running Delaunay benchmark target {target}...", flush=True)
         try:
             result = run_cargo_command(
                 cargo_args,
@@ -1124,12 +1140,12 @@ def _sample_delaunay_targets(project_root: Path, criterion: Path, targets: tuple
                 env={**(_benchmark_env(project_root) or os.environ), "CRITERION_HOME": str(criterion)},
             )
         except subprocess.TimeoutExpired as error:
-            print(format_exception_diagnostics(error), file=sys.stderr)
+            _print_benchmark_message(format_exception_diagnostics(error), error=True)
             raise
         if result.stdout:
-            print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+            _print_benchmark_message(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
         if result.stderr:
-            print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
+            _print_benchmark_message(result.stderr, error=True, end="" if result.stderr.endswith("\n") else "\n")
         if result.returncode != 0:
             msg = f"Delaunay target {target} exited with status {result.returncode}"
             raise RuntimeError(msg)
@@ -1213,18 +1229,18 @@ class PerformanceSummaryGenerator:
                         bench_timeout=bench_timeout,
                     )
                 except _RECOVERABLE_CLI_ERRORS as error:
-                    print(
+                    _print_benchmark_message(
                         "❌ Fresh benchmark run failed; summary publication was not attempted\n" + format_exception_diagnostics(error),
-                        file=sys.stderr,
+                        error=True,
                     )
                     return False
 
-            evidence = self._collect_summary_evidence()
+            evidence = self._collect_summary_evidence(require_measurement_evidence=strict or run_benchmarks)
             validation_errors = evidence.validation_errors()
             if (strict or run_benchmarks) and validation_errors:
-                print(
+                _print_benchmark_message(
                     "❌ Strict/fresh summary requires complete measured evidence: " + "; ".join(validation_errors),
-                    file=sys.stderr,
+                    error=True,
                 )
                 return False
 
@@ -1233,16 +1249,16 @@ class PerformanceSummaryGenerator:
             content = self._generate_markdown_content(evidence=evidence, require_measurement_evidence=strict or run_benchmarks)
             _write_text_atomic(output_path, content)
 
-            print(f"📊 Generated performance summary: {output_path}")
+            _print_benchmark_message(f"📊 Generated performance summary: {output_path}")
             return True
 
         except _RECOVERABLE_CLI_ERRORS as e:
-            print(f"❌ Failed to generate performance summary: {format_exception_diagnostics(e)}", file=sys.stderr)
+            _print_benchmark_message(f"❌ Failed to generate performance summary: {format_exception_diagnostics(e)}", error=True)
             return False
 
-    def _collect_ci_performance_summary_evidence(self) -> CiPerformanceSummaryEvidence:
+    def _collect_ci_performance_summary_evidence(self, sample_name: str | None = None) -> CiPerformanceSummaryEvidence:
         """Collect parsed CI-suite rows and structural completeness evidence."""
-        results = tuple(self._parse_ci_performance_suite_results())
+        results = tuple(self._parse_ci_performance_suite_results(sample_name))
         manifest_ids = _load_ci_performance_manifest_ids(self.circumsphere_results_dir)
         if manifest_ids is not None:
             parsed_ids = {result.benchmark_id for result in results}
@@ -1275,9 +1291,9 @@ class PerformanceSummaryGenerator:
         )
         return expected
 
-    def _collect_circumsphere_summary_evidence(self) -> CircumsphereSummaryEvidence:
+    def _collect_circumsphere_summary_evidence(self, sample_name: str | None = None) -> CircumsphereSummaryEvidence:
         """Collect measured circumsphere rows or an explicitly identified fallback."""
-        parsed_cases = tuple(self._parse_circumsphere_benchmark_results())
+        parsed_cases = tuple(self._parse_circumsphere_benchmark_results(sample_name))
         expected = self._circumsphere_expected_results()
         parsed_keys = {(test_case.test_name, test_case.dimension, method_name) for test_case in parsed_cases for method_name in test_case.methods}
         missing_result_ids = tuple(sorted(result_id for result_key, result_id in expected.items() if result_key not in parsed_keys))
@@ -1293,9 +1309,9 @@ class PerformanceSummaryGenerator:
             missing_result_ids=missing_result_ids,
         )
 
-    def _collect_release_signal_section_evidence(self) -> tuple[BenchmarkPlanSectionEvidence, ...]:
+    def _collect_release_signal_section_evidence(self, sample_name: str | None = None) -> tuple[BenchmarkPlanSectionEvidence, ...]:
         """Collect report coverage directly from the executable release plan."""
-        result_ids = _criterion_result_ids(self.circumsphere_results_dir)
+        result_ids = _criterion_result_ids(self.circumsphere_results_dir, sample_name)
         sections = []
         for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN:
             matching_ids = tuple(
@@ -1314,12 +1330,18 @@ class PerformanceSummaryGenerator:
             )
         return tuple(sections)
 
-    def _collect_summary_evidence(self) -> PerformanceSummaryEvidence:
+    def _collect_summary_evidence(self, *, require_measurement_evidence: bool = False) -> PerformanceSummaryEvidence:
         """Collect every dynamic result exactly once for validation and rendering."""
+        sample_name = None
+        if require_measurement_evidence and (self.circumsphere_results_dir / "delaunay-evidence.json").exists():
+            measurement = _load_fresh_measurement(self.circumsphere_results_dir).sources[0][1]
+            sample_name = dict(measurement.context)["delaunay.sample"]
+        # Without a retained envelope, preserve structural diagnostics first;
+        # required provenance still fails closed before publication below.
         return PerformanceSummaryEvidence(
-            ci_performance=self._collect_ci_performance_summary_evidence(),
-            circumsphere=self._collect_circumsphere_summary_evidence(),
-            release_signal_sections=self._collect_release_signal_section_evidence(),
+            ci_performance=self._collect_ci_performance_summary_evidence(sample_name),
+            circumsphere=self._collect_circumsphere_summary_evidence(sample_name),
+            release_signal_sections=self._collect_release_signal_section_evidence(sample_name),
         )
 
     @staticmethod
@@ -1398,7 +1420,7 @@ class PerformanceSummaryGenerator:
             Formatted markdown content as string
         """
         if evidence is None:
-            evidence = self._collect_summary_evidence()
+            evidence = self._collect_summary_evidence(require_measurement_evidence=require_measurement_evidence)
 
         # Determine the generator name for attribution
         if generator_name is None:
@@ -1564,7 +1586,7 @@ class PerformanceSummaryGenerator:
         except _RECOVERABLE_CLI_ERRORS:
             return datetime.now(UTC).strftime("%Y-%m-%d")
 
-    def _parse_circumsphere_benchmark_results(self) -> list[CircumsphereTestCase]:
+    def _parse_circumsphere_benchmark_results(self, sample_name: str | None = None) -> list[CircumsphereTestCase]:
         """
         Parse circumsphere benchmark results from Criterion output.
 
@@ -1572,17 +1594,17 @@ class PerformanceSummaryGenerator:
             List of CircumsphereTestCase objects with parsed performance data
         """
         if not self.circumsphere_results_dir.exists():
-            print(f"⚠️ No criterion results found at {self.circumsphere_results_dir}")
+            _print_benchmark_message(f"⚠️ No criterion results found at {self.circumsphere_results_dir}")
             return []
 
         benchmark_mappings, edge_case_mappings, method_mappings, edge_method_mappings = self._get_benchmark_mappings()
 
         test_cases = []
-        test_cases.extend(self._parse_regular_benchmarks(benchmark_mappings, method_mappings))
-        test_cases.extend(self._parse_edge_case_benchmarks(edge_case_mappings, edge_method_mappings))
+        test_cases.extend(self._parse_regular_benchmarks(benchmark_mappings, method_mappings, sample_name))
+        test_cases.extend(self._parse_edge_case_benchmarks(edge_case_mappings, edge_method_mappings, sample_name))
 
         if not test_cases:
-            print("⚠️ No circumsphere benchmark results parsed")
+            _print_benchmark_message("⚠️ No circumsphere benchmark results parsed")
 
         return test_cases
 
@@ -1629,6 +1651,7 @@ class PerformanceSummaryGenerator:
         self,
         benchmark_mappings: dict[str, tuple[str, str]],
         method_mappings: dict[str, str],
+        sample_name: str | None = None,
     ) -> list[CircumsphereTestCase]:
         """
         Parse regular benchmark results.
@@ -1643,7 +1666,7 @@ class PerformanceSummaryGenerator:
         test_cases = []
 
         for bench_key, (test_name, dimension) in benchmark_mappings.items():
-            methods = self._parse_benchmark_methods(bench_key, method_mappings)
+            methods = self._parse_benchmark_methods(bench_key, method_mappings, sample_name)
 
             if methods:
                 test_case = CircumsphereTestCase(test_name=test_name, dimension=dimension, methods=methods)
@@ -1655,6 +1678,7 @@ class PerformanceSummaryGenerator:
         self,
         edge_case_mappings: dict[str, tuple[str, str]],
         edge_method_mappings: dict[str, str],
+        sample_name: str | None = None,
     ) -> list[CircumsphereTestCase]:
         """
         Parse edge case benchmark results.
@@ -1669,7 +1693,7 @@ class PerformanceSummaryGenerator:
         test_cases = []
 
         for edge_key, (test_name, dimension) in edge_case_mappings.items():
-            methods = self._parse_benchmark_methods(edge_key, edge_method_mappings)
+            methods = self._parse_benchmark_methods(edge_key, edge_method_mappings, sample_name)
 
             if methods:
                 # Mark boundary cases: "Boundary vertex" tests have early-exit optimizations
@@ -1679,7 +1703,9 @@ class PerformanceSummaryGenerator:
 
         return test_cases
 
-    def _parse_benchmark_methods(self, bench_key: str, method_mappings: dict[str, str]) -> dict[str, CircumspherePerformanceData]:
+    def _parse_benchmark_methods(
+        self, bench_key: str, method_mappings: dict[str, str], sample_name: str | None = None
+    ) -> dict[str, CircumspherePerformanceData]:
         """
         Parse methods for a single benchmark.
 
@@ -1694,14 +1720,14 @@ class PerformanceSummaryGenerator:
 
         for method_suffix, method_name in method_mappings.items():
             criterion_path = self.circumsphere_results_dir / f"{bench_key}_{method_suffix}"
-            performance_data = self._parse_single_method_result(criterion_path, method_name)
+            performance_data = self._parse_single_method_result(criterion_path, method_name, sample_name)
 
             if performance_data:
                 methods[method_name] = performance_data
 
         return methods
 
-    def _parse_single_method_result(self, criterion_path: Path, method_name: str) -> CircumspherePerformanceData | None:
+    def _parse_single_method_result(self, criterion_path: Path, method_name: str, sample_name: str | None = None) -> CircumspherePerformanceData | None:
         """
         Parse a single method result from Criterion output.
 
@@ -1712,8 +1738,8 @@ class PerformanceSummaryGenerator:
         Returns:
             CircumspherePerformanceData object or None if parsing failed
         """
-        estimates_file = criterion_path / "new" / "estimates.json"
-        if not estimates_file.exists():
+        estimates_file = criterion_path / (sample_name or "new") / "estimates.json"
+        if sample_name is None and not estimates_file.exists():
             estimates_file = criterion_path / "base" / "estimates.json"
 
         if estimates_file.exists():
@@ -1774,7 +1800,7 @@ class PerformanceSummaryGenerator:
         """Extract a human-readable input size from Criterion benchmark path parts."""
         return path_parts[-1] if len(path_parts) > 2 else "fixed fixture"
 
-    def _parse_ci_performance_suite_results(self) -> list[CiPerformanceResult]:
+    def _parse_ci_performance_suite_results(self, sample_name: str | None = None) -> list[CiPerformanceResult]:
         """
         Parse Criterion data for the versioned ci_performance_suite benchmark IDs.
 
@@ -1787,7 +1813,7 @@ class PerformanceSummaryGenerator:
             return []
 
         results = []
-        for path_parts, estimates_path in _collect_ci_suite_estimates(criterion_dir):
+        for path_parts, estimates_path in _collect_ci_suite_estimates(criterion_dir, sample_name):
             estimates = _load_criterion_estimate(estimates_path)
             if estimates is None:
                 continue
@@ -2518,9 +2544,9 @@ def write_criterion_comparison_report(repo_root: Path, request: CriterionReportR
         criterion_dir = repo_root / criterion_dir
 
     if not criterion_dir.is_dir():
-        print(
+        _print_benchmark_message(
             f"No Criterion results found at {criterion_dir}.\nRun benchmarks first:\n  just bench-latest\n",
-            file=sys.stderr,
+            error=True,
         )
         return False
 
@@ -2532,11 +2558,11 @@ def write_criterion_comparison_report(repo_root: Path, request: CriterionReportR
         scope=request.scope,
     )
     if not comparisons:
-        print(
+        _print_benchmark_message(
             f"No comparison data found for baseline {request.baseline_name!r}.\n"
             f"Save a baseline first:\n  just bench-save-baseline {request.baseline_name}\n"
             "Then run benchmarks:\n  just bench-latest\n",
-            file=sys.stderr,
+            error=True,
         )
         return False
 
@@ -2552,7 +2578,7 @@ def write_criterion_comparison_report(repo_root: Path, request: CriterionReportR
         ),
     )
     _write_text_atomic(output_path, report)
-    print(f"📊 Wrote {output_path}")
+    _print_benchmark_message(f"📊 Wrote {output_path}")
     return True
 
 
@@ -2768,16 +2794,7 @@ def render_performance_bundle(
 
 def _progress(message: str) -> None:
     """Write one immediately visible performance-workflow phase marker."""
-    print(f"[performance] {message}", file=sys.stderr, flush=True)
-
-
-def _normalize_worktree_ref_for_tag(worktree_ref: str, current_tag: str) -> str:
-    """Use the normalized current tag when a bare matching tag was requested."""
-    try:
-        normalized_ref = normalize_release_tag(worktree_ref)
-    except ValueError:
-        return worktree_ref
-    return current_tag if normalized_ref == current_tag else worktree_ref
+    _print_benchmark_message(f"[performance] {message}", error=True, flush=True)
 
 
 def resolve_performance_request(options: PerformanceRequestOptions) -> ResolvedPerformanceRequest:
@@ -2803,11 +2820,9 @@ def resolve_performance_request(options: PerformanceRequestOptions) -> ResolvedP
         current=options.current_tag,
         baseline=options.baseline_tag,
     )
-    worktree_ref = pair.current if options.published_latest and options.worktree_ref == "HEAD" else options.worktree_ref
     return ResolvedPerformanceRequest(
         current_tag=pair.current,
         baseline_tag=pair.baseline,
-        worktree_ref=_normalize_worktree_ref_for_tag(worktree_ref, pair.current),
         tags_to_fetch=(pair.current, pair.baseline) if options.published_latest else (pair.baseline,),
     )
 
@@ -2973,6 +2988,30 @@ def _benchmark_harness_digest(
     return _path_content_digest(checkout, _benchmark_harness_files(checkout, suite, comparison_targets)).hex()
 
 
+def _benchmark_identity_environment() -> list[tuple[str, str]]:
+    """Retain benchmark controls and the declared measurement build-policy settings."""
+    rust_settings = {
+        "CARGO_BUILD_RUSTFLAGS",
+        "CARGO_BUILD_TARGET",
+        "CARGO_ENCODED_RUSTDOCFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_INCREMENTAL",
+        "RUSTC",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTC_WRAPPER",
+        "RUSTDOCFLAGS",
+        "RUSTFLAGS",
+        "RUSTUP_TOOLCHAIN",
+    }
+    return sorted(
+        (key, value)
+        for key, value in os.environ.items()
+        if key in rust_settings
+        or key.startswith(("BENCH_", "CRIT_", "DELAUNAY_BENCH_", "CARGO_PROFILE_"))
+        or (key.startswith("CARGO_TARGET_") and key.endswith(("_RUSTFLAGS", "_LINKER", "_RUNNER")))
+    )
+
+
 def _benchmark_configuration_digest(checkout: Path) -> str:
     """Hash orchestration files and benchmark-affecting environment settings."""
     relative_paths = (
@@ -3003,12 +3042,7 @@ def _benchmark_configuration_digest(checkout: Path) -> str:
         cargo_lock = {**cargo_lock, "package": normalized_packages}
     digest.update(json.dumps(cargo_lock, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     digest.update(b"\0")
-    relevant_environment = sorted(
-        (key, value)
-        for key, value in os.environ.items()
-        if key in {"CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS", "RUSTUP_TOOLCHAIN"} or key.startswith(("BENCH_", "CRIT_", "DELAUNAY_BENCH_"))
-    )
-    for key, value in relevant_environment:
+    for key, value in _benchmark_identity_environment():
         digest.update(f"env:{key}".encode())
         digest.update(b"\0")
         digest.update(value.encode("utf-8"))
@@ -3025,33 +3059,7 @@ def _measurement_plan_digest(
 ) -> str:
     """Hash the normalized benchmark method independently of measured source."""
     targets = _comparison_targets_for_suite(suite, comparison_targets)
-    if suite == "release-signal":
-        target_set = set(targets)
-        measurements = tuple(measurement for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN if measurement.target in target_set)
-    else:
-        present = set(_bench_targets_for_suite(checkout, suite))
-        measurements = tuple(BenchmarkTargetMeasurement(target) for target in targets if target in present)
-    payload: dict[str, object] = {
-        "cargo_features": [],
-        "cargo_profile": BENCHMARK_BUILD_FLAVOR,
-        "statistic": "median",
-        "suite": suite,
-        "targets": [
-            {
-                "command": list(measurement.command),
-                "criterion_arguments": list(measurement.criterion_arguments),
-                "sampling_mode": measurement.sampling_mode,
-                "target": measurement.target,
-            }
-            for measurement in measurements
-        ],
-    }
-    relevant_environment = sorted(
-        (key, value)
-        for key, value in os.environ.items()
-        if key in {"CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS", "RUSTUP_TOOLCHAIN"} or key.startswith(("BENCH_", "CRIT_", "DELAUNAY_BENCH_"))
-    )
-    payload["environment"] = relevant_environment
+    policy = None
     policy_path = checkout / "target" / "criterion" / MEASUREMENT_POLICY_FILE
     if inventory is not None or policy_path.is_file():
         if inventory is None:
@@ -3061,6 +3069,44 @@ def _measurement_plan_digest(
             policy = _sampling_policy(inventory.expected)
         selected_ids = tuple(name for target, names in inventory.suites if target in targets for name in names)
         policy = replace(policy, expected=selected_ids, sample_count=None, sample_counts=tuple((name, policy.count_for(name)) for name in selected_ids))
+    if suite != "release-signal":
+        present = set(_bench_targets_for_suite(checkout, suite))
+        targets = tuple(target for target in targets if target in present)
+    return _sampling_plan_digest(targets, suite=suite, policy=policy)
+
+
+def _sampling_plan_digest(
+    targets: tuple[str, ...],
+    *,
+    suite: str | None = None,
+    cargo_profile: str = BENCHMARK_BUILD_FLAVOR,
+    policy: CompletePolicy | None = None,
+) -> str:
+    """Bind the selected method and policy without reading a previous run's files."""
+    if suite is None:
+        suite = next((name for name, planned in BENCH_TARGET_SUITES.items() if planned == targets), "selected-targets")
+    if suite == "release-signal":
+        target_set = set(targets)
+        measurements = tuple(measurement for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN if measurement.target in target_set)
+    else:
+        measurements = tuple(BenchmarkTargetMeasurement(target) for target in targets)
+    payload: dict[str, object] = {
+        "cargo_features": [],
+        "cargo_profile": cargo_profile,
+        "statistic": "median",
+        "suite": suite,
+        "targets": [
+            {
+                "command": [*measurement.command[:3], cargo_profile, *measurement.command[4:]],
+                "criterion_arguments": list(measurement.criterion_arguments),
+                "sampling_mode": measurement.sampling_mode,
+                "target": measurement.target,
+            }
+            for measurement in measurements
+        ],
+    }
+    payload["environment"] = _benchmark_identity_environment()
+    if policy is not None:
         payload["sampling_policy"] = json.loads(serialize_policy(policy))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -3092,6 +3138,8 @@ def _toolchain_state(
     checkout: Path,
     suite: str,
     comparison_targets: tuple[str, ...] | None = None,
+    *,
+    inventory: CriterionInventory | None = None,
 ) -> ToolchainState:
     """Capture the Rust, Criterion, lockfile, and harness configuration."""
     return ToolchainState(
@@ -3101,7 +3149,7 @@ def _toolchain_state(
         cargo_lock_sha256=_sha256_file(checkout / "Cargo.lock"),
         harness_sha256=_benchmark_harness_digest(checkout, suite, comparison_targets),
         configuration_sha256=_benchmark_configuration_digest(checkout),
-        measurement_plan_sha256=_measurement_plan_digest(checkout, suite, comparison_targets),
+        measurement_plan_sha256=_measurement_plan_digest(checkout, suite, comparison_targets, inventory=inventory),
     )
 
 
@@ -3236,8 +3284,9 @@ def write_release_benchmark_metadata(*, repo_root: Path, tag: str, criterion_dir
     if source.source_state_sha256 != clean_source_digest:
         msg = f"release benchmark checkout source-state digest is inconsistent with clean tag {normalized_tag}"
         raise ValueError(msg)
-    toolchain = _toolchain_state(repo_root, "release-signal")
     measurement = _load_fresh_measurement(criterion_dir)
+    inventory = parse_inventory((criterion_dir / MEASUREMENT_INVENTORY_FILE).read_bytes())
+    toolchain = _toolchain_state(repo_root, "release-signal", inventory=inventory)
     measured_source = measurement.sources[0][1]
     measured_metadata = dict(measured_source.context)
     _validate_release_measurement_command(measured_metadata)
@@ -3251,7 +3300,6 @@ def write_release_benchmark_metadata(*, repo_root: Path, tag: str, criterion_dir
         msg = "release metadata differs from the captured measurement identity"
         raise ValueError(msg)
     host = _measurement_host(measurement)
-    inventory = parse_inventory((criterion_dir / MEASUREMENT_INVENTORY_FILE).read_bytes())
     if {name for name, _ in inventory.suites} != set(RELEASE_SIGNAL_BENCH_TARGETS):
         msg = "release archive requires every release-signal target"
         raise ValueError(msg)
@@ -3267,6 +3315,12 @@ def write_release_benchmark_metadata(*, repo_root: Path, tag: str, criterion_dir
         or measured_source.harness_sha256 != fingerprint_files(repo_root, harness)
     ):
         msg = "release measurement source or harness differs from the clean tag checkout"
+        raise ValueError(msg)
+    if (
+        measured_metadata.get("delaunay.configuration-sha256") != toolchain.configuration_sha256
+        or measured_metadata.get("delaunay.measurement-plan-sha256") != toolchain.measurement_plan_sha256
+    ):
+        msg = "release configuration or measurement plan differs from the captured measurement identity"
         raise ValueError(msg)
     payload = {
         "schema_version": RELEASE_ASSET_METADATA_SCHEMA_VERSION,
@@ -3825,12 +3879,9 @@ def generate_historical_asset_report(*, output: Path, config: ReleaseReportConfi
         repo_root=config.repo_root,
         current_tag=current_tag,
         baseline_tag=baseline_tag,
-        worktree_ref=config.worktree_ref,
         suite=config.suite,
         scope=config.scope,
         stat=config.stat,
-        apply_current_diff=config.apply_current_diff,
-        baseline_source=config.baseline_source,
     )
     _preflight_performance_destinations(
         output=output,
@@ -3972,7 +4023,6 @@ def _add_release_performance_subcommands(subparsers: argparse._SubParsersAction[
     assets_parser.add_argument("current_tag", nargs="?")
     assets_parser.add_argument("baseline_tag", nargs="?")
     assets_parser.add_argument("--output", type=Path, default=GITHUB_ASSETS_PERFORMANCE_REPORT)
-    assets_parser.add_argument("--worktree-ref", default="HEAD")
     _add_project_root_arg(assets_parser)
 
 
@@ -4022,7 +4072,7 @@ def _cmd_bench_compare(args: argparse.Namespace, project_root: Path) -> None:
             ),
         )
     except _RECOVERABLE_CLI_ERRORS as error:
-        print(f"bench-compare: {format_exception_diagnostics(error)}", file=sys.stderr)
+        _print_benchmark_message(f"bench-compare: {format_exception_diagnostics(error)}", error=True)
         sys.exit(1)
     sys.exit(0 if success else 2)
 
@@ -4062,7 +4112,7 @@ def _cmd_run_release_signal(args: argparse.Namespace, project_root: Path) -> Non
                 save_baseline=args.save_baseline,
             )
     except _RECOVERABLE_CLI_ERRORS as error:
-        print(f"run-release-signal: {format_exception_diagnostics(error)}", file=sys.stderr)
+        _print_benchmark_message(f"run-release-signal: {format_exception_diagnostics(error)}", error=True)
         sys.exit(1)
     sys.exit(0)
 
@@ -4076,24 +4126,15 @@ def _release_config_from_args(
     args: argparse.Namespace,
     project_root: Path,
     request: ResolvedPerformanceRequest,
-    *,
-    baseline_source: BaselineSource,
-    apply_current_diff: bool,
 ) -> ReleaseReportConfig:
     """Build release report generation config from parsed arguments."""
-    worktree_ref = request.worktree_ref
-    if baseline_source == "github-assets" and worktree_ref == "HEAD":
-        worktree_ref = request.current_tag
     return ReleaseReportConfig(
         repo_root=project_root,
         current_tag=request.current_tag,
         baseline_tag=request.baseline_tag,
-        worktree_ref=worktree_ref,
         suite=getattr(args, "suite", "release-signal"),
         scope=getattr(args, "scope", "release-signal"),
         stat=getattr(args, "stat", "median"),
-        apply_current_diff=apply_current_diff,
-        baseline_source=baseline_source,
     )
 
 
@@ -4112,7 +4153,6 @@ def _performance_request_options(
         published_latest=published_latest,
         infer_release=infer_release,
         current_vs_latest=current_vs_latest,
-        worktree_ref=args.worktree_ref,
         repo_root=project_root,
     )
 
@@ -4127,7 +4167,7 @@ def _cmd_create_release_benchmark_metadata(args: argparse.Namespace, project_roo
             output=_path_from_root(project_root, args.output),
         )
     except _RECOVERABLE_CLI_ERRORS as exc:
-        print(f"create-release-benchmark-metadata: {format_exception_diagnostics(exc)}", file=sys.stderr)
+        _print_benchmark_message(f"create-release-benchmark-metadata: {format_exception_diagnostics(exc)}", error=True)
         sys.exit(1)
     sys.exit(0)
 
@@ -4144,21 +4184,15 @@ def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path)
             output=output,
             report_id=PerformanceReportId(current_tag=request.current_tag, baseline_tag=request.baseline_tag),
         )
-        config = _release_config_from_args(
-            args,
-            project_root,
-            request,
-            baseline_source="github-assets",
-            apply_current_diff=False,
-        )
+        config = _release_config_from_args(args, project_root, request)
         report_id = generate_historical_asset_report(output=output, config=config)
     except _RECOVERABLE_CLI_ERRORS as exc:
-        print(f"performance-github-assets: {format_exception_diagnostics(exc)}", file=sys.stderr)
+        _print_benchmark_message(f"performance-github-assets: {format_exception_diagnostics(exc)}", error=True)
         sys.exit(1)
 
-    print(f"Generated benchmark report from GitHub Release assets and wrote it to {output}")
-    print(f"Retained artifact bundle: {_artifact_paths_for_output(output).payload} and {_artifact_paths_for_output(output).provenance}")
-    print(f"Current performance report: {report_id.current_tag} vs {report_id.baseline_tag}")
+    _print_benchmark_message(f"Generated benchmark report from GitHub Release assets and wrote it to {output}")
+    _print_benchmark_message(f"Retained artifact bundle: {_artifact_paths_for_output(output).payload} and {_artifact_paths_for_output(output).provenance}")
+    _print_benchmark_message(f"Current performance report: {report_id.current_tag} vs {report_id.baseline_tag}")
     sys.exit(0)
 
 
@@ -4231,13 +4265,13 @@ def main() -> None:
         else:
             project_root = find_project_root()
     except ProjectRootNotFoundError as e:
-        print(f"error: {e}", file=sys.stderr)
+        _print_benchmark_message(f"error: {e}", error=True)
         sys.exit(2)
 
     try:
         execute_command(args, project_root)
     except ExceptionGroup as error:
-        print(f"benchmark-utils: {format_exception_diagnostics(error)}", file=sys.stderr)
+        _print_benchmark_message(f"benchmark-utils: {format_exception_diagnostics(error)}", error=True)
         sys.exit(1)
 
 

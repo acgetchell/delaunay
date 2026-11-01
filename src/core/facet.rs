@@ -19,24 +19,23 @@
 //!
 //! # Fundamental Invariant
 //!
-//! **A critical TDS invariant is that each facet is incident to one or two
-//! simplices. One-sided incidence is not, by itself, a manifold boundary
-//! classification: topology-aware triangulation queries decide whether a
-//! one-sided facet is true boundary or an admissible closed self-identification.**
+//! **A critical TDS invariant is that each facet has one or two distinct local
+//! occurrences. Topology-aware queries determine whether a one-sided facet is
+//! an allowed boundary or an invalid opening in a closed topology.**
 //!
 //! This property ensures the triangulation forms a valid simplicial complex:
-//! - **Two-sided facets**: shared by exactly 2 simplices (defines proper adjacency)
-//! - **One-sided facets**: incident to exactly 1 simplex
+//! - **Two-sided facets**: exactly 2 distinct simplex-local facet occurrences
+//! - **One-sided facets**: exactly 1 local facet occurrence
 //! - **Boundary facets**: topology-approved one-sided facets in spaces that admit boundary
-//! - **Periodic self-identifications**: one-sided in quotient storage, but closed rather than boundary
-//! - **Invalid configurations**: Facets shared by 0, 3, or more simplices indicate topological errors
+//! - **Periodic self-identifications**: 2 distinct occurrences may belong to the same stored
+//!   simplex, with matching normalized lifted identities and reciprocal neighbor slots
+//! - **Invalid configurations**: 0 or more than 2 occurrences, or a facet used as its own mirror
 //!
 //! This invariant is fundamental to many algorithms and is actively validated during triangulation
 //! construction and validation phases.
 //!
-//! For a comprehensive discussion of all topological invariants in Delaunay triangulations,
-//! see the [Topological Invariants](crate::prelude::tds#topological-invariants)
-//! section in the triangulation data structure documentation.
+//! See [`Tds::is_valid`] for the Level 2 structural checks and
+//! [`Tds::validate`] for cumulative Levels 1–2 validation.
 //!
 //! # Examples
 //!
@@ -1114,19 +1113,18 @@ impl FacetIncidence {
         }
     }
 
-    /// Returns true when this facet is incident to exactly one D-simplex.
+    /// Returns true when this facet has exactly one local occurrence.
     ///
-    /// One-sided facets are open incidence candidates only. Periodic quotient
-    /// triangulations may use one-sided self-identifications for closed
-    /// topology, so manifold boundary classification belongs to the topology
-    /// layer.
+    /// One-sided facets are open incidence candidates. The topology layer
+    /// decides whether boundary is permitted. A closed periodic identification
+    /// requires two distinct reciprocal occurrences, even within one simplex.
     #[inline]
     #[must_use]
     pub(crate) const fn is_one_sided(self) -> bool {
         matches!(self.kind, FacetIncidenceKind::OneSided(_))
     }
 
-    /// Returns the number of incident D-simplices.
+    /// Returns the number of local facet occurrences, including self-identification multiplicity.
     #[inline]
     #[must_use]
     pub(crate) const fn incident_simplex_count(self) -> usize {
@@ -2038,10 +2036,10 @@ impl<U, V, const D: usize> FusedIterator for BoundaryFacetsIter<'_, U, V, D> {}
 /// Iterator over one-sided facet incidences in a TDS.
 ///
 /// This is a TDS-level incidence traversal, not a topology-aware boundary
-/// query. Closed periodic self-identifications can be one-sided in the quotient
-/// incidence index without being manifold boundary. The iterator owns a sorted
-/// handle list derived from the parsed incidence index while borrowing the TDS
-/// that produced it.
+/// query. A one-sided occurrence is an open facet; a closed periodic
+/// self-identification requires two distinct reciprocal occurrences and is not
+/// included here. The iterator owns a sorted handle list derived from the parsed
+/// incidence index while borrowing the TDS that produced it.
 ///
 /// # Examples
 ///

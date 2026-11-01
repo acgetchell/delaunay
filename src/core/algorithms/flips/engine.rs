@@ -12,8 +12,7 @@ use super::{
     RemovedSimplexVertexSnapshot, ReplacementPeriodicOffsets, ReplacementSimplexVertices, Simplex,
     SimplexKey, SimplexKeyBuffer, SmallBuffer, Tds, TdsValidationFailure, VertexKey, VertexKeyList,
     build_flip_topology_index, env, external_facets_for_boundary, extract_cavity_boundary,
-    facet_key_from_vertices, facet_order, facet_vertices_from_simplex,
-    flip_would_create_nonmanifold_facets_any, flip_would_duplicate_simplex_any,
+    facet_order, flip_would_create_nonmanifold_facets_any, flip_would_duplicate_simplex_any,
     normalized_facet_order_with_offsets, orient_replacement_simplices,
     periodic_offsets_or_zero_frame, repair_trace_enabled, replacement_simplex_periodic_offsets,
     robust_orientation, validate_replacement_orientation, vertices_to_points,
@@ -578,7 +577,6 @@ where
         }
 
         for facet_idx in 0..simplex.number_of_vertices() {
-            let facet_vertices = facet_vertices_from_simplex(simplex, facet_idx);
             let facet_idx_u8 =
                 u8::try_from(facet_idx).map_err(|_| TdsValidationFailure::IndexOutOfBounds {
                     index: facet_idx,
@@ -586,7 +584,10 @@ where
                     context: "flip trial facet index".to_string(),
                 })?;
             facet_to_simplices
-                .entry(facet_key_from_vertices(&facet_vertices))
+                .entry(
+                    tds.facet_key_for_simplex_facet(simplex_key, facet_idx)
+                        .map_err(TdsValidationFailure::from)?,
+                )
                 .or_default()
                 .push((simplex_key, facet_idx_u8));
         }
@@ -762,10 +763,7 @@ where
                 },
             });
         }
-        if neighbor_key == simplex_key {
-            if Tds::<U, V, D>::allows_periodic_self_neighbor(simplex) {
-                continue;
-            }
+        if neighbor_key == simplex_key && !Tds::<U, V, D>::allows_periodic_self_neighbor(simplex) {
             return Err(TdsValidationFailure::InvalidNeighbors {
                 reason: NeighborValidationError::NonPeriodicSelfNeighbor {
                     simplex_key,
@@ -786,19 +784,17 @@ where
                         context: "flip trial neighbor validation".to_string(),
                     },
                 })?;
-        let mirror_idx = simplex
-            .mirror_facet_index(facet_idx, neighbor_simplex)
-            .ok_or_else(|| TdsValidationFailure::InvalidNeighbors {
-                reason: NeighborValidationError::MirrorFacetMissing {
-                    simplex_uuid: simplex.uuid(),
-                    facet_index: facet_idx,
-                    neighbor_uuid: neighbor_simplex.uuid(),
-                    context: "flip trial neighbor validation".to_string(),
-                },
-            })?;
+        let mirror_idx = Tds::<U, V, D>::orientation_mirror_facet_index(
+            simplex,
+            facet_idx,
+            neighbor_simplex,
+            "flip trial neighbor validation",
+        )
+        .map_err(TdsValidationFailure::from)?;
         validate_flip_trial_mutual_facet_neighbors(
             tds,
-            facet_key_from_vertices(&facet_vertices_from_simplex(simplex, facet_idx)),
+            tds.facet_key_for_simplex_facet(simplex_key, facet_idx)
+                .map_err(TdsValidationFailure::from)?,
             simplex_key,
             facet_idx,
             neighbor_key,
@@ -1039,6 +1035,7 @@ mod tests {
     use super::super::*;
     use super::*;
     use crate::core::algorithms::insertion::repair_neighbor_pointers;
+    use crate::core::facet::facet_key_from_vertices;
     use crate::core::test_support::{assert_same_vertex_simplex_topology, snapshot_topology};
     use crate::vertex;
     use proptest::prelude::*;
@@ -1094,8 +1091,10 @@ mod tests {
             })
         );
 
-        // The same local link is admissible with per-vertex periodic offsets.
-        // This checks the flip-trial rule, not the topology of a whole quotient.
+        // Offsetting the omitted vertex does not create a second occurrence
+        // of the self-linked facet. Its distinct quotient keys exclude every
+        // other local facet, and a finite nonempty set cannot equal its own
+        // nonzero lattice translate. Preserve this exact invalid input.
         let mut offsets = vec![[0_i8; D]; D + 1];
         offsets[D] = [1_i8; D];
         tds.simplex_mut(simplex_key)
@@ -1103,7 +1102,22 @@ mod tests {
             .set_periodic_vertex_offsets(offsets)
             .unwrap();
         let simplex = tds.simplex(simplex_key).unwrap();
-        validate_flip_trial_simplex_neighbors(&tds, simplex_key, simplex, &[]).unwrap();
+        assert!(matches!(
+            validate_flip_trial_simplex_neighbors(&tds, simplex_key, simplex, &[]),
+            Err(TdsValidationFailure::InvalidNeighbors {
+                reason: NeighborValidationError::MirrorFacetMissing { .. }
+            })
+        ));
+    }
+
+    #[test]
+    fn periodic_traversal_flip_trial_checks_all_grid_facet_classes() {
+        let (tds, _) = Tds::periodic_grid_t2_for_test(false);
+        let keys: Vec<_> = tds.simplex_keys().collect();
+        validate_flip_trial_local_facet_sharing(&tds, &keys).unwrap();
+        for (key, simplex) in tds.simplices() {
+            validate_flip_trial_simplex_neighbors(&tds, key, simplex, &[]).unwrap();
+        }
     }
 
     /// Checks that a retired key cannot remain linked even while still in storage.

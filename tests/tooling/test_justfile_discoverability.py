@@ -134,9 +134,9 @@ def test_cli_recipe_runs_binary_unit_and_integration_targets() -> None:
 
 
 def test_feature_lane_reaches_ci_without_default_or_slow_test_runs() -> None:
-    """CI executes optional library tests and examples through focused target lanes."""
+    """CI executes optional library, doctest, and public allocation target lanes."""
     recipes = inspect_justfile(REPO_ROOT).recipes
-    assert {item["recipe"] for item in recipes["test-features"]["dependencies"]} == {"test-unit-features", "test-doc-features"}
+    assert {item["recipe"] for item in recipes["test-features"]["dependencies"]} == {"test-unit-features", "test-doc-features", "test-allocation"}
     assert "test-features" in {item["recipe"] for item in recipes["test-rust"]["dependencies"]}
     rendered = dry_run(REPO_ROOT, "test-features").stderr
     assert rendered.count("--features diagnostics,count-allocations,bench") == 4
@@ -147,12 +147,13 @@ def test_feature_lane_reaches_ci_without_default_or_slow_test_runs() -> None:
     assert rendered.count("--doc --release") == 2
     assert "bench measure_with_result" in rendered
     assert "bench debug_print_first_delaunay_violation" in rendered
+    assert rendered.count("--test allocation_api --features count-allocations") == 1
     assert "slow-tests" not in rendered
     assert "--all-features" not in rendered
 
     ci = dry_run(REPO_ROOT, "ci").stderr
     # Each target lane appears once in the aggregate, including its multiline filter.
-    for recipe in ("test-unit-features", "test-doc-features"):
+    for recipe in ("test-unit-features", "test-doc-features", "test-allocation"):
         commands = dry_run(REPO_ROOT, recipe).stderr
         commands = "\n".join(line for line in commands.splitlines() if "toolchain check" not in line)
         assert ci.count(commands) == 1, recipe

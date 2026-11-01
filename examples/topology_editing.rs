@@ -684,7 +684,7 @@ fn inserted_edge_3d(
     dt: &Dt3,
     vertices: &[VertexKey],
     demo: &'static str,
-) -> ExampleResult<EdgeKey> {
+) -> ExampleResult<EdgeKey<3>> {
     let [a, b] = vertices else {
         return Err(
             TopologyEditingExampleError::UnexpectedInsertedFaceVertices {

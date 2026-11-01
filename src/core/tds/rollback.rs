@@ -7,6 +7,7 @@ use crate::core::tds::errors::TriangulationConstructionState;
 use crate::core::tds::incidence::VertexIncidenceSnapshot;
 use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::vertex::Vertex;
+use std::mem::needs_drop;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use uuid::Uuid;
@@ -229,12 +230,22 @@ impl<U, V, const D: usize> Tds<U, V, D> {
     pub(super) fn remove_simplex_storage_transactionally(
         &mut self,
         key: SimplexKey,
+        deferred_drops: &mut Vec<Simplex<V, D>>,
     ) -> Option<Uuid> {
-        let Some(journal) = self.rollback_journals.last() else {
-            return self.simplices.remove(key).map(|simplex| simplex.uuid());
-        };
-        if journal.contains_inserted_simplex(key) {
-            return self.simplices.remove(key).map(|simplex| simplex.uuid());
+        if self
+            .rollback_journals
+            .last()
+            .is_none_or(|journal| journal.contains_inserted_simplex(key))
+        {
+            let removed = self.simplices.remove(key)?;
+            let uuid = removed.uuid();
+            // Caller-owned payload destructors may panic. Retain their values
+            // until the complete removal batch has published coherent metadata.
+            // Plain payloads need no extra allocation on the common hot path.
+            if needs_drop::<V>() {
+                deferred_drops.push(removed);
+            }
+            return Some(uuid);
         }
         let removed = self.simplices.tombstone(key)?;
         let uuid = removed.uuid();

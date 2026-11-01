@@ -117,7 +117,7 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
         &self,
         simplices_to_check: Option<&[SimplexKey]>,
     ) -> Result<DelaunayViolationReport, DelaunayValidationError> {
-        tds_delaunay_violation_report(self.tds(), simplices_to_check)
+        tds_delaunay_violation_report(self.tds(), &self.global_topology(), simplices_to_check)
     }
 
     /// Logs the first Level 5 violation in this generic triangulation.
@@ -142,7 +142,11 @@ impl<K, U, V, const D: usize> Triangulation<K, U, V, D> {
     #[cfg(feature = "diagnostics")]
     #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
     pub fn debug_print_first_delaunay_violation(&self, simplices_subset: Option<&[SimplexKey]>) {
-        debug_print_first_tds_delaunay_violation(self.tds(), simplices_subset);
+        debug_print_first_tds_delaunay_violation(
+            self.tds(),
+            &self.global_topology(),
+            simplices_subset,
+        );
     }
 }
 
@@ -860,7 +864,7 @@ where
             });
         }
 
-        tds_delaunay_violation_report(&self.tri.tds, simplices_to_check)
+        self.tri.delaunay_violation_report(simplices_to_check)
     }
 
     /// Logs detailed information for the first Delaunay violation, when present.
@@ -888,7 +892,8 @@ where
     #[cfg(feature = "diagnostics")]
     #[cfg_attr(docsrs, doc(cfg(feature = "diagnostics")))]
     pub fn debug_print_first_delaunay_violation(&self, simplices_subset: Option<&[SimplexKey]>) {
-        debug_print_first_tds_delaunay_violation(&self.tri.tds, simplices_subset);
+        self.tri
+            .debug_print_first_delaunay_violation(simplices_subset);
     }
 
     /// Verify the local Delaunay flip normal form in O(simplices).
@@ -1125,15 +1130,112 @@ mod tests {
     use crate::core::traits::data_type::DataType;
     use crate::core::vertex::Vertex;
     use crate::delaunay_model::EuclideanDelaunayReportDomain;
+    use crate::delaunay_test_support::init_tracing;
     use crate::geometry::coordinate_range::CoordinateRange;
-    use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates};
+    use crate::geometry::kernel::{AdaptiveKernel, ExactPredicates, RobustKernel};
     use crate::geometry::point::Point;
     use crate::geometry::traits::coordinate::CoordinateConversionError;
     use crate::geometry::util::generate_random_points_in_range_seeded;
+    use crate::topology::traits::topological_space::ToroidalConstructionMode;
     use crate::vertex;
     use slotmap::KeyData;
-    use std::{assert_matches, error::Error, sync::Once};
+    use std::{array::from_fn, assert_matches, error::Error};
     use uuid::Uuid;
+
+    #[test]
+    fn periodic_traversal_reports_use_lifted_grid_geometry() {
+        for move_corner in [false, true] {
+            let (tds, _) = Tds::periodic_grid_t2_for_test(move_corner);
+            let topology = GlobalTopology::try_toroidal(
+                [1.0; 2],
+                ToroidalConstructionMode::PeriodicImagePoint,
+            )
+            .unwrap();
+            let tri = TriangulationBuilder::new(tds, RobustKernel::new())
+                .global_topology(topology)
+                .build()
+                .unwrap();
+            let report = tri.delaunay_violation_report(None).unwrap();
+            // Rectangular cells have empty circumcircles. Moving (0,1/4) to
+            // (1/8,1/4) puts it strictly inside the circle centered at
+            // (1/4,1/8), radius squared 5/64, of the unchanged lower triangle.
+            assert_eq!(report.is_valid(), !move_corner);
+            let keys: Vec<_> = tri.simplices().map(|(key, _)| key).collect();
+            assert_eq!(tri.delaunay_violation_report(Some(&keys)).unwrap(), report);
+        }
+    }
+
+    #[test]
+    fn periodic_traversal_decimal_periods_preserve_exact_rectangular_cells() {
+        let (mut tds, vertices) = Tds::periodic_grid_t2_for_test(false);
+        let periods = [0.3, 0.7];
+        for key in vertices {
+            let old = *tds.vertex(key).unwrap();
+            let coords = from_fn(|axis| old.point().coords()[axis] * periods[axis]);
+            let mut replacement =
+                Vertex::try_new_with_uuid(Point::try_new(coords).unwrap(), old.uuid(), None)
+                    .unwrap();
+            replacement.incident_simplex = old.incident_simplex;
+            *tds.vertex_mut_for_test(key).unwrap() = replacement;
+        }
+        let topology =
+            GlobalTopology::try_toroidal(periods, ToroidalConstructionMode::PeriodicImagePoint)
+                .unwrap();
+        let tri = TriangulationBuilder::new(tds, RobustKernel::new())
+            .global_topology(topology)
+            .build()
+            .unwrap();
+        // Every cell is an axis-aligned rectangle cut along a diagonal. No
+        // grid vertex is strictly inside its circle, including across seams.
+        // Both corners and candidate images use exact stored-input-bit lifts.
+        let report = tri.delaunay_violation_report(None).unwrap();
+        assert!(report.is_valid());
+        for (key, _) in tri.simplices() {
+            assert!(
+                tri.delaunay_violation_report(Some(&[key]))
+                    .unwrap()
+                    .is_valid()
+            );
+        }
+    }
+
+    #[test]
+    fn periodic_traversal_seam_subset_reports_exact_witness() {
+        for moved in [false, true] {
+            let (tds, vertices) = Tds::periodic_grid_t2_with_displacement_for_test(
+                moved.then_some((5, [0.75, 0.875])),
+            );
+            let topology = GlobalTopology::try_toroidal(
+                [1.0; 2],
+                ToroidalConstructionMode::PeriodicImagePoint,
+            )
+            .unwrap();
+            let tri = TriangulationBuilder::new(tds, RobustKernel::new())
+                .global_topology(topology)
+                .build()
+                .unwrap();
+            let seam = tri
+                .simplices()
+                .find(|(_, simplex)| {
+                    [vertices[3], vertices[0], vertices[1]]
+                        .iter()
+                        .all(|vertex| simplex.contains_vertex(*vertex))
+                })
+                .unwrap()
+                .0;
+            let subset = tri.delaunay_violation_report(Some(&[seam])).unwrap();
+            let full = tri.delaunay_violation_report(None).unwrap();
+            assert_eq!(subset.checked_simplices, 1);
+            assert_eq!(subset.is_valid(), !moved);
+            if moved {
+                let detail = subset.first_violation().unwrap();
+                assert_eq!(detail.offending_vertex, Some(vertices[5]));
+                assert!(full.violation_details.contains(detail));
+            } else {
+                assert!(full.is_valid());
+            }
+        }
+    }
 
     impl<K, U, V, const D: usize> DelaunayTriangulation<K, U, V, D>
     where
@@ -1180,18 +1282,6 @@ mod tests {
 
     fn test_vertex<const D: usize>(coords: [f64; D]) -> Vertex<(), D> {
         vertex!(coords).unwrap()
-    }
-
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
     }
 
     fn non_delaunay_quad_tds() -> Tds<(), (), 2> {
@@ -1310,7 +1400,8 @@ mod tests {
 
             let optimized = triangulation.delaunay_violation_report(None).unwrap();
             let tds = triangulation.into_triangulation().into_tds();
-            let brute_force = tds_delaunay_violation_report(&tds, None).unwrap();
+            let brute_force =
+                tds_delaunay_violation_report(&tds, &GlobalTopology::Euclidean, None).unwrap();
             assert_eq!(optimized, brute_force);
         }
     }
@@ -1327,7 +1418,12 @@ mod tests {
         );
 
         let optimized = triangulation.delaunay_violation_report(None).unwrap();
-        let brute_force = tds_delaunay_violation_report(triangulation.tds(), None).unwrap();
+        let brute_force = tds_delaunay_violation_report(
+            triangulation.tds(),
+            &triangulation.global_topology(),
+            None,
+        )
+        .unwrap();
         assert_eq!(optimized, brute_force);
     }
 
@@ -1374,7 +1470,8 @@ mod tests {
 
         let report = triangulation.delaunay_violation_report(None).unwrap();
         let tds = triangulation.into_triangulation().into_tds();
-        let brute_force = tds_delaunay_violation_report(&tds, None).unwrap();
+        let brute_force =
+            tds_delaunay_violation_report(&tds, &GlobalTopology::Euclidean, None).unwrap();
         assert_eq!(report, brute_force);
     }
 
@@ -1387,7 +1484,8 @@ mod tests {
 
         let report = triangulation.delaunay_violation_report(None).unwrap();
         let tds = triangulation.into_triangulation().into_tds();
-        let brute_force = tds_delaunay_violation_report(&tds, None).unwrap();
+        let brute_force =
+            tds_delaunay_violation_report(&tds, &GlobalTopology::Euclidean, None).unwrap();
         assert!(!report.is_valid());
         assert_eq!(report, brute_force);
     }
@@ -1427,7 +1525,8 @@ mod tests {
 
         let report = triangulation.delaunay_violation_report(None).unwrap();
         let tds = triangulation.into_triangulation().into_tds();
-        let brute_force = tds_delaunay_violation_report(&tds, None).unwrap();
+        let brute_force =
+            tds_delaunay_violation_report(&tds, &GlobalTopology::Euclidean, None).unwrap();
         assert!(!report.is_valid());
         assert_eq!(report, brute_force);
     }
@@ -1456,7 +1555,8 @@ mod tests {
 
         // Independent analytic witness: ABCD's circumsphere is the unit sphere;
         // E is strictly inside it, despite coplanarity of the proposed ABDE.
-        let global = tds_delaunay_violation_report(&dt.tri.tds, None).unwrap();
+        let global =
+            tds_delaunay_violation_report(&dt.tri.tds, &dt.global_topology(), None).unwrap();
         assert!(!global.is_valid());
         assert_eq!(dt.delaunay_violation_report(None).unwrap(), global);
         assert!(dt.is_valid_delaunay().is_err());

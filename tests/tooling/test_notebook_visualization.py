@@ -413,6 +413,49 @@ def test_scaled_axis_limits_reject_unrepresentable_ranges(limits: tuple[float, f
         scaled_axis_limits(((-0.5, 0.5), limits, (-0.5, 0.5)), scale)
 
 
+@pytest.mark.parametrize("schema_version", [1, 2])
+def test_load_visualization_3d_accepts_nonperiodic_schema_versions(tmp_path: Path, schema_version: int) -> None:
+    """Both export generations retain the same Euclidean plotting geometry."""
+    path = tmp_path / "visualization.json"
+    data = visualization_artifact()
+    data["metadata"].update(schema_version=schema_version, topology_kind="Euclidean")
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    artifact = load_visualization_3d(path)
+
+    assert artifact.metadata["schema_version"] == schema_version
+    assert dict(artifact.coordinates) == {"a": (0.0, 0.0, 0.0), "b": (1.0, 0.0, 0.0), "c": (0.0, 1.0, 0.0), "d": (0.0, 0.0, 1.0)}
+    assert dict(artifact.simplices) == {"tet": ("a", "b", "c", "d")}
+    assert len(artifact.edges) == 6
+    assert len(artifact.boundary_faces) == 4
+
+
+@pytest.mark.parametrize("schema_version", [1, 2])
+@pytest.mark.parametrize("periodic_evidence", ["topology", "offsets", "both"])
+def test_load_visualization_3d_rejects_periodic_geometry(tmp_path: Path, schema_version: int, periodic_evidence: str) -> None:
+    """Quotient coordinates cannot be silently rendered as a Euclidean mesh."""
+    path = tmp_path / "visualization.json"
+    data = visualization_artifact()
+    data["metadata"].update(schema_version=schema_version, topology_kind="Toroidal" if periodic_evidence != "offsets" else "Euclidean")
+    if periodic_evidence != "topology":
+        data["periodic"] = {"periods": [2.0, 2.0, 2.0], "simplex_vertex_offsets": {"tet": [[0, 0, 0], [1, 0, 0], [0, 0, 0], [0, 0, 0]]}}
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="periodic visualization requires lifted simplex charts"):
+        load_visualization_3d(path)
+
+
+@pytest.mark.parametrize("schema_version", [0, 3])
+def test_load_visualization_3d_rejects_unsupported_schema_versions(tmp_path: Path, schema_version: int) -> None:
+    path = tmp_path / "visualization.json"
+    data = visualization_artifact()
+    data["metadata"]["schema_version"] = schema_version
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unsupported visualization schema_version"):
+        load_visualization_3d(path)
+
+
 @pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
 def test_load_visualization_3d_rejects_non_integer_schema_version(tmp_path: Path, schema_version: object) -> None:
     """Generic visualization schema versions must be exact integers."""

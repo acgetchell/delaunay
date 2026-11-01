@@ -827,12 +827,10 @@ pub fn facet_measure<const D: usize>(points: &[Point<D>]) -> Result<f64, Circumc
 ///
 /// # Mathematical Background
 ///
-/// The Gram matrix method is the standard approach for computing simplex volumes in
-/// high-dimensional spaces, as described in:
-///
-/// - Coxeter, H.S.M. "Introduction to Geometry" (2nd ed., 1969), Chapter 13
-/// - Richter-Gebert, Jürgen. "Perspectives on Projective Geometry" (2011), Section 14.3
-/// - Edelsbrunner, Herbert. "Geometry and Topology for Mesh Generation" (2001), Chapter 2
+/// Minemyer, *Intrinsic Geometry of a Euclidean Simplex* (June 3, 2015 preprint),
+/// Section 4, Theorem 4 and its proof, gives this Gram-volume formula;
+/// see [10 in REFERENCES.md](https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#volume-computation-and-gram-matrix-methods).
+/// Here the simplex's intrinsic dimension is `D - 1`.
 ///
 /// The method constructs the Gram matrix G where G\[i,j\] = `v_i` · `v_j` (dot product of
 /// edge vectors), then computes the volume as the square root of the determinant

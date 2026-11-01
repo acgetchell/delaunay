@@ -44,9 +44,12 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
-use ciborium::value::{Error as CiboriumValueError, Value};
+use ciborium::{
+    de::Error as CiboriumDecodeError,
+    value::{Error as CiboriumValueError, Value},
+};
 
-use std::{error::Error as StdError, fmt, marker::PhantomData, mem::size_of, str};
+use std::{error::Error as StdError, fmt, io, marker::PhantomData, mem::size_of, str};
 
 // =============================================================================
 // CHECKPOINT VERSIONS AND PUBLIC MANIFEST TYPES
@@ -70,6 +73,38 @@ pub const DELAUNAY_CHECKPOINT_DIGEST_ALGORITHM: &str = "sha256";
 
 const SHA256_HEX_LENGTH: usize = 64;
 const CANONICAL_CHECKPOINT_DOMAIN: &[u8] = b"delaunay.checkpoint.canonical\0";
+
+/// Structured CBOR failures while decoding a checkpoint's embedded byte image.
+///
+/// Exhaustion of the byte slice is reported as [`io::ErrorKind::UnexpectedEof`];
+/// syntax and semantic offsets count bytes from the start of the embedded image.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DelaunayCheckpointCodecError {
+    /// Reading the embedded byte slice failed because it is truncated.
+    #[error("CBOR input failed: {kind}")]
+    Io {
+        /// Classification of the input failure.
+        kind: io::ErrorKind,
+    },
+    /// The image contains malformed CBOR syntax.
+    #[error("invalid CBOR syntax at byte {offset}")]
+    Syntax {
+        /// Byte offset of the syntax error.
+        offset: usize,
+    },
+    /// A CBOR value does not match the checkpoint's raw schema.
+    #[error("invalid CBOR value at {offset:?}: {detail}")]
+    Semantic {
+        /// Start of the rejected value, when reported by the codec.
+        offset: Option<usize>,
+        /// Open-ended schema diagnostic, not a category to parse.
+        detail: String,
+    },
+    /// Nested input exceeded the decoder's recursion limit.
+    #[error("CBOR nesting exceeds the decoder recursion limit")]
+    RecursionLimitExceeded,
+}
 
 /// Open digest-algorithm identifier used by checkpoint manifests.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -260,7 +295,7 @@ where
             where
                 A: SeqAccess<'de>,
             {
-                let mut values = Vec::with_capacity(N);
+                let mut values = Vec::new();
                 while values.len() < N {
                     let Some(value) = sequence.next_element()? else {
                         return Err(de::Error::invalid_length(values.len(), &self));
@@ -268,12 +303,15 @@ where
                     values.push(value);
                 }
                 if sequence.next_element::<de::IgnoredAny>()?.is_some() {
-                    return Err(de::Error::invalid_length(N + 1, &self));
+                    return Err(de::Error::custom(format_args!(
+                        "expected a sequence with exactly {N} entries"
+                    )));
                 }
                 Ok(ExactSlots(values))
             }
         }
 
+        checkpoint_arity::<N>().map_err(de::Error::custom)?;
         deserializer.deserialize_seq(ExactSlotsVisitor(PhantomData))
     }
 }
@@ -291,7 +329,10 @@ where
     where
         De: Deserializer<'de>,
     {
-        struct DPlusOneVisitor<T, const D: usize>(PhantomData<T>);
+        struct DPlusOneVisitor<T, const D: usize> {
+            expected: usize,
+            element: PhantomData<T>,
+        }
 
         impl<'de, T, const D: usize> Visitor<'de> for DPlusOneVisitor<T, D>
         where
@@ -300,15 +341,19 @@ where
             type Value = DPlusOneSlots<T, D>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(formatter, "a sequence with exactly {} entries", D + 1)
+                write!(
+                    formatter,
+                    "a sequence with exactly {} entries",
+                    self.expected
+                )
             }
 
             fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
             where
                 A: SeqAccess<'de>,
             {
-                let expected = D + 1;
-                let mut values = Vec::with_capacity(expected);
+                let expected = self.expected;
+                let mut values = Vec::new();
                 while values.len() < expected {
                     let Some(value) = sequence.next_element()? else {
                         return Err(de::Error::invalid_length(values.len(), &self));
@@ -316,14 +361,27 @@ where
                     values.push(value);
                 }
                 if sequence.next_element::<de::IgnoredAny>()?.is_some() {
-                    return Err(de::Error::invalid_length(expected + 1, &self));
+                    return Err(de::Error::custom(format_args!(
+                        "expected a sequence with exactly {expected} entries"
+                    )));
                 }
                 Ok(DPlusOneSlots(values))
             }
         }
 
-        deserializer.deserialize_seq(DPlusOneVisitor(PhantomData))
+        let expected = checkpoint_arity::<D>().map_err(de::Error::custom)?;
+        deserializer.deserialize_seq(DPlusOneVisitor {
+            expected,
+            element: PhantomData,
+        })
     }
+}
+
+/// Proves the durable dimension and simplex arity before parsing bounded arrays.
+fn checkpoint_arity<const D: usize>() -> Result<usize, DelaunayCheckpointError> {
+    u32::try_from(D).map_err(|_| DelaunayCheckpointError::DimensionOutOfRange { dimension: D })?;
+    D.checked_add(1)
+        .ok_or(DelaunayCheckpointError::DimensionOutOfRange { dimension: D })
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1057,7 +1115,9 @@ pub enum DelaunayCheckpointError {
         neighbor_key: SimplexKey,
     },
     /// Compile-time dimension cannot be represented by the durable manifest.
-    #[error("compile-time dimension {dimension} is outside the supported u32 range")]
+    #[error(
+        "compile-time dimension {dimension} cannot represent a u32 dimension and usize simplex arity"
+    )]
     DimensionOutOfRange {
         /// Compile-time dimension that could not be represented.
         dimension: usize,
@@ -1103,10 +1163,11 @@ pub enum DelaunayCheckpointError {
         message: String,
     },
     /// The embedded checkpoint TDS image is not valid CBOR for its raw schema.
-    #[error("failed to decode the canonical checkpoint TDS image: {message}")]
+    #[error("failed to decode the canonical checkpoint TDS image: {source}")]
     TdsCodec {
-        /// Opaque diagnostic from the embedded CBOR decoder.
-        message: String,
+        /// Typed category, byte offset and schema detail from the CBOR decoder.
+        #[source]
+        source: DelaunayCheckpointCodecError,
     },
     /// The decoded embedded image failed typed UUID-snapshot reconstruction.
     #[error("failed to hydrate the canonical checkpoint TDS image: {source}")]
@@ -2311,7 +2372,7 @@ fn verify_manifest_shape<const D: usize>(
             actual: manifest.dimension,
         });
     }
-    let expected_len = D + 1;
+    let expected_len = checkpoint_arity::<D>()?;
     if manifest.f_vector.len() != expected_len {
         return Err(DelaunayCheckpointError::FVectorLengthMismatch {
             expected: expected_len,
@@ -2476,7 +2537,23 @@ fn decode_prepared_tds<const D: usize>(
     let snapshot: RawTdsSnapshot<PreparedPayload, PreparedPayload, D> =
         ciborium::de::from_reader(&mut remaining).map_err(|source| {
             DelaunayCheckpointError::TdsCodec {
-                message: source.to_string(),
+                source: match source {
+                    // A byte slice can only fail to read when exhausted. Ciborium
+                    // represents that as std::io::Error or EndOfFile depending on
+                    // dependency feature unification, so map it at this boundary.
+                    CiboriumDecodeError::Io(_) => DelaunayCheckpointCodecError::Io {
+                        kind: io::ErrorKind::UnexpectedEof,
+                    },
+                    CiboriumDecodeError::Syntax(offset) => {
+                        DelaunayCheckpointCodecError::Syntax { offset }
+                    }
+                    CiboriumDecodeError::Semantic(offset, detail) => {
+                        DelaunayCheckpointCodecError::Semantic { offset, detail }
+                    }
+                    CiboriumDecodeError::RecursionLimitExceeded => {
+                        DelaunayCheckpointCodecError::RecursionLimitExceeded
+                    }
+                },
             }
         })?;
     if !remaining.is_empty() {
@@ -2668,11 +2745,20 @@ impl<E: StdError + 'static> StdError for DelaunayCheckpointDecodeError<E> {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug)]
 #[non_exhaustive]
 pub struct DelaunayCheckpoint<U, V, const D: usize> {
     wire: DelaunayTriangulationWire<D>,
     payload: PhantomData<fn() -> (U, V)>,
+}
+
+impl<U, V, const D: usize> fmt::Debug for DelaunayCheckpoint<U, V, D> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DelaunayCheckpoint")
+            .field("wire", &self.wire)
+            .field("payload", &self.payload)
+            .finish()
+    }
 }
 
 /// Explicit compatibility loader for manifest-less schema-v1 owner snapshots.
@@ -2725,6 +2811,7 @@ where
     where
         De: Deserializer<'de>,
     {
+        checkpoint_arity::<D>().map_err(de::Error::custom)?;
         Ok(Self {
             wire: DelaunayTriangulationV1Wire::deserialize(deserializer)?,
         })
@@ -2875,6 +2962,7 @@ impl<'de, U, V, const D: usize> Deserialize<'de> for DelaunayCheckpoint<U, V, D>
     where
         De: Deserializer<'de>,
     {
+        checkpoint_arity::<D>().map_err(de::Error::custom)?;
         Ok(Self {
             wire: DelaunayTriangulationWire::deserialize(deserializer)?,
             payload: PhantomData,
@@ -2934,6 +3022,9 @@ impl<U, V, const D: usize> DelaunayCheckpoint<U, V, D> {
     where
         De: Deserializer<'de>,
     {
+        checkpoint_arity::<D>().map_err(|source| DelaunayCheckpointDecodeError::Codec {
+            source: de::Error::custom(source),
+        })?;
         DelaunayTriangulationWire::deserialize(deserializer)
             .map(|wire| Self {
                 wire,
@@ -3640,6 +3731,7 @@ mod tests {
     #[cfg(feature = "count-allocations")]
     use crate::core::util::measure_with_result;
     use crate::delaunay_model::EuclideanDelaunayReportDomain;
+    use crate::delaunay_test_support::init_tracing;
     use crate::delaunayize::DelaunayRefinementBuilder;
     use crate::geometry::kernel::AdaptiveKernel;
     use crate::geometry::point::Point;
@@ -3649,7 +3741,7 @@ mod tests {
     use crate::vertex;
     use ciborium::value::Value;
     use serde::ser::{SerializeMap, SerializeTupleVariant};
-    use std::{cell::Cell, collections::BTreeMap, sync::Once};
+    use std::{assert_matches, cell::Cell, collections::BTreeMap};
 
     /// Establishes the proof before encoding a test fixture.
     fn encode_tds_for_test<U, V, const D: usize>(
@@ -3874,18 +3966,6 @@ mod tests {
         optional: Option<u16>,
     }
 
-    fn init_tracing() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_test_writer()
-                .try_init();
-        });
-    }
-
     fn non_delaunay_quad_tds() -> Tds<(), (), 2> {
         let mut tds: Tds<(), (), 2> = Tds::empty();
         let v0 = tds
@@ -4066,6 +4146,29 @@ mod tests {
             .unwrap()
             .build_with_kernel(&RobustKernel::new())
             .unwrap()
+    }
+
+    #[test]
+    fn checkpoint_wire_rejects_unrepresentable_dimensions_before_parsing() {
+        let expected = DelaunayCheckpointError::DimensionOutOfRange {
+            dimension: usize::MAX,
+        };
+        assert_eq!(checkpoint_arity::<{ usize::MAX }>(), Err(expected.clone()));
+        for input in ["[]", "[0]", "null"] {
+            let error = serde_json::from_str::<DPlusOneSlots<u64, { usize::MAX }>>(input)
+                .expect_err("invalid dimensions must not overflow even while formatting errors");
+            assert!(error.to_string().contains(&expected.to_string()));
+            let error = serde_json::from_str::<ExactSlots<u64, { usize::MAX }>>(input)
+                .expect_err("invalid dimensions must fail before sequence allocation");
+            assert!(error.to_string().contains(&expected.to_string()));
+        }
+        let error = serde_json::from_str::<DelaunayCheckpoint<(), (), { usize::MAX }>>("{}")
+            .expect_err("empty envelopes must also reject the dimension first");
+        assert!(error.to_string().contains(&expected.to_string()));
+        let mut deserializer = serde_json::Deserializer::from_str("{}");
+        let error = DelaunayCheckpoint::<(), (), { usize::MAX }>::decode(&mut deserializer)
+            .expect_err("the typed decode entrypoint must reject the same dimension");
+        assert!(error.to_string().contains(&expected.to_string()));
     }
 
     #[test]
@@ -4802,14 +4905,97 @@ mod tests {
     }
 
     #[test]
+    fn embedded_tds_codec_errors_retain_categories_and_offsets() {
+        for (bytes, expected) in [
+            (
+                vec![0xbf],
+                DelaunayCheckpointCodecError::Io {
+                    kind: io::ErrorKind::UnexpectedEof,
+                },
+            ),
+            (
+                vec![0x1c],
+                DelaunayCheckpointCodecError::Syntax { offset: 0 },
+            ),
+            (
+                [vec![0xbf, 0x68], b"vertices".to_vec(), vec![0x1c]].concat(),
+                DelaunayCheckpointCodecError::Syntax { offset: 10 },
+            ),
+        ] {
+            let mut checkpoint = triangle_checkpoint();
+            checkpoint["tds"] = serde_json::json!(bytes);
+            let error = typed_checkpoint_error(checkpoint);
+            assert_eq!(
+                error
+                    .source()
+                    .and_then(|source| source.downcast_ref::<DelaunayCheckpointCodecError>()),
+                Some(&expected),
+            );
+            assert_matches!(error, DelaunayCheckpointLoadError::Checkpoint {
+                source: DelaunayCheckpointError::TdsCodec { source },
+            } if source == expected);
+        }
+        let mut checkpoint = triangle_checkpoint();
+        checkpoint["tds"] = serde_json::json!([1]);
+        assert_matches!(
+            typed_checkpoint_error(checkpoint),
+            DelaunayCheckpointLoadError::Checkpoint {
+                source: DelaunayCheckpointError::TdsCodec {
+                    source: DelaunayCheckpointCodecError::Semantic { offset: None, .. },
+                },
+            }
+        );
+
+        let mut checkpoint = triangle_checkpoint_with_payloads();
+        mutate_embedded_tds(&mut checkpoint, |tds| {
+            let mut nested = Value::Null;
+            for _ in 0..300 {
+                nested = Value::Array(vec![nested]);
+            }
+            let vertices = cbor_field_mut(tds, "vertices").as_array_mut().unwrap();
+            *cbor_field_mut(&mut vertices[0], "data") = nested;
+        });
+        assert_matches!(
+            typed_checkpoint_error(checkpoint),
+            DelaunayCheckpointLoadError::Checkpoint {
+                source: DelaunayCheckpointError::TdsCodec {
+                    source: DelaunayCheckpointCodecError::RecursionLimitExceeded,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn embedded_tds_rejects_huge_relationship_map_without_panicking() {
+        let mut checkpoint = triangle_checkpoint();
+        let mut bytes = vec![0xbf, 0x70];
+        bytes.extend_from_slice(b"simplex_vertices");
+        bytes.push(0xbb);
+        bytes.extend([0xff; 8]);
+        checkpoint["tds"] = serde_json::json!(bytes);
+        assert_matches!(
+            typed_checkpoint_error(checkpoint),
+            DelaunayCheckpointLoadError::Checkpoint {
+                source: DelaunayCheckpointError::TdsCodec {
+                    source: DelaunayCheckpointCodecError::Io {
+                        kind: io::ErrorKind::UnexpectedEof
+                    },
+                },
+            }
+        );
+    }
+
+    #[test]
     fn embedded_tds_image_preserves_codec_and_hydration_categories() {
         let mut invalid_cbor = triangle_checkpoint();
         invalid_cbor["tds"] = serde_json::json!([0xff]);
         assert!(matches!(
             typed_checkpoint_error(invalid_cbor),
             DelaunayCheckpointLoadError::Checkpoint {
-                source: DelaunayCheckpointError::TdsCodec { ref message },
-            } if !message.is_empty()
+                source: DelaunayCheckpointError::TdsCodec {
+                    source: DelaunayCheckpointCodecError::Semantic { offset: None, .. },
+                },
+            }
         ));
 
         let mut invalid_snapshot = triangle_checkpoint();

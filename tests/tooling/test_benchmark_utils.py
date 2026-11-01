@@ -10,10 +10,12 @@ and necessary for comprehensive unit testing of internal functionality.
 """
 
 import hashlib
+import io
 import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -271,7 +273,7 @@ def write_complete_release_signal_coverage(project_root: Path) -> None:
             write_estimate(project_root / "target", (group, "fixture"), 1_000.0)
 
 
-def write_complete_summary_measurement(project_root: Path, *, cargo_profile: str = "perf") -> Path:
+def write_complete_summary_measurement(project_root: Path, *, cargo_profile: str = "perf", sample_name: str = "new") -> Path:
     """Retain complete raw summary fixtures through the real evidence serializers."""
     ci_cases = (
         ("tds_new_2d/tds_new/10", 10),
@@ -304,8 +306,8 @@ def write_complete_summary_measurement(project_root: Path, *, cargo_profile: str
     )
     criterion = project_root / "target" / "criterion"
     for _target, directory, full_id, count in cases:
-        write_named_estimate(project_root / "target", tuple(directory.split("/")), "new", 1_000.0, full_id=full_id)
-        sample_dir = criterion / directory / "new"
+        write_named_estimate(project_root / "target", tuple(directory.split("/")), sample_name, 1_000.0, full_id=full_id)
+        sample_dir = criterion / directory / sample_name
         (sample_dir / "sample.json").write_text(json.dumps({"iters": [1] * count, "times": [1_000] * count}), encoding=UTF8)
         estimates = json.loads((sample_dir / "estimates.json").read_bytes())
         estimates["mean"] = estimates["median"]
@@ -321,7 +323,7 @@ def write_complete_summary_measurement(project_root: Path, *, cargo_profile: str
     policy_payload = serialize_policy(policy)
     (criterion / benchmark_utils.MEASUREMENT_INVENTORY_FILE).write_bytes(inventory_payload)
     (criterion / benchmark_utils.MEASUREMENT_POLICY_FILE).write_bytes(policy_payload)
-    sample = Sample(tuple((full_id, read_estimate(criterion / directory / "new/estimates.json")) for _target, directory, full_id, _count in cases))
+    sample = Sample(tuple((full_id, read_estimate(criterion / directory / sample_name / "estimates.json")) for _target, directory, full_id, _count in cases))
     provenance = Provenance(
         "a" * 40,
         "b" * 64,
@@ -334,8 +336,8 @@ def write_complete_summary_measurement(project_root: Path, *, cargo_profile: str
             ("delaunay.completed-at", "2026-10-25T10:00:00+00:00"),
             ("release", "v0.8.3"),
             ("host", json.dumps(json.loads(serialize_host(HostMetadata("Measured OS", "test", "Measured CPU", 4, 8, 4096, (("rustc", "rustc 1.99.1"),)))))),
-            ("delaunay.sample", "new"),
-            ("delaunay.raw-sample-sha256", benchmark_utils._criterion_sample_digest(criterion, "new")),
+            ("delaunay.sample", sample_name),
+            ("delaunay.raw-sample-sha256", benchmark_utils._criterion_sample_digest(criterion, sample_name)),
         ),
     )
     payload, manifest = serialize_evidence(Evidence(serialize_sample(sample), SAMPLE_SCHEMA, (("measurement", provenance),)))
@@ -913,7 +915,6 @@ def test_resolve_performance_request_current_vs_latest_uses_package_version_and_
             published_latest=False,
             infer_release=False,
             current_vs_latest=True,
-            worktree_ref="HEAD",
             repo_root=tmp_path,
         )
     )
@@ -946,12 +947,62 @@ def test_performance_local_accepts_same_version_scratch_comparison(
             published_latest=False,
             infer_release=False,
             current_vs_latest=True,
-            worktree_ref="HEAD",
             repo_root=tmp_path,
         )
     )
     assert request.current_tag == request.baseline_tag == "v0.8.0"
-    assert request.worktree_ref == "HEAD"
+
+
+def test_historical_asset_parser_rejects_retired_worktree_ref() -> None:
+    """Historical asset selection accepts release tags and rejects ignored source controls."""
+    parser = create_argument_parser()
+    with pytest.raises(SystemExit) as failure:
+        parser.parse_args(["performance-github-assets", "v0.8.0", "v0.7.8", "--worktree-ref", "unrelated-ref"])
+    assert failure.value.code == 2
+
+
+@pytest.mark.parametrize("encoding", ["ascii", "cp1252"])
+@pytest.mark.parametrize("explicit_pair", [False, True])
+def test_historical_asset_cli_publishes_once_under_legacy_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, encoding: str, *, explicit_pair: bool
+) -> None:
+    """Both supported tag routes publish unchanged scientific bytes before escaped status."""
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
+    bundle = retained_performance_bundle()
+    payload, provenance = performance_artifacts.serialize_bundle(bundle)
+    output = tmp_path / "report-Ω.md"
+    args = create_argument_parser().parse_args(["performance-github-assets", *(["v0.8.0", "v0.7.8"] if explicit_pair else []), "--output", str(output)])
+    monkeypatch.setattr(
+        benchmark_utils,
+        "published_releases",
+        lambda _root: (
+            PublishedRelease("v0.8.0", datetime(2026, 8, 1, tzinfo=UTC)),
+            PublishedRelease("v0.7.8", datetime(2026, 2, 1, tzinfo=UTC)),
+        ),
+    )
+    stdout, stderr = io.BytesIO(), io.BytesIO()
+    out = io.TextIOWrapper(stdout, encoding=encoding, errors="strict")
+    err = io.TextIOWrapper(stderr, encoding=encoding, errors="strict")
+    with (
+        monkeypatch.context() as streams,
+        patch("benchmark_utils._build_historical_asset_bundle", return_value=bundle) as build,
+        patch("benchmark_utils.replace_many", wraps=benchmark_utils.replace_many) as publish,
+    ):
+        streams.setattr(sys, "stdout", out)
+        streams.setattr(sys, "stderr", err)
+        with pytest.raises(SystemExit) as result:
+            execute_command(args, tmp_path)
+    out.flush()
+    err.flush()
+    assert result.value.code == 0, stderr.getvalue().decode(encoding)
+    build.assert_called_once_with(config=ReleaseReportConfig(tmp_path, "v0.8.0", "v0.7.8"))
+    publish.assert_called_once()
+    assert output.with_suffix(".comparison.json").read_bytes() == payload
+    assert output.with_suffix(".evidence.json").read_bytes() == provenance
+    assert "v0.8.0" in output.read_text(encoding=UTF8)
+    assert str(output).encode(encoding, errors="backslashreplace") in stdout.getvalue()
+    assert b"Retained artifact bundle" in stdout.getvalue()
+    assert stderr.getvalue() == b""
 
 
 def test_renderer_suppresses_ratios_for_incompatible_measurement_hosts(tmp_path: Path) -> None:
@@ -1085,9 +1136,6 @@ def test_prepare_github_release_assets_copies_current_and_baseline_samples(
             repo_root=tmp_path,
             current_tag="v0.8.0",
             baseline_tag="v0.7.8",
-            worktree_ref="v0.8.0",
-            apply_current_diff=False,
-            baseline_source="github-assets",
         ),
         target_worktree=target_worktree,
         tmp_dir=scratch,
@@ -1244,19 +1292,13 @@ def write_complete_release_samples(tmp_path: Path) -> tuple[Path, CriterionInven
     return criterion, inventory
 
 
-@pytest.mark.parametrize("tag", ["v0.8.0", "v0.8.0+build.7"])
-@pytest.mark.parametrize("changed_input", [None, "src/lib.rs", "benches/ci_performance_suite.rs", "src/added.rs", "benches/common/added.rs"])
-@pytest.mark.parametrize("execution_case", [("native", "perf"), ("windows", "perf"), ("native", "release"), ("windows", "release")])
-def test_write_release_benchmark_metadata_binds_measurement_provenance(
+def write_release_measurement_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     tag: str,
-    changed_input: str | None,
-    execution_case: tuple[str, str],
-) -> None:
-    path_ordering, cargo_profile = execution_case
-    if path_ordering == "windows":
-        monkeypatch.setattr(type(tmp_path), "__lt__", lambda first, second: PureWindowsPath(first.as_posix()) < PureWindowsPath(second.as_posix()))
+    cargo_profile: str = "perf",
+) -> tuple[Path, performance_artifacts.ToolchainState]:
+    """Retain release evidence while modeling only Git and native tool observations."""
     (tmp_path / "Cargo.toml").write_text(f'[package]\nversion = "{tag.removeprefix("v")}"\n', encoding=UTF8)
     source_paths = tuple(Path(name) for name in ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "src/lib.rs"))
     harness_paths = (*(Path(f"benches/{target}.rs") for target in benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS), *source_paths[:3])
@@ -1276,10 +1318,25 @@ def test_write_release_benchmark_metadata_binds_measurement_provenance(
     toolchain = retained_performance_bundle().context.current_toolchain
     monkeypatch.setattr(benchmark_utils, "_source_state", lambda *_args, **_kwargs: source)
     monkeypatch.setattr(benchmark_utils, "_expected_tag_commit", lambda *_args, **_kwargs: commit)
-    monkeypatch.setattr(benchmark_utils, "_toolchain_state", lambda *_args, **_kwargs: toolchain)
+    monkeypatch.setattr(
+        benchmark_utils,
+        "_toolchain_state",
+        lambda *_args, **_kwargs: replace(
+            toolchain,
+            configuration_sha256=benchmark_utils._benchmark_configuration_digest(tmp_path),
+            measurement_plan_sha256=benchmark_utils._measurement_plan_digest(tmp_path, "release-signal", inventory=inventory),
+        ),
+    )
     sample = Sample(tuple((name, read_estimate(criterion / name / "new/estimates.json")) for name in inventory.expected))
     assert toolchain.criterion_version is not None
     (tmp_path / "Cargo.lock").write_text(f'[[package]]\nname = "criterion"\nversion = "{toolchain.criterion_version}"\n', encoding=UTF8)
+    configuration_digest = benchmark_utils._benchmark_configuration_digest(tmp_path)
+    plan_digest = benchmark_utils._sampling_plan_digest(benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS, cargo_profile=cargo_profile, policy=policy)
+    toolchain = replace(
+        toolchain,
+        configuration_sha256=configuration_digest,
+        measurement_plan_sha256=plan_digest,
+    )
     monkeypatch.setattr(shared_measurement, "resolve_revision", lambda *_args: commit)
     monkeypatch.setattr(
         shared_measurement,
@@ -1306,6 +1363,8 @@ def test_write_release_benchmark_metadata_binds_measurement_provenance(
             harness=tuple(path.as_posix() for path in harness_paths),
             dependencies=(("criterion", "Cargo.lock"),),
             context=(
+                ("delaunay.configuration-sha256", configuration_digest),
+                ("delaunay.measurement-plan-sha256", plan_digest),
                 ("delaunay.inventory", json.dumps(json.loads(serialize_inventory(inventory)))),
                 ("delaunay.sampling-policy", serialize_policy(policy).decode()),
                 ("delaunay.scientific-preflight", "passed"),
@@ -1324,6 +1383,23 @@ def test_write_release_benchmark_metadata_binds_measurement_provenance(
     sample_payload, sample_manifest = serialize_evidence(measurement)
     (criterion / "delaunay-sample.json").write_bytes(sample_payload)
     (criterion / "delaunay-evidence.json").write_bytes(sample_manifest)
+    return criterion, toolchain
+
+
+@pytest.mark.parametrize("tag", ["v0.8.0", "v0.8.0+build.7"])
+@pytest.mark.parametrize("changed_input", [None, "src/lib.rs", "benches/ci_performance_suite.rs", "src/added.rs", "benches/common/added.rs"])
+@pytest.mark.parametrize("execution_case", [("native", "perf"), ("windows", "perf"), ("native", "release"), ("windows", "release")])
+def test_write_release_benchmark_metadata_binds_measurement_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tag: str,
+    changed_input: str | None,
+    execution_case: tuple[str, str],
+) -> None:
+    path_ordering, cargo_profile = execution_case
+    if path_ordering == "windows":
+        monkeypatch.setattr(type(tmp_path), "__lt__", lambda first, second: PureWindowsPath(first.as_posix()) < PureWindowsPath(second.as_posix()))
+    criterion, toolchain = write_release_measurement_evidence(tmp_path, monkeypatch, tag, cargo_profile)
     output = tmp_path / "metadata.json"
 
     if cargo_profile != "perf":
@@ -1354,6 +1430,8 @@ def test_write_release_benchmark_metadata_binds_measurement_provenance(
     assert metadata["source"]["version"] == tag
     assert metadata["source"]["ref"] == tag
     assert metadata["toolchain"]["cargo_profile"] == "perf"
+    assert metadata["toolchain"]["configuration_sha256"] == toolchain.configuration_sha256
+    assert metadata["toolchain"]["measurement_plan_sha256"] == toolchain.measurement_plan_sha256
     assert metadata["measurement_host"]["cpu"] == "Test CPU"
     assert metadata["measurement_commands"] == [list(command) for command in benchmark_utils.RELEASE_ASSET_MEASUREMENT_COMMANDS]
     assert metadata["completed_targets"] == list(benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS)
@@ -1361,6 +1439,50 @@ def test_write_release_benchmark_metadata_binds_measurement_provenance(
         "content_sha256": benchmark_utils._directory_digest(tmp_path / "criterion"),
         "sample_name": "new",
     }
+
+
+@pytest.mark.parametrize(
+    "mutation", ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS", "CARGO_PROFILE_PERF_OPT_LEVEL", ".cargo/config.toml", "measurement-plan"]
+)
+def test_release_metadata_rejects_configuration_changes_after_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str) -> None:
+    """Recomputed configuration must never relabel the original observations."""
+    if mutation not in {".cargo/config.toml", "measurement-plan"}:
+        monkeypatch.delenv(mutation, raising=False)
+    criterion, _toolchain = write_release_measurement_evidence(tmp_path, monkeypatch, "v0.8.0")
+    if mutation == ".cargo/config.toml":
+        config = tmp_path / mutation
+        config.parent.mkdir()
+        config.write_text('[build]\nrustflags = ["-C", "opt-level=1"]\n', encoding=UTF8)
+    elif mutation == "measurement-plan":
+        first, *remaining = benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
+        monkeypatch.setattr(benchmark_utils, "RELEASE_SIGNAL_MEASUREMENT_PLAN", (replace(first, sampling_mode="reduced"), *remaining))
+    else:
+        monkeypatch.setenv(mutation, "1" if mutation == "CARGO_PROFILE_PERF_OPT_LEVEL" else "-Copt-level=1")
+    output = tmp_path / "metadata.json"
+    output.write_bytes(b"previous release metadata\r\n")
+
+    with pytest.raises(ValueError, match="configuration or measurement plan differs from the captured"):
+        benchmark_utils.write_release_benchmark_metadata(repo_root=tmp_path, tag="v0.8.0", criterion_dir=criterion, output=output)
+
+    assert output.read_bytes() == b"previous release metadata\r\n"
+
+
+@pytest.mark.parametrize("missing_key", ["delaunay.configuration-sha256", "delaunay.measurement-plan-sha256"])
+def test_release_metadata_requires_captured_configuration_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_key: str) -> None:
+    """Legacy fresh evidence cannot acquire a missing identity during publication."""
+    criterion, _toolchain = write_release_measurement_evidence(tmp_path, monkeypatch, "v0.8.0")
+    measurement = benchmark_utils._load_fresh_measurement(criterion)
+    name, source = measurement.sources[0]
+    source = replace(source, context=tuple((key, value) for key, value in source.context if key != missing_key))
+    payload, manifest = serialize_evidence(replace(measurement, sources=((name, source),)))
+    (criterion / "delaunay-sample.json").write_bytes(payload)
+    (criterion / "delaunay-evidence.json").write_bytes(manifest)
+    output = tmp_path / "metadata.json"
+
+    with pytest.raises(ValueError, match="configuration or measurement plan differs from the captured"):
+        benchmark_utils.write_release_benchmark_metadata(repo_root=tmp_path, tag="v0.8.0", criterion_dir=criterion, output=output)
+
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(
@@ -2145,6 +2267,79 @@ class TestPerformanceSummaryGenerator:
         assert "Measured OS" in content
         assert "9.9.9" not in content
 
+    @pytest.mark.parametrize("mutation", ["changed-means", "removed-new"])
+    def test_strict_summary_uses_retained_named_sample(self, tmp_path: Path, mutation: str) -> None:
+        """Unbound new observations cannot change rows or coverage attributed to a saved run."""
+        criterion = write_complete_summary_measurement(tmp_path, sample_name="last")
+        named_directories = [path.parent for path in criterion.glob("**/last/estimates.json")]
+        for directory in named_directories:
+            shutil.copytree(directory, directory.with_name("new"))
+        generator = PerformanceSummaryGenerator(tmp_path)
+        output = tmp_path / "summary.md"
+        assert generator.generate_summary(output_path=output, strict=True)
+        original = output.read_bytes()
+
+        for directory in named_directories:
+            new = directory.with_name("new")
+            if mutation == "removed-new":
+                shutil.rmtree(new)
+            else:
+                estimates_path = new / "estimates.json"
+                estimates = json.loads(estimates_path.read_bytes())
+                estimates["mean"]["point_estimate"] = 2_000_000.0
+                estimates["mean"]["confidence_interval"]["lower_bound"] = 1_800_000.0
+                estimates["mean"]["confidence_interval"]["upper_bound"] = 2_200_000.0
+                estimates_path.write_text(json.dumps(estimates), encoding=UTF8)
+
+        assert benchmark_utils._load_fresh_measurement(criterion)
+        assert generator.generate_summary(output_path=output, strict=True)
+        assert output.read_bytes() == original
+
+    @pytest.mark.parametrize("encoding", ["ascii", "cp1252"])
+    @pytest.mark.parametrize("filename", ["summary.md", "summary-Ω.md"])
+    def test_summary_publication_survives_legacy_terminal_encoding(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, encoding: str, filename: str) -> None:
+        """A completed report stays successful and byte-identical when status text needs escaping."""
+        write_complete_summary_measurement(tmp_path)
+        generator = PerformanceSummaryGenerator(tmp_path)
+        reference = tmp_path / "reference.md"
+        assert generator.generate_summary(output_path=reference, strict=True)
+        output = tmp_path / filename
+        stdout, stderr = io.BytesIO(), io.BytesIO()
+        out = io.TextIOWrapper(stdout, encoding=encoding, errors="strict")
+        err = io.TextIOWrapper(stderr, encoding=encoding, errors="strict")
+        with monkeypatch.context() as streams, patch("benchmark_utils._write_text_atomic", wraps=benchmark_utils._write_text_atomic) as publish:
+            streams.setattr(sys, "stdout", out)
+            streams.setattr(sys, "stderr", err)
+            assert generator.generate_summary(output_path=output, strict=True)
+            out.flush()
+            err.flush()
+        publish.assert_called_once()
+        assert output.read_bytes() == reference.read_bytes()
+        assert str(output).encode(encoding, errors="backslashreplace") in stdout.getvalue()
+        assert b"Generated performance summary" in stdout.getvalue()
+        assert stderr.getvalue() == b""
+
+    @pytest.mark.parametrize("encoding", ["ascii", "cp1252"])
+    def test_summary_failure_preserves_report_under_legacy_terminal_encoding(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, encoding: str) -> None:
+        """A genuine malformed-observation failure keeps old bytes and usable diagnostics."""
+        criterion = write_complete_summary_measurement(tmp_path)
+        (criterion / "2d_insphere/new/estimates.json").write_text("{ invalid json", encoding=UTF8)
+        with pytest.raises(ValueError, match="invalid Criterion estimates") as malformed:
+            benchmark_utils._load_fresh_measurement(criterion)
+        output = tmp_path / "summary-Ω.md"
+        output.write_bytes(b"previous report\r\n")
+        generator = PerformanceSummaryGenerator(tmp_path)
+        stderr = io.BytesIO()
+        err = io.TextIOWrapper(stderr, encoding=encoding, errors="strict")
+        with monkeypatch.context() as streams, patch("benchmark_utils._write_text_atomic", wraps=benchmark_utils._write_text_atomic) as publish:
+            streams.setattr(sys, "stderr", err)
+            assert not generator.generate_summary(output_path=output, strict=True)
+            err.flush()
+        publish.assert_not_called()
+        assert output.read_bytes() == b"previous report\r\n"
+        assert str(malformed.value).encode(encoding, errors="backslashreplace") in stderr.getvalue()
+        assert list(tmp_path.glob(".summary*.tmp")) == []
+
     def test_strict_summary_rejects_a_superseded_plan_without_resampling(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Valid raw evidence for another plan cannot silently certify this release contract."""
         criterion = write_complete_summary_measurement(tmp_path)
@@ -2598,14 +2793,15 @@ class TestPerformanceSummaryGenerator:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
 
-            # Create malformed estimates.json
-            criterion_dir = project_root / "target" / "criterion" / "basic-insphere" / "base"
-            criterion_dir.mkdir(parents=True)
-
-            estimates_file = criterion_dir / "estimates.json"
-            estimates_file.write_text("{ invalid json", encoding=UTF8)
-
+            write_estimate(project_root / "target", ("2d_insphere",), 1_000.0)
             generator = PerformanceSummaryGenerator(project_root)
+            valid_results = generator._parse_circumsphere_benchmark_results()
+            assert len(valid_results) == 1
+            assert valid_results[0].methods["insphere"].time_ns == pytest.approx(1_000.0)
+            assert generator._collect_circumsphere_summary_evidence().provenance == "criterion"
+
+            estimates_file = project_root / "target" / "criterion" / "2d_insphere" / "base" / "estimates.json"
+            estimates_file.write_text("{ invalid json", encoding=UTF8)
 
             # Malformed raw evidence must not be returned as measured rows.
             results = generator._parse_circumsphere_benchmark_results()

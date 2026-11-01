@@ -4,11 +4,33 @@
 
 use crate::core::collections::{MAX_PRACTICAL_DIMENSION_SIZE, SmallBuffer};
 use crate::core::facet::{FacetError, facet_key_from_vertices};
+use crate::core::simplex::Simplex;
 use crate::core::tds::{SimplexKey, Tds, VertexKey};
 use crate::core::util::hashing::stable_hash_u64_slice;
+use crate::topology::spaces::toroidal::{
+    LiftedVertexBuffer, lifted_vertex_id, periodic_simplex_key,
+};
 use slotmap::Key;
 use thiserror::Error;
 use uuid::Uuid;
+
+/// Identity of a simplex-local face modulo a common lattice translation.
+/// Slots are supplied by validated simplex combinatorics, preserving repeated
+/// quotient vertices and distinct periodic classes.
+pub(crate) fn simplex_face_key<V, const D: usize>(
+    simplex: &Simplex<V, D>,
+    slots: impl Iterator<Item = usize>,
+) -> u64 {
+    let lifted: LiftedVertexBuffer = slots
+        .map(|slot| {
+            let offset = simplex
+                .periodic_vertex_offsets()
+                .map_or([0; D], |offsets| offsets[slot]);
+            lifted_vertex_id(simplex.vertices()[slot], offset.map(i16::from))
+        })
+        .collect();
+    periodic_simplex_key(&lifted)
+}
 
 /// Derives a stable facet identifier from owner-independent vertex identities.
 ///
@@ -191,6 +213,21 @@ pub(crate) fn periodic_facet_key_from_lifted_vertices<const D: usize>(
         .first()
         .map_or([0_i8; D], |(_, offset)| *offset);
 
+    // Missing offsets denote the base chart. A facet whose vertices all share
+    // one offset is a common translation of that same base-chart facet, even
+    // when the opposite simplex vertex has a different offset.
+    if lifted_facet
+        .iter()
+        .all(|(_, offset)| *offset == facet_anchor_offset)
+    {
+        let facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> = lifted_vertices
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &(vertex, _))| (index != facet_index).then_some(vertex))
+            .collect();
+        return Ok(facet_key_from_vertices(&facet_vertices));
+    }
+
     let mut packed_signature: SmallBuffer<
         u64,
         { MAX_PRACTICAL_DIMENSION_SIZE * MAX_PRACTICAL_DIMENSION_SIZE },
@@ -294,43 +331,25 @@ pub fn verify_facet_index_consistency<U, V, const D: usize>(
     }
 
     // Get the facet from simplex1 and compute its key
-    let simplex1_key_value = simplex_facet_key::<D>(simplex1.vertices(), facet_idx)?;
+    let simplex1_key_value = tds
+        .facet_key_for_simplex_facet(simplex1_key, facet_idx)
+        .map_err(|source| FacetError::FacetKeyDerivationFailed {
+            source: source.into(),
+        })?;
 
     // Find matching facet in simplex2
     for simplex2_facet_idx in 0..simplex2.number_of_vertices() {
-        if simplex1_key_value == simplex_facet_key::<D>(simplex2.vertices(), simplex2_facet_idx)? {
+        let simplex2_key_value = tds
+            .facet_key_for_simplex_facet(simplex2_key, simplex2_facet_idx)
+            .map_err(|source| FacetError::FacetKeyDerivationFailed {
+                source: source.into(),
+            })?;
+        if simplex1_key_value == simplex2_key_value {
             return Ok(true);
         }
     }
 
     Ok(false) // No matching facet found
-}
-
-fn simplex_facet_key<const D: usize>(
-    vertices: &[VertexKey],
-    omit_idx: usize,
-) -> Result<u64, FacetError> {
-    let expected_vertices = D + 1;
-    if vertices.len() != expected_vertices {
-        return Err(FacetError::InsufficientVertices {
-            expected: expected_vertices,
-            actual: vertices.len(),
-            dimension: D,
-        });
-    }
-
-    if omit_idx >= vertices.len() {
-        return Err(facet_index_error(omit_idx, vertices.len()));
-    }
-
-    let mut facet_vertices: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
-        SmallBuffer::with_capacity(vertices.len().saturating_sub(1));
-    for (idx, &vertex_key) in vertices.iter().enumerate() {
-        if idx != omit_idx {
-            facet_vertices.push(vertex_key);
-        }
-    }
-    checked_facet_key_from_vertex_keys::<D>(facet_vertices.as_slice())
 }
 
 fn facet_index_error(index: usize, facet_count: usize) -> FacetError {
@@ -386,11 +405,9 @@ pub fn usize_to_u8(idx: usize, facet_count: usize) -> Result<u8, FacetError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tds::TdsBuilder;
     use crate::vertex;
     use std::assert_matches;
-
-    use crate::core::simplex::Simplex;
-    use crate::core::tds::TdsBuilder;
 
     /// Verifies that every axis rejects the full `i8` relative-offset span.
     fn assert_periodic_facet_key_extreme_delta_rejected<const D: usize>() {
@@ -428,6 +445,77 @@ mod tests {
     gen_periodic_facet_key_extreme_tests!(3);
     gen_periodic_facet_key_extreme_tests!(4);
     gen_periodic_facet_key_extreme_tests!(5);
+
+    #[test]
+    fn periodic_facet_key_matches_absent_offsets_under_common_translation() {
+        fn assert_base_facets<const D: usize>() {
+            let mut tds = Tds::<(), (), D>::empty();
+            let vertices: Vec<_> = (0..=D)
+                .map(|index| {
+                    let mut point = [0.0; D];
+                    if index > 0 {
+                        point[index - 1] = 1.0;
+                    }
+                    tds.insert_vertex_with_mapping(vertex!(point).unwrap())
+                        .unwrap()
+                })
+                .collect();
+            for facet_index in 0..=D {
+                let bare: Vec<_> = vertices
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, &key)| (index != facet_index).then_some(key))
+                    .collect();
+                let expected = facet_key_from_vertices(&bare);
+                for translation in [i8::MIN, 0, i8::MAX] {
+                    let mut lifted: Vec<_> = vertices
+                        .iter()
+                        .map(|&key| (key, [translation; D]))
+                        .collect();
+                    // This corner is not part of the facet and must not affect
+                    // whether the selected facet is a translated base image.
+                    lifted[facet_index].1 = [translation.wrapping_add(1); D];
+                    assert_eq!(
+                        periodic_facet_key_from_lifted_vertices(&lifted, facet_index).unwrap(),
+                        expected
+                    );
+                }
+            }
+        }
+        assert_base_facets::<2>();
+        assert_base_facets::<3>();
+        assert_base_facets::<4>();
+        assert_base_facets::<5>();
+    }
+
+    #[test]
+    fn periodic_structure_facet_consistency_distinguishes_lifted_faces() {
+        let mut tds: Tds<(), (), 2> = Tds::empty();
+        let a = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.0]).unwrap())
+            .unwrap();
+        let b = tds
+            .insert_vertex_with_mapping(vertex!([0.25, 0.0]).unwrap())
+            .unwrap();
+        let c = tds
+            .insert_vertex_with_mapping(vertex!([0.0, 0.25]).unwrap())
+            .unwrap();
+        let mut keys = Vec::new();
+        for offsets in [
+            vec![[0, 0], [0, 0], [0, 0]],
+            vec![[0, 0], [1, 0], [0, 0]],
+            vec![[1, 1], [1, 1], [2, 1]],
+        ] {
+            keys.push(
+                tds.insert_simplex_with_mapping(
+                    Simplex::try_new_periodic(vec![a, b, c], offsets).unwrap(),
+                )
+                .unwrap(),
+            );
+        }
+        assert!(!verify_facet_index_consistency(&tds, keys[0], keys[1], 2).unwrap());
+        assert!(verify_facet_index_consistency(&tds, keys[0], keys[2], 2).unwrap());
+    }
 
     #[test]
     fn periodic_facet_key_rejects_invalid_lifted_simplex_arity() {

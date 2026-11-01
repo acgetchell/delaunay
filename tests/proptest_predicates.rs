@@ -146,7 +146,7 @@ macro_rules! gen_orientation_cyclic_invariance {
     };
 }
 
-// Vertices of a simplex lie on or outside the circumsphere boundary
+// A defining vertex makes a relative in-sphere determinant row exactly zero.
 macro_rules! gen_insphere_simplex_vertices_on_boundary {
     ($dim:literal) => {
         pastey::paste! {
@@ -162,11 +162,7 @@ macro_rules! gen_insphere_simplex_vertices_on_boundary {
                                 $dim,
                             ))
                         })?;
-                        prop_assert!(
-                            result == InSphere::BOUNDARY || result == InSphere::OUTSIDE,
-                            "Simplex vertex is {:?}, expected BOUNDARY or OUTSIDE",
-                            result
-                        );
+                        prop_assert_eq!(result, InSphere::BOUNDARY);
                     }
                 }
             }

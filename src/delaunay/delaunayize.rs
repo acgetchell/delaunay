@@ -273,6 +273,12 @@ where
 
 impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, FlipRepairDelaunayRefinement> {
     /// Enables or disables fallback reconstruction after failed flip repair.
+    ///
+    /// Reconstruction can change simplex connectivity. A rebuilt simplex retains
+    /// its payload only when its sorted vertex UUID set matches exactly one
+    /// original simplex; changed or ambiguous signatures receive no payload.
+    /// Vertex payloads are retained. See the
+    /// [refinement workflow](https://github.com/acgetchell/delaunay/blob/main/docs/api_design.md#data-preservation).
     pub const fn fallback_rebuild(mut self, fallback_rebuild: bool) -> Self {
         self.mode.config.fallback_rebuild = fallback_rebuild;
         self
@@ -293,7 +299,7 @@ impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, FlipRepairDe
 
 impl<K, U, V, const D: usize> DelaunayRefinementBuilder<K, U, V, D, FlipRepairDelaunayRefinement>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -823,7 +829,7 @@ fn rebuild_preserving_data<K, U, V, const D: usize>(
     snapshot: &FallbackRebuildSnapshot<U, V, D>,
 ) -> Result<DelaunayTriangulation<K, U, V, D>, FallbackRebuildError>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -856,7 +862,7 @@ fn run_configured_delaunay_repair<K, U, V, const D: usize>(
     config: DelaunayizeConfig,
 ) -> Result<DelaunayRepairStats, DelaunayRepairError>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -907,7 +913,7 @@ struct CanonicalDelaunayizeOperations;
 
 impl<K, U, V, const D: usize> DelaunayizeOperations<K, U, V, D> for CanonicalDelaunayizeOperations
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -1025,7 +1031,7 @@ fn delaunayize<K, U, V, const D: usize>(
     config: DelaunayizeConfig,
 ) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeRefinementError<K, U, V, D>>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
 {
@@ -1042,7 +1048,7 @@ fn delaunayize_with_operations<K, U, V, O, const D: usize>(
     operations: &mut O,
 ) -> Result<DelaunayizeResult<K, U, V, D>, DelaunayizeRefinementError<K, U, V, D>>
 where
-    K: ExactPredicates<D, Scalar = f64>,
+    K: ExactPredicates<D>,
     U: DataType,
     V: DataType,
     O: DelaunayizeOperations<K, U, V, D>,
@@ -1137,8 +1143,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::algorithms::flips::{DelaunayRepairDiagnostics, RepairQueueOrder};
-    use crate::geometry::kernel::AdaptiveKernel;
+    use crate::core::algorithms::flips::{
+        DelaunayRepairDiagnostics, FlipError, RepairQueueOrder, complete_first_repair_attempt,
+    };
+    use crate::core::operations::InsertionOutcome;
+    use crate::geometry::kernel::{AdaptiveKernel, RobustKernel};
     use crate::tds::{Tds, TdsError, VertexKey};
     use crate::validation::DelaunayVerificationError;
     use crate::vertex;
@@ -1176,7 +1185,7 @@ mod tests {
 
     impl<K, U, V, const D: usize> DelaunayizeOperations<K, U, V, D> for FailRepairOperations
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
         U: DataType,
         V: DataType,
     {
@@ -1199,11 +1208,52 @@ mod tests {
         }
     }
 
+    /// Supplies a primary-attempt failure to the production retry decision.
+    /// The square fixture is already admissible and positively oriented.
+    struct FailFirstRepairAttemptOperations;
+
+    impl<K, U, V, const D: usize> DelaunayizeOperations<K, U, V, D> for FailFirstRepairAttemptOperations
+    where
+        K: ExactPredicates<D>,
+        U: DataType,
+        V: DataType,
+    {
+        fn repair(
+            &mut self,
+            transaction: &mut TriangulationRollbackTransaction<'_, K, U, V, D>,
+            kernel: &K,
+            _topology: TopologyGuarantee,
+            global_topology: GlobalTopology<D>,
+            config: DelaunayizeConfig,
+        ) -> Result<DelaunayRepairStats, DelaunayRepairError> {
+            let run = complete_first_repair_attempt(
+                transaction,
+                kernel,
+                None,
+                global_topology,
+                config.delaunay_max_flips,
+                Err(synthetic_repair_error()),
+            )?;
+            transaction
+                .triangulation_mut()
+                .normalize_and_promote_positive_orientation()
+                .expect("the square remains positively oriented after the retry");
+            Ok(run.stats)
+        }
+
+        fn certify(
+            &mut self,
+            triangulation: &Triangulation<K, U, V, D>,
+        ) -> Result<DelaunayLevelFiveCertificate<D>, DelaunayTriangulationValidationError> {
+            certify_level_five_for_refinement(triangulation)
+        }
+    }
+
     struct FailCertificationOperations;
 
     impl<K, U, V, const D: usize> DelaunayizeOperations<K, U, V, D> for FailCertificationOperations
     where
-        K: ExactPredicates<D, Scalar = f64>,
+        K: ExactPredicates<D>,
         U: DataType,
         V: DataType,
     {
@@ -1292,7 +1342,7 @@ mod tests {
     fn construction_error() -> DelaunayTriangulationConstructionError {
         DelaunayTriangulationConstructionError::from(
             TriangulationConstructionError::FailedToCreateSimplex {
-                source: SimplexValidationError::InsufficientVertices {
+                source: SimplexValidationError::VertexCountMismatch {
                     actual: 2,
                     expected: 3,
                     dimension: 2,
@@ -1514,6 +1564,215 @@ mod tests {
     // =============================================================================
     // FALLBACK BEHAVIOR TESTS
     // =============================================================================
+
+    fn square_owner() -> DelaunayTriangulation<AdaptiveKernel<f64>, (), (), 2> {
+        let vertices = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([1.0, 0.0]).unwrap(),
+            vertex!([0.0, 1.0]).unwrap(),
+            vertex!([1.0, 1.0]).unwrap(),
+        ];
+        DelaunayTriangulation::builder(&vertices).build().unwrap()
+    }
+
+    #[test]
+    fn refinement_rebuild_preserves_inserted_uuid_and_payload() {
+        let mut owner = square_owner();
+        let inserted = vertex!([0.25, 0.25]).unwrap();
+        let inserted_uuid = inserted.uuid();
+        let (outcome, _) = owner.insert_with_statistics(inserted).unwrap();
+        assert!(matches!(outcome, InsertionOutcome::Inserted { .. }));
+        let result = delaunayize_with_operations(
+            owner.into_triangulation(),
+            DelaunayizeConfig {
+                fallback_rebuild: true,
+                ..DelaunayizeConfig::default()
+            },
+            &mut FailRepairOperations,
+        )
+        .unwrap();
+        assert!(result.outcome.used_fallback_rebuild);
+        let rebuilt = result.triangulation;
+        let key = rebuilt
+            .tri
+            .tds
+            .vertex_key_from_uuid(&inserted_uuid)
+            .unwrap();
+        assert_eq!(rebuilt.tri.tds.vertex(key).unwrap(), &inserted);
+        rebuilt.validate().unwrap();
+    }
+
+    #[test]
+    fn refinement_rebuild_preserves_default_topology() {
+        let result = delaunayize_with_operations(
+            square_owner().into_triangulation(),
+            DelaunayizeConfig {
+                fallback_rebuild: true,
+                ..DelaunayizeConfig::default()
+            },
+            &mut FailRepairOperations,
+        )
+        .unwrap();
+        assert!(result.outcome.used_fallback_rebuild);
+        assert_eq!(
+            result.triangulation.global_topology(),
+            GlobalTopology::Euclidean
+        );
+        assert_eq!(
+            result.triangulation.topology_guarantee(),
+            TopologyGuarantee::PLManifold
+        );
+        result.triangulation.validate().unwrap();
+    }
+
+    #[test]
+    fn refinement_rebuild_rejects_original_spherical_metadata_without_mutation() {
+        let mut triangulation = square_owner().into_triangulation();
+        // Retain the legacy deliberately invalid metadata fixture. An open
+        // square is not a closed S^2 realization; this tests rejection only.
+        triangulation.global_topology = GlobalTopology::Spherical;
+        let before = serde_json::to_value(&triangulation.tds).unwrap();
+        let identity = triangulation.tds.topology_owner_id();
+        let generation = triangulation.tds.generation();
+        let failure = delaunayize_with_operations(
+            triangulation,
+            DelaunayizeConfig {
+                fallback_rebuild: true,
+                ..DelaunayizeConfig::default()
+            },
+            &mut FailRepairOperations,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            failure.reason(),
+            DelaunayizeError::DelaunayRepairFailedWithRebuild { .. }
+        ));
+        let restored = failure.into_owner();
+        assert_eq!(restored.global_topology(), GlobalTopology::Spherical);
+        assert_eq!(restored.tds.topology_owner_id(), identity);
+        assert_eq!(restored.tds.generation(), generation);
+        assert_eq!(serde_json::to_value(&restored.tds).unwrap(), before);
+    }
+
+    #[test]
+    fn refinement_allows_pl_manifold_with_default_and_zero_budget() {
+        for budget in [None, Some(0)] {
+            let owner = square_owner();
+            assert_eq!(owner.topology_guarantee(), TopologyGuarantee::PLManifold);
+            let result = delaunayize(
+                owner.into_triangulation(),
+                DelaunayizeConfig {
+                    delaunay_max_flips: budget,
+                    ..DelaunayizeConfig::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(result.outcome.delaunay_repair.flips_performed, 0);
+            assert!(!result.outcome.used_fallback_rebuild);
+            result.triangulation.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn refinement_first_attempt_failure_recovers_without_rebuild_with_zero_budget() {
+        for budget in [None, Some(0)] {
+            let triangulation = square_owner().into_triangulation();
+            let identity = triangulation.tds.topology_owner_id();
+            let result = delaunayize_with_operations(
+                triangulation,
+                DelaunayizeConfig {
+                    delaunay_max_flips: budget,
+                    ..DelaunayizeConfig::default()
+                },
+                &mut FailFirstRepairAttemptOperations,
+            )
+            .unwrap();
+            assert_eq!(result.outcome.delaunay_repair.flips_performed, 0);
+            assert!(!result.outcome.used_fallback_rebuild);
+            assert_eq!(result.triangulation.tri.tds.topology_owner_id(), identity);
+            result.triangulation.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn refinement_original_non_delaunay_quad_respects_budget_and_retries() {
+        let vertices = [
+            vertex!([0.0, 0.0]).unwrap(),
+            vertex!([4.0, 0.0]).unwrap(),
+            vertex!([4.0, 2.0]).unwrap(),
+            vertex!([1.0, 2.0]).unwrap(),
+        ];
+        // Circle of the first triangle: center (2,1), radius squared 5.
+        // The fourth point has squared distance 2, so diagonal 0-2 violates it.
+        let points: Vec<_> = vertices[..3].iter().map(|vertex| *vertex.point()).collect();
+        assert_eq!(
+            AdaptiveKernel::new()
+                .in_sphere(&points, vertices[3].point())
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            RobustKernel::new()
+                .in_sphere(&points, vertices[3].point())
+                .unwrap(),
+            1
+        );
+        let triangulation = DelaunayTriangulationBuilder::try_from_vertices_and_simplices(
+            &vertices,
+            &[vec![0, 1, 2], vec![0, 2, 3]],
+        )
+        .unwrap()
+        .build_triangulation()
+        .unwrap();
+        assert!(
+            !triangulation
+                .delaunay_violation_report(None)
+                .unwrap()
+                .is_valid()
+        );
+        let before = serde_json::to_value(&triangulation.tds).unwrap();
+        let identity = triangulation.tds.topology_owner_id();
+        let generation = triangulation.tds.generation();
+        let failure = DelaunayRefinementBuilder::new(triangulation)
+            .repair_by_flips()
+            .max_flips(0)
+            .build()
+            .unwrap_err();
+        assert!(matches!(
+            failure.reason(),
+            DelaunayizeError::DelaunayRepairFailed {
+                source: DelaunayRepairError::NonConvergent { max_flips: 0, .. }
+            }
+        ));
+        let restored = failure.into_owner();
+        assert_eq!(restored.tds.topology_owner_id(), identity);
+        assert_eq!(restored.tds.generation(), generation);
+        assert_eq!(serde_json::to_value(&restored.tds).unwrap(), before);
+        let result = DelaunayRefinementBuilder::new(restored)
+            .repair_by_flips()
+            .max_flips(100)
+            .build()
+            .unwrap();
+        assert!(result.outcome.delaunay_repair.flips_performed > 0);
+        assert!(!result.outcome.used_fallback_rebuild);
+        result.triangulation.validate().unwrap();
+    }
+
+    #[test]
+    fn refinement_without_rebuild_preserves_original_1d_unsupported_error() {
+        let vertices = [vertex!([0.0]).unwrap(), vertex!([1.0]).unwrap()];
+        let owner: DelaunayTriangulation<_, (), (), 1> =
+            DelaunayTriangulation::builder(&vertices).build().unwrap();
+        let failure = DelaunayRefinementBuilder::new(owner.into_triangulation())
+            .repair_by_flips()
+            .fallback_rebuild(false)
+            .build()
+            .unwrap_err();
+        assert!(
+            matches!(failure.reason(), DelaunayizeError::DelaunayRepairFailed { source: DelaunayRepairError::Flip { source } } if matches!(source.as_ref(), FlipError::UnsupportedDimension { dimension: 1 }))
+        );
+        failure.owner().validate_realization().unwrap();
+    }
 
     #[test]
     fn final_certification_failure_rolls_back_mutating_repair_and_returns_triangulation() {
