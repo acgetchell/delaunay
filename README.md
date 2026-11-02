@@ -369,8 +369,8 @@ provenance-limited release evidence and [`benches/README.md`][benchmarks-guide]
 for benchmark selection, fixture sizes, baseline workflows, and large-scale
 profiling guidance.
 
-Release PRs publish a compact group-level snapshot from the validated retained
-`.comparison.json`/`.evidence.json` bundle. The geometric-mean ratios are descriptive summaries;
+Release PRs publish a compact per-case snapshot from the validated retained
+`.comparison.json`/`.evidence.json` bundle. The per-case ratios are descriptive summaries;
 the generated full report retains every benchmark result represented in that
 bundle.
 

@@ -494,15 +494,15 @@ identified by the recovery error before retrying. Release packaging revalidates 
 the retained measurement and preflight policy. No samples are synthesized,
 padded, truncated or rescaled.
 
-Each revision keeps its own harness. The common-harness runner intentionally
-overlays the current harness onto the baseline and requires compatibility;
-that would change the release experiment and discard useful absolute results.
-Delaunay therefore composes the public independent-checkout runner with the
-shared complete collector. Retained comparisons carry both shared sample/evidence
-pairs, including source/harness fingerprints, captured hosts, canonical inventory,
-count policy and raw-sample digests. They are not labeled as common-harness
-`CompleteRun` evidence. Historical records are preserved without inventing those
-proofs. The existing consumer digest framing remains in Delaunay context.
+The current release-signal plan overlays the current harness onto both library
+revisions and requires it to compile against each. The topology and historical
+v0.8.2 plans retain independent native harnesses. Current schema-4 runs retain
+complete-run evidence with the declared harness mode, original source provenance,
+canonical inventories, count policies and exact raw samples.
+
+The retired independent-checkout runner kept each revision's own harness and
+retained separate sample/evidence pairs. Those historical records remain intact;
+they are not relabeled as common-harness evidence or given invented proofs.
 
 The report still suppresses ratios for incompatible workload, host or compiler
 evidence and across hosted sessions. Current-only and baseline-only rows remain
