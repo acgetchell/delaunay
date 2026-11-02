@@ -110,6 +110,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Bind benchmark publication to the configuration and measurement plan used during acquisition.
   - Correct scientific and API documentation, remove redundant Rust imports and bounds, and align release tooling checks.
   - Include the maintainer's Cargo and Python dependency lockfile updates.
+- Exclude benchmark statistics from secret findings [`b4030b6`](https://github.com/acgetchell/delaunay/commit/b4030b6a1953815eee439cebf6fb9fedac35d084)
+
+  - Scope the Gitleaks exception to encoded Tukey statistics in retained
+    performance runs while preserving detection of other and decoded secrets.
+  - Describe README timing ratios per case and distinguish the current
+    release-signal common harness from historical independent harnesses.
 
 ### Maintenance
 
