@@ -809,13 +809,16 @@ semgrep: semgrep-scan
 # Scan native inputs and Rustdoc blocks into a validated JSON/SARIF pair.
 [private]
 semgrep-scan output="target/semgrep": _ensure-uv
-    rm -f {{ quote(output + ".attempt.json") }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    output=$(uv run --locked python -c 'from pathlib import Path; import sys; print((Path.cwd() / sys.argv[1]).as_posix())' {{ quote(output) }})
+    rm -f -- "${output}.attempt.json"
     {{ semgrep_stack_limit }} {{ rrt }} semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py' \
         --include '.github/workflows/*.yml' --include '.github/workflows/*.yaml' \
         --include '.github/actions/**/*.yml' --include '.github/actions/**/*.yaml' \
         --include '*.md' --include CITATION.cff --include justfile \
         --include 'notebooks/*.ipynb' --include 'doctests/*.txt' \
-        --exclude 'tests/semgrep/**' --rust-docs --output {{ quote(output) }}
+        --exclude 'tests/semgrep/**' --rust-docs --output "$output"
 
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]

@@ -352,8 +352,9 @@ def test_mixed_native_fixture_assertions(tmp_path: Path, capsys: pytest.CaptureF
         assert not errors
 
 
+@pytest.mark.parametrize("output_suffix", ["", "/", "//", "/."])
 def test_workflow_precondition_failure_rejects_retained_reports(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_reports: tuple[Path, dict[str, bytes], list[Path]]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_reports: tuple[Path, dict[str, bytes], list[Path]], output_suffix: str
 ) -> None:
     previous_root, previous, _ = native_reports
     consumer(tmp_path, {})
@@ -370,11 +371,12 @@ def test_workflow_precondition_failure_rejects_retained_reports(
     cli = f"{shlex.quote(Path(sys.executable).as_posix())} -m research_repo_tools --root {shlex.quote(tmp_path.as_posix())}"
     result = run_command(
         "just",
-        ["--justfile", str(ROOT / "justfile"), "--set", "rrt", cli, "semgrep-scan", str(destination)],
+        ["--justfile", str(ROOT / "justfile"), "--set", "rrt", cli, "semgrep-scan", destination.as_posix() + output_suffix],
         cwd=ROOT,
         check=False,
     )
     assert result.returncode != 0
+    assert "not a git repository" in result.stderr.lower()
     assert not marker.exists()
     assert scan(tmp_path, (), monkeypatch) != 0
     with pytest.raises(FileNotFoundError):
