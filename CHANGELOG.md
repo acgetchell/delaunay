@@ -5,6 +5,175 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-11-01
+
+### ⚠️ Breaking Changes
+
+- The source fields in
+- Replace the profiling_suite benchmark target with the focused
+  targets. Use performance-prepare before performance-release and the declarative
+  performance-readme workflow. Positional performance-release tag pairs and the
+  publish-readme-performance console command are removed. New paired evidence uses
+  complete-run history; historical comparison archives remain unchanged.
+- release-evidence now uses shared file-based selection flags instead of a positional JSON identity; existing adapter manifests require fresh main CI evidence.
+- SimplexIntersectionFailure no longer implements Eq. Geometry
+  and triangulation validation expose typed solver and active-set-budget failures.
+- EdgeKey and TriangulationAdjacency now carry the const dimension and preserve periodic lattice displacement. VisualizationData gains periodic realization data
+  and exports schema v2; nonperiodic v1 data remains readable.
+
+#### fix: correct periodic diagnostics and cover validation boundaries
+
+  - Handle point-validation and predicate errors in the runnable SoS examples.
+  - Preserve topology-aware witnesses in periodic diagnostics and document topology and circumsphere failures.
+  - Cache exact vertex coordinates for each periodic report and add a validated periodic benchmark.
+  - Test unsupported geometry and dimensions, malformed storage, reciprocal neighbor slots, and edge-incidence corruption.
+  - Include the periodic diagnostic regression in feature checks and retain the roadmap's legacy deep link with a focused Markdown exception.
+
+### Merged Pull Requests
+
+- Preserve periodic invariants and harden release boundaries [#684](https://github.com/acgetchell/delaunay/pull/684)
+- Align simplicial terminology and inverse move contracts [#683](https://github.com/acgetchell/delaunay/pull/683)
+- Preserve periodic vertex identities during realization [#682](https://github.com/acgetchell/delaunay/pull/682)
+- Adopt la-stack kernels and support 8D intersections [#681](https://github.com/acgetchell/delaunay/pull/681)
+- Streamline validation and automate release preparation [#679](https://github.com/acgetchell/delaunay/pull/679)
+- Split profiling and declare performance workflows [#678](https://github.com/acgetchell/delaunay/pull/678)
+- Adopt strict Actions and aggregate Rustdoc checks [#677](https://github.com/acgetchell/delaunay/pull/677)
+- Adopt published shared tooling and linear algebra releases [#675](https://github.com/acgetchell/delaunay/pull/675)
+- Bump the github-actions group with 3 updates [#670](https://github.com/acgetchell/delaunay/pull/670)
+
+### Changed
+
+- [**breaking**] Split profiling and declare performance workflows [#678](https://github.com/acgetchell/delaunay/pull/678)
+  [`5b31cb3`](https://github.com/acgetchell/delaunay/commit/5b31cb3a9457449e4823455106cc28f0beec241a)
+
+#### refactor!: split profiling and declare performance workflows
+
+  - Preserve all 112 manual diagnostics in six focused benchmark targets with
+    lazy fixture setup and explicit release-signal membership.
+  - Acquire each revision's original harness through published declarative
+    workflows, retaining complete samples, provenance and union coverage.
+  - Delegate report promotion and README publication to research-repo-tools,
+    while preserving Delaunay's scientific and historical-asset policies.
+  - Refresh the WebAssembly and wrapt dependency lock entries.
+- [**breaking**] Adopt la-stack kernels and support 8D intersections [#681](https://github.com/acgetchell/delaunay/pull/681)
+  [`e9f4846`](https://github.com/acgetchell/delaunay/commit/e9f48463b28476b08a45fde6ff8651f22ebaa176)
+
+#### refactor!: adopt la-stack kernels and support 8D intersections
+
+  - Delegate exact rational dots, provisional column selection, circumsphere
+    interval solves, and symbolic polynomial determinants to la-stack.
+  - Extend standalone exact simplex intersections through 8D with rational
+    systems through order ten and explicit solver and work-budget failures.
+  - Preserve exact certification and fallback behavior, and document support
+    limits and measured performance tradeoffs.
+
+### Fixed
+
+- Preserve periodic vertex identities during realization [#682](https://github.com/acgetchell/delaunay/pull/682)
+  [`c97f7fa`](https://github.com/acgetchell/delaunay/commit/c97f7fa639dffe896cd0b534e6bc974b6d92bdab)
+
+  - Construct periodic comparison coordinates once from canonical vertices and
+    combined integer offsets, preventing false shared-face intersections.
+  - Keep explicit torus metadata consistent with models that ignore image
+    offsets, and document the finite-coordinate realization contract.
+- Align simplicial terminology and inverse move contracts [#683](https://github.com/acgetchell/delaunay/pull/683)
+  [`6b2c09f`](https://github.com/acgetchell/delaunay/commit/6b2c09f29549155db1f3b49c5c66d243627abc75)
+
+#### docs: align simplicial terminology with Lickorish
+
+  - Define joins, links, closed stars, closure, and relative interior with contextual Lickorish citations.
+  - Distinguish incident D-simplex support and implicit faces from closed and open stars across topology guides and public API documentation.
+  - Clarify empty-simplex conventions, lifted periodic identities, and the scope of supported topology operations.
+
+#### docs: correct inverse Pachner move guidance
+
+  - Document the D &gt;= 4 limit for K3Inverse and use K2 to reverse a 3D K3 move.
+  - Clarify schematic move examples and obtain live edge keys through the triangulation.
+  - Preserve the stable Lickorish citation anchor with a line-scoped Markdownlint exception.
+
+#### docs: state inverse k2 dimension requirement
+
+  - Document that K2Inverse requires D &gt;= 3 and returns UnsupportedDimension for lower dimensions.
+
+#### fix: reject unsupported inverse k2 before topology checks [#683](https://github.com/acgetchell/delaunay/pull/683)
+
+  - Return UnsupportedDimension from inverse k2 mutation and feasibility checks when D is below 3, before topology preflight.
+  - Clarify that inverse k1 neighbor-wiring failures restore the triangulation and return a typed invariant error without fan retriangulation.
+- [**breaking**] Preserve periodic invariants and harden release boundaries [#684](https://github.com/acgetchell/delaunay/pull/684)
+  [`4d7e9d6`](https://github.com/acgetchell/delaunay/commit/4d7e9d63c6225418640fa881dc5a38bbf23b1d63)
+
+#### fix!: preserve periodic invariants and harden release boundaries
+
+  - Preserve lifted periodic identities through adjacency, traversal, validation, repair, and mesh export.
+  - Keep topology mutations and publication boundaries coherent, including rollback, vertex-only storage, payload destruction, and checkpoint decoding.
+  - Strengthen independent geometric, topological, property, and downstream API regression coverage.
+  - Bind benchmark publication to the configuration and measurement plan used during acquisition.
+  - Correct scientific and API documentation, remove redundant Rust imports and bounds, and align release tooling checks.
+  - Include the maintainer's Cargo and Python dependency lockfile updates.
+- Exclude benchmark statistics from secret findings [`b4030b6`](https://github.com/acgetchell/delaunay/commit/b4030b6a1953815eee439cebf6fb9fedac35d084)
+
+  - Scope the Gitleaks exception to encoded Tukey statistics in retained
+    performance runs while preserving detection of other and decoded secrets.
+  - Describe README timing ratios per case and distinguish the current
+    release-signal common harness from historical independent harnesses.
+
+### Maintenance
+
+- Bump the github-actions group with 3 updates [#670](https://github.com/acgetchell/delaunay/pull/670)
+  [`4f6766b`](https://github.com/acgetchell/delaunay/commit/4f6766b3cbc57ffa16980755924d84a2bfe2be0a)
+
+  Bumps the github-actions group with 3 updates: [github/codeql-action/upload-sarif](https://github.com/github/codeql-action),
+  [github/codeql-action/init](https://github.com/github/codeql-action) and [github/codeql-action/analyze](https://github.com/github/codeql-action).
+
+  Updates `github/codeql-action/upload-sarif` from 4.38.3 to 4.39.0
+
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/24c54180a607b1449ed407dd24f251e4e9147c8d...6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee)
+
+  Updates `github/codeql-action/init` from 4.38.3 to 4.39.0
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/24c54180a607b1449ed407dd24f251e4e9147c8d...6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee)
+
+  Updates `github/codeql-action/analyze` from 4.38.3 to 4.39.0
+  - [Release notes](https://github.com/github/codeql-action/releases)
+  - [Changelog](https://github.com/github/codeql-action/blob/main/CHANGELOG.md)
+  - [Commits](https://github.com/github/codeql-action/compare/24c54180a607b1449ed407dd24f251e4e9147c8d...6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee)
+- [**breaking**] Adopt published shared tooling and linear algebra releases [#675](https://github.com/acgetchell/delaunay/pull/675)
+  [`f50e13e`](https://github.com/acgetchell/delaunay/commit/f50e13ebee9c3f863f727fb958519401a8558f68)
+
+  - Adopt research-repo-tools 0.2.4 and la-stack 0.5.2 in every maintained
+    environment and lockfile, preserving the exact arithmetic feature policy.
+  - Modernize just update to upgrade tools before dependencies and audit all
+    maintained locks without repeating bootstrap.
+  - Keep Semgrep on the locked Python environment through a temporary,
+    version-bounded override pending the upstream 0.2.5 fix.
+  - Refresh uv, Rust and Python development dependencies and adapt the profiling
+    harness to sysinfo's fallible constructor.
+  - Box linear algebra error sources to preserve compact nested error layouts
+    while retaining typed conversions and source inspection.
+- Adopt strict Actions and aggregate Rustdoc checks [#677](https://github.com/acgetchell/delaunay/pull/677)
+  [`3444210`](https://github.com/acgetchell/delaunay/commit/3444210e4f53d57efbd674be5c66283d82ea1a3b)
+
+  - Enforce explicit action identities and exact authentication commits across
+    workflows and composite actions through the published shared checker.
+  - Scan Rustdoc and Markdown Rust examples alongside existing native and prose
+    checks while preserving production-only rule scopes.
+  - Retain valid reports after failed scans and upload SARIF only when the
+    current attempt publishes a complete generation.
+  - Track replacement of the temporary Semgrep scope and retention bridge in
+    research-repo-tools#171 and Delaunay #676.
+- [**breaking**] Streamline validation and automate release preparation [#679](https://github.com/acgetchell/delaunay/pull/679)
+  [`f6ebaed`](https://github.com/acgetchell/delaunay/commit/f6ebaed0033ca7d46f273eb460ce41f30b310134)
+
+#### ci!: streamline validation and automate release preparation
+
+  - Run portable checks once while retaining native platform validation and exact-main release evidence
+  - Adopt shared release tooling for frozen Cargo evidence, asset handoffs, and citation-date changelogs
+  - Prepare verified stable drafts after tag pushes and dispatch release benchmarks at the exact tag
+  - Verify evidence before tagging and refresh benchmark and notebook dependencies
+
 ## [0.8.3] - 2026-10-25
 
 ### ⚠️ Breaking Changes
@@ -29,6 +198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Refresh v0.8.3 artifacts [#666](https://github.com/acgetchell/delaunay/pull/666)
 - Separate public API benchmarks from diagnostics [#665](https://github.com/acgetchell/delaunay/pull/665)
 - Make paper tooling opt-in and refresh project guides [#663](https://github.com/acgetchell/delaunay/pull/663)
 - Preserve scientific correctness across triangulation workflows [#660](https://github.com/acgetchell/delaunay/pull/660)
@@ -339,6 +509,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### docs: clarify the upstream tooling adoption condition
 
   - Describe the published upstream capabilities required before retiring local orchestration.
+- Refresh v0.8.3 artifacts [#666](https://github.com/acgetchell/delaunay/pull/666)
+  [`3fa8a99`](https://github.com/acgetchell/delaunay/commit/3fa8a9907101c523574a0d17991a1f652b5419dc)
+
+  - Include the public API benchmark refactor and historical-plan compatibility fix in the generated changelog.
+  - Refresh absolute performance results for the three-target public API plan with retained measurement provenance.
 
 ## [0.8.2] - 2026-09-15
 
@@ -1753,6 +1928,7 @@ Older releases are archived by minor series:
 - [0.3.x](docs/archives/changelog/0.3.md)
 - [0.2.x](docs/archives/changelog/0.2.md)
 
+[0.8.4]: https://github.com/acgetchell/delaunay/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/acgetchell/delaunay/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/acgetchell/delaunay/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/acgetchell/delaunay/compare/v0.8.0...v0.8.1

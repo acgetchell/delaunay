@@ -667,8 +667,10 @@ when you explicitly want an exploratory report over every Criterion result
 already present under `target/criterion/`.
 
 Use `just performance-local [release-signal|topology]` for paired acquisition
-with read-only source exports. The installed schema-4 engine preserves native
-harnesses, independent discovery/gates/counts and exact raw samples. It retains
+with read-only source exports. The default release-signal plan overlays the current
+harness onto both library revisions; the topology plan preserves each native
+harness. The installed schema-4 engine retains original source provenance,
+independent discovery/gates/counts and exact raw samples. It retains
 complete-run/v3 evidence at `target/bench-reports/performance.run.json`, its
 `.evidence.json` envelope and a Markdown report. Incompatible identities retain
 absolute/one-sided results and suppress ratios.

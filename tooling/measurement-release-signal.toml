@@ -1,6 +1,6 @@
-# Independent native harnesses; counts are scientific policy, never inferred from raw lengths.
+# One current harness for both releases; counts are scientific policy, never inferred from raw lengths.
 schema = 4
-harness-mode = "independent"
+harness-mode = "common"
 backend = "export"
 minimum-release = "v0.8.2"
 sources = [ "src/**/*.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml" ]

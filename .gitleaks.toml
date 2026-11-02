@@ -1,9 +1,8 @@
 # Gitleaks configuration file for delaunay project
 # https://github.com/gitleaks/gitleaks
 #
-# This configuration allowlists known false positives where hex literals
-# are used as benign test constants for facet key formatting validation.
-# These are not secrets but rather mock data used in unit tests.
+# This configuration allowlists benign test constants and encoded Criterion
+# Tukey statistics. Default secret detection remains enabled.
 
 title = "Gitleaks Configuration"
 
@@ -20,9 +19,25 @@ regexes = [
     '''(?i)0xdead_beef_cafe_babe''', # Additional test constant used for comparison tests
 ]
 
-# Additional allowlist entries can be added here for other false positives
-# For example:
-# [[allowlist]]
-# description = "Example: prefer literal-scoped regex over file paths"
-# regexes = ['''0xdead_beef_cafe_babe''']
-# # Note: avoid file-level path allowlists; they mask unrelated leaks.
+# The generic rule mistakes the "key" suffix in "tukey.json" for an API-key
+# label. These retained values encode four numeric outlier fences, not secrets.
+# Require both the evidence path and the matched Tukey field so other content
+# in the same file remains scanned, including decoded payloads.
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Base64-encoded Criterion Tukey statistics in retained performance runs"
+condition = "AND"
+paths = [ '''(^|/)docs/performance-runs/runs/[0-9a-f]{64}/run\.json$''' ]
+regexTarget = "match"
+# All 346 retained payloads decode to four finite numbers using only [0-9.,].
+# Match Base64 for '[' + a digit + numeric bytes + ']', not arbitrary Base64:
+# the prefix consumes three bytes, repeated blocks consume numeric triples,
+# and the suffix handles ']' at each of the three possible byte alignments.
+# A scan chunk can end before the field's closing quote or inside its payload.
+regexes = [
+    '''^tukey\.json":\s*"Wz[AEIMQUYcgk][suw-z0-5](?:(?:(?:L[Ci]|[MN][CSiy]|O[CS])[w4]|(?:L[Dj]|[MN][DTjz]|O[DT])[AEIMQUYcgk])[suw-z0-5])*(?:XQ==|(?:L[Fl]|[MN][FVl1]|O[FV])0=|(?:(?:L[Ci]|[MN][CSiy]|O[CS])[x5]|(?:L[Dj]|[MN][DTjz]|O[DT])[BFJNRVZdhl])d)"?$''',
+    # Exact truncated prefix of the retained [760939.1311688311,...] payload.
+    '''^tukey\.json": "Wzc2MDkzOS4xMzExNjg4MzEx$''',
+]

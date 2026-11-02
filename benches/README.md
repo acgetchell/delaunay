@@ -25,8 +25,10 @@ just performance-local topology
 ```
 
 These commands call the installed shared schema-4 acquisition engine. Read-only
-source exports preserve each revision's native harness, including baseline-only
-files; no Git worktrees or automatic tag fetching are needed. The current tree
+source exports retain each revision's original source provenance. The default
+release-signal plan overlays the current harness onto both library versions;
+the topology plan preserves native harnesses, including baseline-only files.
+No Git worktrees or automatic tag fetching are needed. The current tree
 includes tracked and nonignored new files. Tags must already exist locally.
 Concurrent input changes reject publication. Both phases retain independent
 canonical discovery inventories, gates, count policies, exact raw JSON, source,
@@ -88,7 +90,7 @@ just performance-doc --payload target/bench-reports/performance.run.json \
   --manifest target/bench-reports/performance.evidence.json
 ```
 
-The default paired declaration uses the v0.8.3+ native case contract, including
+The default paired declaration uses one common harness with the v0.8.3+ case contract, including
 the current location query IDs. To acquire an original v0.8.2 baseline, select
 `tooling/measurement-release-signal-v082.toml` in the explicit `performance measure`
 command. It preserves that baseline's 20 different locate IDs and all original

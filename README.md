@@ -369,14 +369,37 @@ provenance-limited release evidence and [`benches/README.md`][benchmarks-guide]
 for benchmark selection, fixture sizes, baseline workflows, and large-scale
 profiling guidance.
 
-Release PRs publish a compact group-level snapshot from the validated retained
-`.comparison.json`/`.evidence.json` bundle. The geometric-mean ratios are descriptive summaries;
+Release PRs publish a compact per-case snapshot from the validated retained
+`.comparison.json`/`.evidence.json` bundle. The per-case ratios are descriptive summaries;
 the generated full report retains every benchmark result represented in that
 bundle.
 
 <!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->
 
-No retained release-comparison bundle has been published to the README yet.
+Run: `bbd3170146eaa928e78d3888b7ef08643356b765b07de295baa3c94c0dd6071b`. Statistic: median. Unit: ns. Confidence level: 95%.
+
+- Baseline v0.8.3: baseline phase, v0.8.3, revision 3fa8a9907101c523574a0d17991a1f652b5419dc.
+- Current v0.8.4: current phase, v0.8.4, revision 4d7e9d63c6225418640fa881dc5a38bbf23b1d63.
+
+| Case | Baseline v0.8.3 | Current v0.8.4 | Baseline / current |
+| --- | --- | --- | --- |
+| 2D construction (500 vertices) | 5.07864e+07<br>[5.02226e+07, 5.13329e+07] | 4.56466e+07<br>[4.54887e+07, 4.59654e+07] | 1.1126 |
+| 3D construction (100 vertices) | 4.13705e+07<br>[4.10921e+07, 4.15683e+07] | 3.72588e+07<br>[3.71412e+07, 3.81017e+07] | 1.11036 |
+| 4D construction (30 vertices) | 1.04583e+08<br>[1.03845e+08, 1.05634e+08] | 9.60714e+07<br>[9.53888e+07, 9.63171e+07] | 1.08859 |
+| 5D construction (12 vertices) | 2.28432e+07<br>[2.27722e+07, 2.29052e+07] | 2.13448e+07<br>[2.13053e+07, 2.14477e+07] | 1.0702 |
+
+Intervals are recorded marginal timing intervals; ratios are point estimates, with no ratio intervals or significance claims.
+Ratio is numerator time / denominator time; greater than one means less denominator time.
+
+- Baseline / current: ratio; numerator = Baseline v0.8.3; denominator = Current v0.8.4.
+
+Selection coverage:
+
+- Baseline v0.8.3: 4 selected; 0 unavailable rows; 169 phase cases omitted. Complete evidence is retained independently.
+- Current v0.8.4: 4 selected; 0 unavailable rows; 169 phase cases omitted. Complete evidence is retained independently.
+- [Complete run evidence](docs/performance-runs/runs/bbd3170146eaa928e78d3888b7ef08643356b765b07de295baa3c94c0dd6071b/run.json)
+- [Evidence envelope](docs/performance-runs/runs/bbd3170146eaa928e78d3888b7ef08643356b765b07de295baa3c94c0dd6071b/evidence.json)
+- [Selected timings CSV](docs/assets/bench/release-performance.csv)
 
 <!-- PERFORMANCE_RELEASE_TABLE:END -->
 

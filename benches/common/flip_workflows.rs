@@ -8,7 +8,7 @@
 use std::{collections::HashSet, fmt, num::TryFromIntError};
 
 use delaunay::flips::{
-    BistellarFlips, EdgeKey, FacetHandle, FlipError, RidgeHandle, SimplexKey, TriangleHandle,
+    BistellarFlips, FacetHandle, FlipError, RidgeHandle, SimplexKey, TriangleHandle,
     TriangleHandleError,
 };
 use delaunay::prelude::construction::{
@@ -748,8 +748,7 @@ pub fn flippable_k2_facet<const D: usize>(
                     ));
                     continue;
                 }
-                let edge = match find_live_edge(
-                    &trial,
+                let edge = match trial.edge_key(
                     info.inserted_face_vertices[0],
                     info.inserted_face_vertices[1],
                 ) {
@@ -968,15 +967,15 @@ pub fn roundtrip_k2<const D: usize>(
             expected: 2,
         });
     }
-    let edge = find_live_edge(
-        dt,
-        info.inserted_face_vertices[0],
-        info.inserted_face_vertices[1],
-    )
-    .map_err(|source| FlipWorkflowError::InvalidInsertedEdge {
-        move_kind: FlipMoveKind::K2,
-        source,
-    })?;
+    let edge = dt
+        .edge_key(
+            info.inserted_face_vertices[0],
+            info.inserted_face_vertices[1],
+        )
+        .map_err(|source| FlipWorkflowError::InvalidInsertedEdge {
+            move_kind: FlipMoveKind::K2,
+            source,
+        })?;
     dt.flip_k2_inverse_from_edge(edge)
         .map_err(|source| FlipWorkflowError::InverseFlipFailed {
             dimension: D,
@@ -1416,15 +1415,6 @@ fn ridge_support_points<const D: usize>(
     keys.sort_unstable();
     keys.dedup();
     vertex_points(dt, &keys)
-}
-
-/// Resolves two vertex keys to a live public edge key.
-fn find_live_edge<const D: usize>(
-    dt: &FlipTriangulation<D>,
-    a: VertexKey,
-    b: VertexKey,
-) -> Result<EdgeKey<D>, EdgeKeyError> {
-    dt.edge_key(a, b)
 }
 
 /// Resolves vertex keys to points.

@@ -11,3 +11,7 @@ normalization, archiving, and release-note extraction. Use `just changelog`,
 `changelog_format.toml` supplies the consumer's generated-history Markdown policy.
 Historical emphasis and list indentation remain exempt from active prose rules;
 archive destinations are created together by the shared transaction.
+
+`performance_format.toml` formats the generated README performance section before
+its CSV is published. Link-existence checks run afterward through the normal
+Markdown gate, which uses the stricter policy in `pyproject.toml`.

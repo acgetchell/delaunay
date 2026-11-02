@@ -1,0 +1,8 @@
+{
+  "run": {
+    "baseline": "v0.8.3",
+    "current": "v0.8.4",
+    "id": "bbd3170146eaa928e78d3888b7ef08643356b765b07de295baa3c94c0dd6071b"
+  },
+  "schema": "research-repo-tools/latest-run/v1"
+}

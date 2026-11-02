@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "delaunay-scripts"
-version = "0.8.3"
+version = "0.8.4"
 description = "Scientific Python tooling for the delaunay Rust library"
 readme = "tooling/python/README.md"
 requires-python = ">=3.15"
@@ -62,6 +62,7 @@ py-modules = [
 ]
 
 [tool.setuptools.data-files]
+"share/delaunay/docs/templates" = [ "docs/templates/performance_format.toml" ]
 "share/delaunay/tooling" = [
     "tooling/measurement-release-signal.toml",
     "tooling/measurement-release-signal-v082.toml",
@@ -261,6 +262,13 @@ disable = [
 [tool.rumdl.MD013]
 line-length = 160
 
+# Temporary generated-report exceptions until the upstream renderer fix is adopted:
+# https://github.com/acgetchell/delaunay/issues/685
+[tool.rumdl.per-file-ignores]
+"docs/performance_current.md" = [ "MD013", "MD034" ]
+"docs/performance-runs/README.md" = [ "MD013" ]
+"docs/performance-runs/runs/*/report.md" = [ "MD013", "MD034" ]
+
 [dependency-groups]
 tooling = [ "research-repo-tools[python-tools]==0.2.4" ]
 dev = [
@@ -363,7 +371,15 @@ checkpoints = [ "notebooks/.ipynb_checkpoints" ]
 [tool.research-repo-tools.text]
 line-limit = 160
 include = [ "*.md" ]
-exclude = [ "CHANGELOG.md", "docs/archive/**", "docs/archives/changelog/**" ]
+# Keep these generated-report exceptions aligned with rumdl above; remove via #685.
+exclude = [
+    "CHANGELOG.md",
+    "docs/archive/**",
+    "docs/archives/changelog/**",
+    "docs/performance_current.md",
+    "docs/performance-runs/README.md",
+    "docs/performance-runs/runs/*/report.md",
+]
 
 [tool.research-repo-tools.sarif]
 category-prefix = "codacy"
