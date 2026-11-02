@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### ⚠️ Breaking Changes
 
 - The source fields in
+  CoordinateConversionError::LinearAlgebraFailure, QualityError::EdgeLength,
+  RandomPointGenerationError::VectorComputation and
+  SphericalPointError::AngleComputationFailed now contain Box&lt;LaError&gt;.
+  Dereference the boxed source for direct inspection or downcast Error::source()
+  to Box&lt;LaError&gt;. Existing From&lt;LaError&gt; conversions remain available.
 - Replace the profiling_suite benchmark target with the focused
   targets. Use performance-prepare before performance-release and the declarative
   performance-readme workflow. Positional performance-release tag pairs and the
@@ -110,12 +115,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Bind benchmark publication to the configuration and measurement plan used during acquisition.
   - Correct scientific and API documentation, remove redundant Rust imports and bounds, and align release tooling checks.
   - Include the maintainer's Cargo and Python dependency lockfile updates.
-- Exclude benchmark statistics from secret findings [`b4030b6`](https://github.com/acgetchell/delaunay/commit/b4030b6a1953815eee439cebf6fb9fedac35d084)
-
-  - Scope the Gitleaks exception to encoded Tukey statistics in retained
-    performance runs while preserving detection of other and decoded secrets.
-  - Describe README timing ratios per case and distinguish the current
-    release-signal common harness from historical independent harnesses.
 
 ### Maintenance
 
@@ -193,6 +192,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `update-python-dependencies` instead of `update-python-deps`.
 - Replace the directional `safe_scalar_*_f64` and
   `safe_coords_*_f64` helpers with try_finite_scalar and try_finite_coords.
+  DelaunayIncrementalBuilder::finish now returns RefinementError containing the
+  builder on failure. TDS report types and diagnostic imports are layer-specific;
+  orientation and predicate error matching must account for preserved typed
+  causes. Periodic identity now ignores a common lattice translation.
 - Remove the public determinant helper and its geometry prelude export. Use Matrix::det() for a floating-point estimate with typed errors, or
   Matrix::det_sign_exact() for an exact sign.
 
@@ -1035,6 +1038,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stringly diagnostic surfaces.
 - GlobalTopology::Toroidal now stores ToroidalDomain&lt;D&gt; instead
   of [f64; D], ToroidalSpace::domain is private behind domain(), and
+  ToroidalSpace::new/ToroidalModel::new require a validated ToroidalDomain&lt;D&gt;.
+  Use ToroidalDomain::try_new, ToroidalSpace::try_new, ToroidalModel::try_new,
+  or GlobalTopology::try_toroidal for raw period arrays.
 - Raw-bound generator and Hilbert helpers now use `try_*` names, and focused preludes no longer export the old non-`try` raw-bound APIs. Callers should migrate
   to the `try_*` functions for raw tuple inputs or to the `*_in_range` / prevalidated batch APIs when they already have validated inputs.
 - core geometry and topology types now use the validated f64-coordinate API, such as Point&lt;D&gt;, Vertex&lt;U, D&gt;, Simplex&lt;V, D&gt;, Tds&lt;U, V,
@@ -1099,6 +1105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Align topology proptest assertions and exact-predicate regression diagnostics with the validators they exercise.
 - Document owner-level structure validators and make the cfg(test) shim Semgrep rule line-local.
 - `GlobalTopology::model` is now crate-private, and
+  `ToroidalModel::try_new` was removed. Construct `ToroidalDomain` with `ToroidalDomain::try_new` and pass it to `ToroidalModel::new` instead.
 - Replace the legacy public SphericalSpace topology helper with SphericalPoint/SphericalMetric and the new spherical Delaunay types. Spherical Delaunay now
   treats D as the intrinsic dimension of S^D and stores the extra coordinate only in the spherical backend.
 

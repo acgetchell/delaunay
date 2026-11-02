@@ -1,7 +1,7 @@
 # Shared tooling adoption
 
 The repository now pins the published
-[research-repo-tools v0.2.4](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.4)
+[research-repo-tools v0.2.5](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.5)
 PyPI distribution in runtime dependencies, the tooling/dev groups, and the
 notebook extra/group. `uv.lock` records exact registry artifacts and hashes.
 Python follows the shared package's 3.15 floor. Ruff, ty and pytest inherit exact
@@ -46,16 +46,46 @@ documented below. The [release-tooling adoption](#v024-release-tooling-adoption)
 implements [#653](https://github.com/acgetchell/delaunay/issues/653) using the
 same published package.
 
-`tooling/python/shared_tooling.py` temporarily selects Semgrep from the locked
-Python 3.15 environment for setup, production scans, and fixture checks. The
-published v0.2.4 otherwise provisions Python 3.14/Semgrep 1.182.0 and can resolve
-the wrong `pysemgrep` on PATH. The adapter retains the installed shared validation
-logic, is restricted to v0.2.4, and restores its process-local overrides.
-[#673](https://github.com/acgetchell/delaunay/issues/673) owns deletion after the
-shared-baseline fix in
-[research-repo-tools #165](https://github.com/acgetchell/research-repo-tools/issues/165)
-is published in v0.2.5 and verified here. Existing Semgrep dependency/security
-overrides stay in place. This follow-up does not hold v0.8.4 open.
+## v0.2.5 scanner and generator adoption
+
+[#673](https://github.com/acgetchell/delaunay/issues/673),
+[#676](https://github.com/acgetchell/delaunay/issues/676), and
+[#685](https://github.com/acgetchell/delaunay/issues/685) adopt the published 0.2.5
+package in one consumer migration. The registry supplies the non-yanked artifacts:
+
+- Wheel: `5f2c000cba366f7c4c123e12e3b5eb9ebb24b4f8404392982e8b2cf271ba10fb`.
+- Source: `554c59e188ac42eb86b9871ced2c6b0b69c1bd9fe390c75ea4a995e408f7b758`.
+
+The dev group requests the exact shared `semgrep` extra and its published
+compatibility overrides, including jsonschema 4.26.0 and tomli 2.5.0. Shared setup,
+production scans, and fixture checks use the locked Python 3.15 environment through
+`uv run`. The native launcher resolves its `pysemgrep` helper through PATH, so
+consumer regressions exercise the actual uv entry point with unrelated broken
+helpers ahead of the ambient PATH. Calling the Python CLI in-process after
+replacing PATH does not activate that environment.
+
+The temporary scanner-selection and Rustdoc scope/retention modules are removed.
+Public representation metadata and extraction configuration retain the same native
+rules and three numerical Rust-block policies. The SARIF workflow invalidates old
+currentness before invoking the CLI, then uses the shared report-inventory and
+digest verifier before upload; scan failures still fail the final gate.
+
+The shared renderer regenerates mutable current reports, history navigation, and
+README views from retained observations. Payloads, envelopes, and frozen renderer-2
+reports remain byte-identical and verifiable through their indexed renderer.
+Only those frozen reports retain MD013/MD034 and raw-line exceptions. Mutable and
+new reports use the full Markdown policy. The README publisher validates planned
+CSV links during first publication; its formatter no longer disables MD057.
+Repository/tag publication settings produce rustdoc-safe short reference links.
+
+The shared changelog generator restores the complete `f50e13e` error-migration
+note. The maintainer approved rebuilding older changelog archives for consistency:
+the corrected template also restores truncated namespace paths in historical
+notes. All release versions and dates are preserved. No local git-cliff template
+or generator override is used. Regeneration does not
+acquire benchmark timings or relabel measurement identities. Required native CI
+must validate the adoption commit on Linux, macOS, and Windows; local validation
+alone does not establish those hosted results.
 
 ## Declarative independent performance adoption
 
@@ -221,46 +251,32 @@ extractor preserves original logical paths, native/prose inputs, block identity,
 line/column mapping, paired-report completeness and one aggregate SARIF category.
 The original `src/lib.rs` reproduction now covers its source and all 34 blocks.
 
-`tooling/python/semgrep_compat.py`, called by the version-guarded
-`shared_tooling.py` entry point, bridges three remaining shared capabilities:
+The published [v0.2.5 policy][semgrep-api] supplies scope and retention behavior:
 
-- `metadata.delaunay-rustdoc-paths` opts numerical-safety rules into extracted
-  Rust with explicit `.rs`/`.md` logical paths. The selected rules reject
-  non-finite conversion defaults, algebraic f64 operations and defaulted
-  partial comparisons. All native rule definitions and path filters remain
-  intact. Production-only diagnostics and import/layering rules do not apply to
-  extracted examples; legitimate `println!` examples remain unchanged.
-- `tool.delaunay.semgrep.rustdoc-exclude` excludes design sketches in
-  `docs/api_design.md`, contributor policy in `docs/dev/**`, and historical
-  `docs/archive/**` from the **added extraction**. These contain incomplete
-  expressions, isolated enum variants, intentionally invalid examples or mixed
-  language sketches. Their complete original files still receive every existing
-  native/prose rule. Source, README and usage-documentation fences receive Rust
-  analysis; no selected block may be silently skipped. The fixture planner
-  assigns raw-comment/prose assertions to native inputs and opted-in Rust
-  assertions to blocks, retaining the shared parser and exact expected counts.
-- The shared [v0.2.4 contract][semgrep-api] intentionally clears output after an
-  invalid scan. The bridge instead rolls back that empty generation using the
-  shared publication transaction. It initializes `<output>.attempt.json` to
-  `published: false` before preconditions or scanning, and sets it true only
-  after a complete generation commits. Valid findings still publish reports
-  and fail the gate. The hosted workflow clears the marker before invocation,
-  uploads only a current generation and propagates scan failure. Previously
-  retained reports are historical evidence, never current scan success.
+- `metadata.research-repo-tools.representations` selects native source and/or
+  Rust blocks. The same three numerical-safety rules opt into extracted Rust,
+  with `rust-block-paths` preserving their `.rs`/`.md` logical path scopes.
+  Other Rust rules select `source`; production-only diagnostics and raw-comment
+  import rules keep their original ownership. Native rule patterns and path
+  filters remain intact.
+- `tool.research-repo-tools.semgrep.rustdoc-exclude` preserves the existing
+  design/policy/archive extraction exclusions. Original prose coverage stays
+  additive; selected physical blocks require complete scan coverage.
+- `failure-reports = "retain"` preserves previous valid bytes after an invalid
+  scan. The shared attempt marker records committed report hashes. The workflow
+  removes the old marker before invocation, including CLI precondition failures,
+  and `require_current_reports` verifies a complete current generation before
+  upload. Valid findings publish diagnostic reports and still fail the gate.
 
-These process-local hooks restore on exit. They do not replace extraction,
-native execution, report validation, source mapping, deduplication or aggregate
-publication. [research-repo-tools#171](https://github.com/acgetchell/research-repo-tools/issues/171)
-owns the upstream capabilities;
-[#676](https://github.com/acgetchell/delaunay/issues/676) depends on their release
-and owns normal package adoption plus deletion of this bridge. The maintainer
-approved completing #650 with this local workaround; that future release does
-not block it. The separate scanner-environment adapter remains tracked by #673.
+These supported interfaces replace the version-guarded hooks introduced for
+#650. [research-repo-tools#171](https://github.com/acgetchell/research-repo-tools/issues/171)
+supplies the shared implementation; #676 owns this consumer integration. The
+historical validation results below describe the original 0.2.4 integration.
 
 Run a bounded example-scope check without replacing the normal report directory:
 
 ```sh
-uv run --locked --group dev python tooling/python/shared_tooling.py semgrep scan \
+uv run --locked --group dev research-repo-tools semgrep scan \
   --rust-docs --include src/core/collections/key_maps.rs \
   --output target/semgrep-rustdoc-scope-probe
 ```
@@ -293,7 +309,7 @@ Linux/Windows results require CI on the eventual commit; local tests and workflo
 validation do not establish those results. No scientific source example,
 tracked notebook artifact, release or live repository setting was changed.
 
-[semgrep-api]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.4/docs/security-api.md
+[semgrep-api]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.5/docs/security-api.md
 
 ## v0.2.3 Cargo artifact promotion
 
