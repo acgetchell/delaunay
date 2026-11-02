@@ -811,7 +811,7 @@ semgrep: semgrep-scan
 semgrep-scan output="target/semgrep": _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail
-    output=$(uv run --locked python -c 'from pathlib import Path; import sys; print((Path.cwd() / sys.argv[1]).as_posix())' {{ quote(output) }})
+    output=$(uv run --locked --no-sync python -c 'from pathlib import Path; import sys; print((Path.cwd() / sys.argv[1]).as_posix())' {{ quote(output) }})
     rm -f -- "${output}.attempt.json"
     {{ semgrep_stack_limit }} {{ rrt }} semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py' \
         --include '.github/workflows/*.yml' --include '.github/workflows/*.yaml' \
