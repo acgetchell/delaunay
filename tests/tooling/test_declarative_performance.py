@@ -305,9 +305,6 @@ def publication_fixture(tmp_path: Path) -> CompleteMeasurementPlan:
     (tmp_path / "tooling").mkdir()
     for name in ("performance-report.toml", "performance-publication.toml", "performance-release.toml"):
         shutil.copyfile(ROOT / "tooling" / name, tmp_path / "tooling" / name)
-    formatter = Path("docs/templates/performance_format.toml")
-    (tmp_path / formatter).parent.mkdir(parents=True)
-    shutil.copyfile(ROOT / formatter, tmp_path / formatter)
     # The native executable, input paths, host and export boundary are modeled.
     # The counts, semantic IDs and publication selections are the consumer's.
     sections = [
@@ -379,9 +376,8 @@ def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: 
     for name in ("src", "benches"):
         shutil.copytree(tmp_path / "current" / name, tmp_path / name)
     (tmp_path / "Cargo.toml").write_bytes('[package]\nname = "consumer"\nversion = "0.8.3"\n'.replace("\n", newline).encode("utf-8"))
-    (tmp_path / "README.md").write_text(
-        "prefix\n<!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->\nold snapshot\n<!-- PERFORMANCE_RELEASE_TABLE:END -->\nsuffix\n",
-        encoding="utf-8",
+    (tmp_path / "README.md").write_bytes(
+        "prefix\n<!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->\nold snapshot\n<!-- PERFORMANCE_RELEASE_TABLE:END -->\nsuffix\n".replace("\n", newline).encode()
     )
     settings = load_performance_release(tmp_path, "tooling/performance-release.toml")
     # Read-only Git/ref/provider boundaries are modeled; no repository is created.
@@ -408,6 +404,26 @@ def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: 
     assert "Baseline / current" in readme
     assert "Selection coverage:\n\n- Baseline" in readme
     assert (tmp_path / "docs/assets/bench/release-performance.csv").is_file()
+    run_command(
+        "uv",
+        [
+            "run",
+            "--locked",
+            "--group",
+            "dev",
+            "research-repo-tools",
+            "toolchain",
+            "run",
+            "--",
+            "rumdl",
+            "check",
+            "--config",
+            str(ROOT / "pyproject.toml"),
+            "--no-cache",
+            str(tmp_path / "README.md"),
+        ],
+        cwd=ROOT,
+    )
     assert not load_readme_plan(tmp_path, settings).changed_paths
     stale = load_readme_plan(tmp_path, settings)
     previous = (tmp_path / "README.md").read_bytes()

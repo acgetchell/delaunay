@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -316,7 +317,8 @@ def test_workflow_upload_requires_current_attempt(tmp_path: Path, native_reports
     assert output.read_text(encoding="utf-8") == f"report_current={str(state == 'current').lower()}\n"
     upload = next(step for step in steps if step["name"] == "Upload SARIF results")
     assert "steps.semgrep.outputs.report_current == 'true'" in upload["if"]
-    assert any(step.get("if") == "steps.semgrep.outputs.exit_code != '0'" and step.get("run") == "exit 1" for step in steps)
+    gate = next(step for step in steps if step.get("run") == "exit 1")
+    assert gate["if"] == "steps.semgrep.outputs.exit_code != '0' || steps.semgrep.outputs.report_current != 'true'"
 
 
 @pytest.mark.parametrize("change", ["unchanged", "missing", "unexpected"])
@@ -362,9 +364,18 @@ def test_workflow_precondition_failure_rejects_retained_reports(
     marker = tmp_path / "reports.attempt.json"
     marker.write_bytes((previous_root / "reports.attempt.json").read_bytes())
     assert semgrep_scan.require_current_reports(destination)
-    # The workflow invalidates old evidence before invoking the CLI, including
-    # failures rejected before the shared scan starts (such as empty input).
-    marker.unlink()
+    # Exercise the actual local recipe with a precondition failure. This scratch
+    # consumer has no Git repository; the recipe must invalidate old evidence
+    # before the shared CLI attempts inventory discovery.
+    cli = f"{shlex.quote(Path(sys.executable).as_posix())} -m research_repo_tools --root {shlex.quote(tmp_path.as_posix())}"
+    result = run_command(
+        "just",
+        ["--justfile", str(ROOT / "justfile"), "--set", "rrt", cli, "semgrep-scan", str(destination)],
+        cwd=ROOT,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert not marker.exists()
     assert scan(tmp_path, (), monkeypatch) != 0
     with pytest.raises(FileNotFoundError):
         semgrep_scan.require_current_reports(destination)

@@ -809,6 +809,7 @@ semgrep: semgrep-scan
 # Scan native inputs and Rustdoc blocks into a validated JSON/SARIF pair.
 [private]
 semgrep-scan output="target/semgrep": _ensure-uv
+    rm -f {{ quote(output + ".attempt.json") }}
     {{ semgrep_stack_limit }} {{ rrt }} semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py' \
         --include '.github/workflows/*.yml' --include '.github/workflows/*.yaml' \
         --include '.github/actions/**/*.yml' --include '.github/actions/**/*.yaml' \

@@ -58,6 +58,9 @@ engines:
       # Generated commit history uses docs/templates/changelog_format.toml;
       # preserve historical list structure instead of applying prose rules.
       - "CHANGELOG.md"
+      # Renderer-3 HTML tables preserve wide scientific evidence. Local rumdl
+      # validates this generated view with the repository's explicit HTML policy.
+      - "docs/performance_current.md"
       # Release checklists use stable absolute step numbers across fenced
       # command blocks; local rumdl intentionally disables MD029 for this.
       - "docs/RELEASING.md"

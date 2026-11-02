@@ -74,8 +74,9 @@ The shared renderer regenerates mutable current reports, history navigation, and
 README views from retained observations. Payloads, envelopes, and frozen renderer-2
 reports remain byte-identical and verifiable through their indexed renderer.
 Only those frozen reports retain MD013/MD034 and raw-line exceptions. Mutable and
-new reports use the full Markdown policy. The README publisher validates planned
-CSV links during first publication; its formatter no longer disables MD057.
+new reports use the full Markdown policy. The shared renderer replaces the
+temporary README formatter pass; the first-publication regressions and normal
+Markdown gate check the published links, including newly created CSV files.
 Repository/tag publication settings produce rustdoc-safe short reference links.
 
 The shared changelog generator restores the complete `f50e13e` error-migration
@@ -268,8 +269,9 @@ The published [v0.2.5 policy][semgrep-api] supplies scope and retention behavior
   and `require_current_reports` verifies a complete current generation before
   upload. Valid findings publish diagnostic reports and still fail the gate.
 
-These supported interfaces replace the version-guarded hooks introduced for
-#650. [research-repo-tools#171](https://github.com/acgetchell/research-repo-tools/issues/171)
+These supported interfaces replace the version-guarded hooks introduced for issue
+[#650](https://github.com/acgetchell/delaunay/issues/650).
+[research-repo-tools #171](https://github.com/acgetchell/research-repo-tools/issues/171)
 supplies the shared implementation; #676 owns this consumer integration. The
 historical validation results below describe the original 0.2.4 integration.
 

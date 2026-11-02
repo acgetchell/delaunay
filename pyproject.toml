@@ -62,7 +62,6 @@ py-modules = [
 ]
 
 [tool.setuptools.data-files]
-"share/delaunay/docs/templates" = [ "docs/templates/performance_format.toml" ]
 "share/delaunay/tooling" = [
     "tooling/measurement-release-signal.toml",
     "tooling/measurement-release-signal-v082.toml",

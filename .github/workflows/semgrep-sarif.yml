@@ -83,5 +83,5 @@ jobs:
           wait-for-processing: true
 
       - name: Fail on repository rule findings
-        if: steps.semgrep.outputs.exit_code != '0'
+        if: steps.semgrep.outputs.exit_code != '0' || steps.semgrep.outputs.report_current != 'true'
         run: exit 1
