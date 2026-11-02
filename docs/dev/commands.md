@@ -194,18 +194,16 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool declarations live in their authoritative consumer files: exact uv and Cargo
 tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
-in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.4` from PyPI
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.5` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
-uv run --locked --managed-python --only-group tooling python tooling/python/shared_tooling.py setup
+uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
 Provision Git, a POSIX shell, and platform compiler/linker prerequisites first.
-The temporary v0.2.4 adapter selects Semgrep from the same locked Python baseline
-for setup and scans; it preserves the shared validation logic. Remove it through
-[#673](https://github.com/acgetchell/delaunay/issues/673) after the upstream fix is
-published and adopted.
+The published `semgrep` extra supplies the exact scanner in the common locked
+Python baseline for setup, production scans, and fixture checks.
 Shared setup installs and verifies declared versions,
 installs Just through its pinned `rust-just` dependency, configures shell PATH,
 and synchronizes dev with managed Rust available. Open a new terminal if PATH
@@ -443,7 +441,7 @@ independent full-SHA and readable-comment checks. Both Semgrep recipes enable
 Rust source and usage-documentation fences add numerical-safety checks;
 production-only policies retain their native scopes. Design/policy fragments
 and archives retain native/prose coverage, with the added extraction exclusions
-declared in `tool.delaunay.semgrep.rustdoc-exclude`. Fixtures retain mixed native,
+declared in `tool.research-repo-tools.semgrep.rustdoc-exclude`. Fixtures retain mixed native,
 prose and extracted-code assertions. See the
 [scope and consumer evidence](tooling_adoption.md#aggregate-rustdoc-adoption-boundary).
 
@@ -451,8 +449,9 @@ A failed scan retains the previous valid report pair and writes
 `<output>.attempt.json` with `published: false`; those retained reports describe
 the previous attempt. The hosted SARIF workflow uploads only a pair newly
 published by its current attempt, then fails on any nonzero scan status. A valid
-scan with findings publishes current reports and remains a failure. The temporary
-v0.2.4 adapter is removed through #676 after the shared replacement is released.
+scan with findings publishes current reports and remains a failure. The workflow
+uses the shared `require_current_reports` digest/inventory check before upload.
+Representation scopes and failure retention use the published 0.2.5 policy.
 
 `just test` is tests-only. `test-integration-compile` is an explicit no-run
 smoke recipe for cases where a compile-only check is the desired validator; do

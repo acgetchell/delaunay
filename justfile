@@ -707,7 +707,7 @@ release-artifact +args:
 # Capture or verify a draft target through an isolated published runtime.
 [group('release')]
 [positional-arguments]
-[script("uvx", "--python", "3.15", "--from", "research-repo-tools==0.2.4", "python", "-I")]
+[script("uvx", "--python", "3.15", "--from", "research-repo-tools==0.2.5", "python", "-I")]
 release-assets operation tag *args:
     import sys
     from pathlib import Path
@@ -724,7 +724,7 @@ release-benchmarks tag: _ensure-gh
 # Verify retained main evidence; accept --expected PATH and --github-output PATH.
 [group('release')]
 [positional-arguments]
-[script("uvx", "--python", "3.15", "--from", "research-repo-tools==0.2.4", "python", "-I")]
+[script("uvx", "--python", "3.15", "--from", "research-repo-tools==0.2.5", "python", "-I")]
 release-evidence *args:
     import sys
     import tempfile
@@ -809,7 +809,7 @@ semgrep: semgrep-scan
 # Scan native inputs and Rustdoc blocks into a validated JSON/SARIF pair.
 [private]
 semgrep-scan output="target/semgrep": _ensure-uv
-    {{ semgrep_stack_limit }} uv run --locked --group dev python tooling/python/shared_tooling.py semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py' \
+    {{ semgrep_stack_limit }} {{ rrt }} semgrep scan --include '*.rs' --include 'tooling/python/*.py' --include 'tests/tooling/*.py' \
         --include '.github/workflows/*.yml' --include '.github/workflows/*.yaml' \
         --include '.github/actions/**/*.yml' --include '.github/actions/**/*.yaml' \
         --include '*.md' --include CITATION.cff --include justfile \
@@ -819,7 +819,7 @@ semgrep-scan output="target/semgrep": _ensure-uv
 # Test the repository-owned Semgrep rules against their fixtures.
 [group('validation')]
 semgrep-test: _ensure-uv
-    {{ semgrep_stack_limit }} uv run --locked --group dev python tooling/python/shared_tooling.py semgrep check-fixtures --rust-docs
+    {{ semgrep_stack_limit }} {{ rrt }} semgrep check-fixtures --rust-docs
 
 # Install required tools and build the development profile.
 [group('build and setup')]
@@ -830,7 +830,7 @@ setup: setup-tools build
 [doc('Install and verify repository development tools.')]
 [group('build and setup')]
 setup-tools:
-    uv run --locked --managed-python --only-group tooling python tooling/python/shared_tooling.py setup
+    uv run --locked --managed-python --only-group tooling research-repo-tools setup
 
 # Run ShellCheck and verify shfmt formatting.
 [group('validation')]

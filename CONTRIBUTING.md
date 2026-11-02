@@ -41,7 +41,7 @@ Rust, Cargo tools, and its own Just dependency directly from PyPI.
 From the repository root, initialize the declared toolchain:
 
 ```bash
-uv run --locked --managed-python --only-group tooling python tooling/python/shared_tooling.py setup
+uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
 The temporary scanner-selection adapter keeps setup on the locked Python baseline

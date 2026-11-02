@@ -1,5 +1,6 @@
-"""Native consumer proofs for additive Rustdoc scans and the temporary bridge."""
+"""Native consumer proofs for the published additive Rustdoc scanning policy."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -13,9 +14,8 @@ from urllib.parse import unquote
 import pytest
 import yaml
 from research_repo_tools import security, semgrep_scan
+from research_repo_tools.cli import main
 from research_repo_tools.process import run_command
-
-import shared_tooling
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -50,12 +50,12 @@ def consumer(root: Path, sources: dict[str, str], *, selected_rules: set[str] | 
     selected = [rule for rule in rules if rule["id"] in selected_ids]
     (root / "semgrep.yaml").write_text(yaml.safe_dump({"rules": selected}), encoding="utf-8")
     manifest = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    exclusions = manifest["tool"]["delaunay"]["semgrep"]["rustdoc-exclude"]
+    exclusions = manifest["tool"]["research-repo-tools"]["semgrep"]["rustdoc-exclude"]
     (root / "pyproject.toml").write_text(
         '[tool.research-repo-tools.semgrep]\nconfig = "semgrep.yaml"\n'
         'fixtures = "fixtures"\nnamespace = "delaunay."\ninline-suppressions = true\n'
         'report-category = "semgrep-repository-rules"\nreport-layout = "aggregate"\n'
-        f"[tool.delaunay.semgrep]\nrustdoc-exclude = {json.dumps(exclusions)}\n",
+        f'failure-reports = "retain"\nrustdoc-exclude = {json.dumps(exclusions)}\n',
         encoding="utf-8",
     )
     for name, text in sources.items():
@@ -68,7 +68,7 @@ def consumer(root: Path, sources: dict[str, str], *, selected_rules: set[str] | 
 def scan(root: Path, names: tuple[str, ...], monkeypatch: pytest.MonkeyPatch) -> int:
     """Model only Git inventory; run the installed extractor, scanner and validators."""
     monkeypatch.setattr(semgrep_scan, "security_inventory", lambda *_args, **_kwargs: names)
-    return shared_tooling.main(["--root", str(root), "semgrep", "scan", "--include", "*", "--rust-docs", "--batch-size", "1", "--output", "reports"])
+    return main(["--root", str(root), "semgrep", "scan", "--include", "*", "--rust-docs", "--batch-size", "1", "--output", "reports"])
 
 
 def test_deep_import_policy_covers_triangulation_paths_and_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -198,7 +198,10 @@ def test_native_aggregate_scopes_mapping_and_suppressions(native_reports: tuple[
     assert suppressed[0]["suppressions"] == [{"kind": "inSource"}]
     later = next(row for row in data["results"] if row["check_id"] == NUMERIC and row["start"]["line"] == 6)
     assert later["start"]["col"] == CORPUS[SOURCE].splitlines()[5].index("Some") + 1
-    assert json.loads((root / "reports.attempt.json").read_bytes()) == {"published": True, "exit_code": 1}
+    marker = json.loads((root / "reports.attempt.json").read_bytes())
+    assert marker["published"] is True
+    assert marker["exit_code"] == 1
+    assert set(semgrep_scan.require_current_reports(root / "reports")) == {root / "reports" / name for name in reports}
 
 
 def damage_reports(report: Path, sarif: Path, failure: str) -> None:
@@ -279,8 +282,8 @@ def test_later_block_failure_retains_previous_reports(
         assert "Rust block 2" in diagnostic
 
 
-@pytest.mark.parametrize("published", [True, False, None])
-def test_workflow_upload_requires_current_attempt(tmp_path: Path, published: bool | None) -> None:
+@pytest.mark.parametrize("state", ["current", "failed", "missing", "tampered"])
+def test_workflow_upload_requires_current_attempt(tmp_path: Path, native_reports: tuple[Path, dict[str, bytes], list[Path]], state: str) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/semgrep-sarif.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["semgrep-sarif"]["steps"]
     command = next(step["run"] for step in steps if step.get("id") == "semgrep")
@@ -288,11 +291,29 @@ def test_workflow_upload_requires_current_attempt(tmp_path: Path, published: boo
     code = command.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
     marker = tmp_path / "target/semgrep.attempt.json"
     marker.parent.mkdir()
-    if published is not None:
-        marker.write_text(json.dumps({"published": published}), encoding="utf-8")
+    destination = tmp_path / "target/semgrep"
+    destination.mkdir()
+    _, reports, _ = native_reports
+    for name, payload in reports.items():
+        (destination / name).write_bytes(payload)
+    if state != "missing":
+        marker.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "attempt": "consumer-workflow-probe",
+                    "published": state != "failed",
+                    "exit_code": 1,
+                    "reports": {name: hashlib.sha256(payload).hexdigest() for name, payload in reports.items()},
+                }
+            ),
+            encoding="utf-8",
+        )
+    if state == "tampered":
+        (destination / "semgrep.sarif").write_bytes(reports["semgrep.sarif"] + b"\n")
     output = tmp_path / "outputs"
     run_command(sys.executable, ["-c", code], cwd=tmp_path, env={**os.environ, "GITHUB_OUTPUT": str(output)})
-    assert output.read_text(encoding="utf-8") == f"report_current={str(published is True).lower()}\n"
+    assert output.read_text(encoding="utf-8") == f"report_current={str(state == 'current').lower()}\n"
     upload = next(step for step in steps if step["name"] == "Upload SARIF results")
     assert "steps.semgrep.outputs.report_current == 'true'" in upload["if"]
     assert any(step.get("if") == "steps.semgrep.outputs.exit_code != '0'" and step.get("run") == "exit 1" for step in steps)
@@ -318,7 +339,7 @@ def test_mixed_native_fixture_assertions(tmp_path: Path, capsys: pytest.CaptureF
         (tmp_path / "fixtures/guide.md").write_text(markdown.replace("f64::NAN", "0.0"), encoding="utf-8")
     elif change == "unexpected":
         (tmp_path / "fixtures/example.rs").write_text(example.replace("unwrap_or(0.0)", "unwrap_or(f64::INFINITY)"), encoding="utf-8")
-    assert shared_tooling.main(["--root", str(tmp_path), "semgrep", "check-fixtures", "--rust-docs"]) == int(change != "unchanged")
+    assert main(["--root", str(tmp_path), "semgrep", "check-fixtures", "--rust-docs"]) == int(change != "unchanged")
     errors = capsys.readouterr().err
     if change == "missing":
         assert "expected finding not reported" in errors
@@ -329,17 +350,22 @@ def test_mixed_native_fixture_assertions(tmp_path: Path, capsys: pytest.CaptureF
         assert not errors
 
 
-def test_precondition_failure_clears_current_marker(
+def test_workflow_precondition_failure_rejects_retained_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_reports: tuple[Path, dict[str, bytes], list[Path]]
 ) -> None:
-    _, previous, _ = native_reports
+    previous_root, previous, _ = native_reports
     consumer(tmp_path, {})
     destination = tmp_path / "reports"
     destination.mkdir()
     for name, payload in previous.items():
         (destination / name).write_bytes(payload)
     marker = tmp_path / "reports.attempt.json"
-    marker.write_text('{"published": true}', encoding="utf-8")
+    marker.write_bytes((previous_root / "reports.attempt.json").read_bytes())
+    assert semgrep_scan.require_current_reports(destination)
+    # The workflow invalidates old evidence before invoking the CLI, including
+    # failures rejected before the shared scan starts (such as empty input).
+    marker.unlink()
     assert scan(tmp_path, (), monkeypatch) != 0
-    assert json.loads(marker.read_bytes())["published"] is False
+    with pytest.raises(FileNotFoundError):
+        semgrep_scan.require_current_reports(destination)
     assert {path.name: path.read_bytes() for path in destination.iterdir()} == previous

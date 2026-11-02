@@ -273,7 +273,7 @@ def test_oidc_job_installs_only_minimal_locked_publication_tools() -> None:
     bootstrap = next(step for step in steps if step.get("name") == "Install locked publication tooling")
     assert "uv sync --locked --managed-python --only-group tooling --no-install-project" in bootstrap["run"]
     manifest = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert manifest["dependency-groups"]["tooling"] == ["research-repo-tools[python-tools]==0.2.4"]
+    assert manifest["dependency-groups"]["tooling"] == ["research-repo-tools[python-tools]==0.2.5"]
 
 
 def test_oidc_rust_setup_exports_the_declared_minimal_toolchain(tmp_path: Path) -> None:

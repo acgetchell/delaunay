@@ -214,7 +214,7 @@ def test_actual_pre_tag_recipe_uses_installed_verifier(
         root,
         "import json, os, subprocess, sys\nfrom pathlib import Path\n"
         "def uvx_main():\n"
-        '    assert sys.argv[1:7] == ["--python", "3.15", "--from", "research-repo-tools==0.2.4", "python", "-I"]\n'
+        '    assert sys.argv[1:7] == ["--python", "3.15", "--from", "research-repo-tools==0.2.5", "python", "-I"]\n'
         '    return subprocess.run([os.environ["FIXTURE_PYTHON"], *sys.argv[6:]], check=False).returncode\n'
         "def git_main():\n"
         '    with Path(os.environ["GIT_CALLS"]).open("a", encoding="utf-8") as calls:\n'
