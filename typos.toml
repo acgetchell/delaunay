@@ -33,6 +33,11 @@ extend-ignore-identifiers-re = [
 # num-rational's numerator accessor, used by the independent exact test oracle.
 numer = "numer"
 
+[type.md]
+# Generated HTML splits escaped identifiers with zero-width comments. Ignore
+# only tokens spanning those comments; ordinary prose remains spell-checked.
+extend-ignore-re = [ '''[A-Za-z0-9_;&]+(?:<!--\r?\n-->[A-Za-z0-9_;&]+)+''' ]
+
 [default.extend-words]
 # Domain terms that typos suggests "fixing" but are correct in this repo.
 bimap = "bimap"

@@ -11,22 +11,23 @@ Install the declared uv version, Git, and platform compiler/linker prerequisites
 Initialize the pinned PyPI toolchain with:
 
 ```bash
-uv run --locked --managed-python --only-group tooling python tooling/python/shared_tooling.py setup
+uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
 The installed package and tooling/notebook groups pin
-`research-repo-tools==0.2.4`. Shared CLI commands and documented Python APIs own
+`research-repo-tools==0.2.5`. Shared CLI commands and documented Python APIs own
 setup, maintenance, source inventory, subprocesses, archive extraction, worktree
 lifecycle, Criterion parsing, file transactions and notebook infrastructure.
 Retained adapters own Delaunay science and policy. The
 [adoption inventory](../../docs/dev/tooling_adoption.md#remaining-shared-tool-gaps)
 records the v0.1.8 integrations and v0.1.9 performance adoption.
 
-The temporary `shared_tooling.py` adapter changes only scanner selection for
-setup and Semgrep commands, preserving the locked Python 3.15 environment and
-all shared validation gates. It rejects other shared-package versions and restores
-its process-local overrides. Remove it after the published shared-baseline fix
-is adopted under [#673](https://github.com/acgetchell/delaunay/issues/673).
+The published `semgrep` extra supplies the exact scanner in the locked Python
+3.15 environment. Setup, production scans, and fixture checks call the shared
+CLI through `uv run`, which activates that environment before the native launcher
+resolves its helper. The scanner-selection and Rustdoc scope/retention adapters
+are removed under [#673](https://github.com/acgetchell/delaunay/issues/673) and
+[#676](https://github.com/acgetchell/delaunay/issues/676).
 
 ## CLI entrypoints
 

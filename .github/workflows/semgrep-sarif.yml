@@ -51,12 +51,17 @@ jobs:
           set -e
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           uv run --locked --no-sync python - <<'PY'
-          import json
           import os
           from pathlib import Path
 
-          marker = Path("target/semgrep.attempt.json")
-          current = marker.is_file() and json.loads(marker.read_bytes()).get("published") is True
+          from research_repo_tools.semgrep_scan import require_current_reports
+
+          try:
+              require_current_reports(Path("target/semgrep"))
+          except (OSError, ValueError):
+              current = False
+          else:
+              current = True
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as stream:
               stream.write(f"report_current={str(current).lower()}\n")
           PY
@@ -78,5 +83,5 @@ jobs:
           wait-for-processing: true
 
       - name: Fail on repository rule findings
-        if: steps.semgrep.outputs.exit_code != '0'
+        if: steps.semgrep.outputs.exit_code != '0' || steps.semgrep.outputs.report_current != 'true'
         run: exit 1

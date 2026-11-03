@@ -15,6 +15,8 @@ rules:
     severity: WARNING
     message: "Use tracing macros for production diagnostics instead of stdout/stderr macros."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: maintainability
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/338"
       rationale: "Runtime diagnostics should be filterable through tracing and RUST_LOG."
@@ -70,8 +72,10 @@ rules:
     severity: WARNING
     message: "Do not hide failed floating-point conversion with NaN or infinity defaults."
     metadata:
-      delaunay-rustdoc-paths:
-        include: ["/**/*.rs", "/**/*.md"]
+      research-repo-tools:
+        representations: ["source", "rust-block"]
+        rust-block-paths:
+          include: ["/**/*.rs", "/**/*.md"]
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/338"
       rationale: >-
@@ -100,8 +104,10 @@ rules:
     severity: ERROR
     message: "Use ordinary IEEE-754 operations or deliberate f64::mul_add; f64 algebraic operations are forbidden."
     metadata:
-      delaunay-rustdoc-paths:
-        include: ["/**/*.rs", "/**/*.md"]
+      research-repo-tools:
+        representations: ["source", "rust-block"]
+        rust-block-paths:
+          include: ["/**/*.rs", "/**/*.md"]
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/583"
       rationale: >-
@@ -157,6 +163,8 @@ rules:
     severity: WARNING
     message: "Use crate FastHashMap/FastHashSet aliases in hot source paths instead of std hash collections."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: performance
       rationale: >-
         Performance-sensitive topology and geometry paths should use the
@@ -246,6 +254,8 @@ rules:
     severity: WARNING
     message: "Handle numeric conversion failures explicitly instead of hiding them behind unwrap_or fallbacks."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: correctness
       rationale: >-
         Geometry and topology code should preserve conversion failure context
@@ -291,6 +301,8 @@ rules:
       Handle numeric conversion failures explicitly in public samples instead of
       hiding them behind unwrap_or fallbacks.
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: correctness
       rationale: >-
         Examples, benchmarks, and public API tests are copied by users. They
@@ -331,8 +343,10 @@ rules:
     severity: WARNING
     message: "Handle incomparable partial_cmp results explicitly instead of defaulting to an Ordering."
     metadata:
-      delaunay-rustdoc-paths:
-        include: ["/**/*.rs", "/**/*.md"]
+      research-repo-tools:
+        representations: ["source", "rust-block"]
+        rust-block-paths:
+          include: ["/**/*.rs", "/**/*.md"]
       category: correctness
       rationale: >-
         Geometry ordering code should document the impossible/incomparable
@@ -356,6 +370,8 @@ rules:
     severity: WARNING
     message: "Move source imports to module scope instead of declaring use items inside functions."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: maintainability
       rationale: >-
         Function-local imports obscure dependency shape and make it easier for
@@ -446,6 +462,8 @@ rules:
     severity: WARNING
     message: "Import long crate paths at module scope instead of spelling deep crate:: paths inside function bodies."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: maintainability
       rationale: >-
         Deep function-body paths make control flow harder to scan and often
@@ -485,6 +503,8 @@ rules:
     severity: WARNING
     message: "Avoid unwrap/panic in non-test source; return typed errors or document an internal invariant."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: correctness
       rationale: "Public library paths should fail explicitly rather than panicking on user input."
     paths:
@@ -514,6 +534,8 @@ rules:
     severity: WARNING
     message: "Avoid debug_assert! in production source; encode invariants in types or return typed errors."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: correctness
       rationale: >-
         Debug-only assertions disappear in release builds, so they cannot be
@@ -580,6 +602,8 @@ rules:
       Use typed Result handling in public examples, benchmarks, and public API
       tests instead of unwrap/expect/panic.
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: correctness
       rationale: >-
         User-facing examples, benchmarks, and public API tests are copied as
@@ -763,6 +787,8 @@ rules:
       Do not define legacy DelaunayTriangulation::try_new* or try_with_* wrappers;
       keep Delaunay construction on the fluent builder terminals.
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/459"
       rationale: >-
@@ -1250,6 +1276,8 @@ rules:
     severity: WARNING
     message: "Use DelaunayTriangulation owner queries; consume it into Triangulation/Tds for intentionally low-level storage workflows."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: api
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/503"
       rationale: >-
@@ -1730,6 +1758,8 @@ rules:
     severity: WARNING
     message: "Environment-gated diagnostics should use tracing and repository feature gates instead of stdio macros."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: maintainability
       rationale: "Debug hooks should remain filterable through tracing and RUST_LOG."
     paths:
@@ -1767,6 +1797,8 @@ rules:
     severity: WARNING
     message: "Use a typed error enum instead of Box<dyn Error>, &dyn Error, or anyhow::Error."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: maintainability
       rationale: >-
         Public and production fallible paths should preserve typed error
@@ -1852,6 +1884,8 @@ rules:
     severity: WARNING
     message: "Use vertex! for incidental vertex setup outside constructor-focused tests and docs."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: maintainability
       rationale: >-
         Incidental fixtures should keep attention on the API under test and use
@@ -1924,6 +1958,8 @@ rules:
     severity: WARNING
     message: "Use concrete crate errors in examples and benchmarks instead of dynamic error erasure."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: maintainability
       rationale: >-
         Examples and benchmarks should model typed error handling that users
@@ -1945,6 +1981,8 @@ rules:
     severity: WARNING
     message: "Use #[expect(..., reason = ...)] instead of #[allow(...)] for Clippy suppressions."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: maintainability
       rationale: >-
         Clippy suppressions should be checked by the compiler and carry a
@@ -1988,6 +2026,8 @@ rules:
     severity: WARNING
     message: "Use focused delaunay::prelude imports in examples and benchmarks instead of deep crate module paths."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: maintainability
       rationale: >-
         Public examples and benchmarks should model the small, orthogonal
@@ -2016,6 +2056,8 @@ rules:
       Use focused delaunay::prelude imports in public Delaunay doctests
       instead of deep crate module paths.
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: maintainability
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/355"
       rationale: >-
@@ -2200,6 +2242,8 @@ rules:
     severity: ERROR
     message: "A DelaunayTriangulationDraft must store Triangulation, not DelaunayTriangulation."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
       rationale: >-
@@ -2230,6 +2274,8 @@ rules:
     severity: ERROR
     message: "A DelaunayBatchWorkspace must store Triangulation, not DelaunayTriangulation."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: correctness
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
       rationale: >-
@@ -2279,6 +2325,8 @@ rules:
     severity: ERROR
     message: "A proof-bearing Triangulation promotion must replay Level 5 predicates without rechecking connectivity."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: performance
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
       rationale: >-
@@ -2544,6 +2592,8 @@ rules:
     severity: ERROR
     message: "Delaunay bootstrap must stage partial connectivity only in TdsDraft."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: correctness
       rationale: >-
         Before the first maximal simplex exists, neither raw Tds storage nor a
@@ -2633,6 +2683,8 @@ rules:
     severity: ERROR
     message: "Core/TDS modules must not depend on the Levels 3–4 Triangulation owner."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: architecture
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/568"
       rationale: >-
@@ -2672,6 +2724,8 @@ rules:
     severity: ERROR
     message: "Core and triangulation modules must not depend on the Level 5 DelaunayTriangulation owner."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: architecture
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/568"
       rationale: >-
@@ -2752,6 +2806,8 @@ rules:
     severity: ERROR
     message: "Trust the consumed Tds proof during Triangulation promotion; check only Levels 3–4."
     metadata:
+      research-repo-tools:
+        representations: ["source"]
       category: performance
       tracking_issue: "https://github.com/acgetchell/delaunay/issues/557"
       rationale: >-

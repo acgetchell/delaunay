@@ -118,7 +118,7 @@ def _assert_installed_modules_and_commands(
                 "assert len(list(declarations.glob('*.toml'))) == 6; "
                 "assert tomllib.loads((declarations / 'measurement-release-signal.toml').read_text())['harness-mode'] == 'common'; "
                 "publication = tomllib.loads((declarations / 'performance-publication.toml').read_text()); "
-                "assert (root / 'share/delaunay' / publication['formatter']).is_file(); "
+                "assert 'formatter' not in publication; "
                 "assert all(pathlib.Path(importlib.import_module(name).__file__).resolve().is_relative_to(root) for name in sys.argv[1:])"
             ),
             *configuration["tool"]["setuptools"]["py-modules"],
@@ -228,7 +228,7 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     repository = Path(__file__).parents[2]
     wheel_path, configuration = _build_support_wheel(repository, tmp_path)
     assert set(configuration["project"]["optional-dependencies"]["notebooks"]) == {
-        "research-repo-tools[notebooks,python-tools]==0.2.4",
+        "research-repo-tools[notebooks,python-tools]==0.2.5",
     }
     with zipfile.ZipFile(wheel_path) as wheel:
         metadata_path = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))

@@ -36,7 +36,7 @@ reuses the declared citation date even after UTC midnight.
 
 ## Reusable CI evidence
 
-The publishing process uses the installed `research-repo-tools==0.2.4`
+The publishing process uses the installed `research-repo-tools==0.2.5`
 validation helpers and the declarative `tooling/release-evidence.toml` policy.
 `tooling/python/cargo_release.py` retains only Cargo dry-run/reproduction glue.
 After portable checks and all three native `just ci-native` jobs succeed on a protected

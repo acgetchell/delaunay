@@ -14,7 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from research_repo_tools import measurement, performance_release
+from research_repo_tools import measurement, performance_release, publication as publication_api
 from research_repo_tools.common_measurement import CompleteMeasurementPlan, DiscoveryPolicy, measure_prepared_pair, parse_plan, validate_run_policy
 from research_repo_tools.complete_runs import ratio_incompatibilities, render_run
 from research_repo_tools.evidence import load_evidence, publish_evidence
@@ -92,6 +92,18 @@ def fixture_plan(root: Path, monkeypatch: pytest.MonkeyPatch) -> CompleteMeasure
     # The installed parser is the same loader used by the actual consumer CLI.
     monkeypatch.setattr(measurement, "resolve_revision", lambda checkout, _reference: ("b" if checkout.name == "baseline" else "a") * 40)
     return parse_plan(declaration)
+
+
+def test_retained_report_migration_preserves_frozen_history() -> None:
+    """Render current views with the installed package while verifying old bytes."""
+    plan = load_report_plan(ROOT, "tooling/performance-report.toml")
+    outputs = dict(plan.outputs)
+    frozen = [name for name in outputs if name.startswith("docs/performance-runs/runs/")]
+    assert frozen
+    assert all(outputs[name] == (ROOT / name).read_bytes() for name in frozen)
+    for name in ("docs/performance_current.md", "docs/performance-runs/README.md"):
+        assert max(map(len, outputs[name].decode().splitlines())) <= 160
+    assert not plan.changed_paths
 
 
 def test_actual_declarations_preserve_scientific_counts_and_release_membership() -> None:
@@ -194,7 +206,7 @@ def test_installed_independent_pair_preserves_native_harnesses_and_union_after_c
     for phase, sample in run.phases:
         assert (tmp_path / phase / "benches/native.py").read_bytes() == harness[phase]
         for case in sample.cases:
-            assert len(json.loads(case.sample)["times"]) == sample.policy.count_for(case.full_id)
+            assert len(json.loads(case.sample)["times"]) == dict(sample.policy.sample_counts)[case.full_id]
             assert dict(case.raw_files)["tukey.json"] == b"[1,2,3,4]\r\n"
     events = (tmp_path / "events.log").read_text(encoding="utf-8").splitlines()
     assert events == ["baseline:list", "current:list", "baseline:gate", "current:gate", "baseline:measure", "current:measure"]
@@ -293,9 +305,6 @@ def publication_fixture(tmp_path: Path) -> CompleteMeasurementPlan:
     (tmp_path / "tooling").mkdir()
     for name in ("performance-report.toml", "performance-publication.toml", "performance-release.toml"):
         shutil.copyfile(ROOT / "tooling" / name, tmp_path / "tooling" / name)
-    formatter = Path("docs/templates/performance_format.toml")
-    (tmp_path / formatter).parent.mkdir(parents=True)
-    shutil.copyfile(ROOT / formatter, tmp_path / formatter)
     # The native executable, input paths, host and export boundary are modeled.
     # The counts, semantic IDs and publication selections are the consumer's.
     sections = [
@@ -328,6 +337,25 @@ def publication_fixture(tmp_path: Path) -> CompleteMeasurementPlan:
     return plan
 
 
+@pytest.fixture
+def publication_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model existing-baseline and absent-prospective tag reads only."""
+
+    def git_read(arguments: list[str], *, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[bytes]:
+        assert cwd == tmp_path
+        if arguments == ["--no-pager", "show-ref", "--verify", "--quiet", "refs/tags/v0.8.3"]:
+            return subprocess.CompletedProcess(arguments, 1, b"", b"")
+        if arguments == ["--no-pager", "--no-replace-objects", "rev-parse", "--show-prefix"]:
+            return subprocess.CompletedProcess(arguments, 0, b"", b"")
+        if arguments == ["--no-pager", "--no-replace-objects", "check-ref-format", "refs/tags/v0.8.2"]:
+            return subprocess.CompletedProcess(arguments, 0, b"", b"")
+        assert arguments == ["--no-pager", "--no-replace-objects", "rev-parse", "--verify", "refs/tags/v0.8.2^{commit}"]
+        return subprocess.CompletedProcess(arguments, 0, b"b" * 40 + b"\n", b"")
+
+    monkeypatch.setattr(publication_api, "run_git_bytes", git_read)
+
+
+@pytest.mark.usefixtures("publication_git")
 @pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
 def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, newline: str) -> None:
     """Execute the real report/README declarations over synthetic native observations."""
@@ -341,16 +369,15 @@ def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: 
         lambda *_args, **_kwargs: HostMetadata("fixture OS", "fixture arch", "fixture CPU", 4, 8, 1024, (("python", "fixture Python"),)),
     )
     monkeypatch.setattr(measurement, "resolve_revision", lambda checkout, _reference: ("b" if checkout.name == "baseline" else "a") * 40)
-    retained = measure_prepared_pair(tmp_path / "baseline", tmp_path / "current", plan, pair)
+    retained = measure_prepared_pair(tmp_path / "baseline", tmp_path / "current", plan, pair, working_tree=True)
     assert not ratio_incompatibilities(retained)
     assert len(dict(validate_run_policy(retained, plan, release=True).phases)["current"].cases) == 173
     # Publication checks the original measured current inputs, never a later host.
     for name in ("src", "benches"):
         shutil.copytree(tmp_path / "current" / name, tmp_path / name)
     (tmp_path / "Cargo.toml").write_bytes('[package]\nname = "consumer"\nversion = "0.8.3"\n'.replace("\n", newline).encode("utf-8"))
-    (tmp_path / "README.md").write_text(
-        "prefix\n<!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->\nold snapshot\n<!-- PERFORMANCE_RELEASE_TABLE:END -->\nsuffix\n",
-        encoding="utf-8",
+    (tmp_path / "README.md").write_bytes(
+        "prefix\n<!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->\nold snapshot\n<!-- PERFORMANCE_RELEASE_TABLE:END -->\nsuffix\n".replace("\n", newline).encode()
     )
     settings = load_performance_release(tmp_path, "tooling/performance-release.toml")
     # Read-only Git/ref/provider boundaries are modeled; no repository is created.
@@ -377,6 +404,26 @@ def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: 
     assert "Baseline / current" in readme
     assert "Selection coverage:\n\n- Baseline" in readme
     assert (tmp_path / "docs/assets/bench/release-performance.csv").is_file()
+    run_command(
+        "uv",
+        [
+            "run",
+            "--locked",
+            "--group",
+            "dev",
+            "research-repo-tools",
+            "toolchain",
+            "run",
+            "--",
+            "rumdl",
+            "check",
+            "--config",
+            str(ROOT / "pyproject.toml"),
+            "--no-cache",
+            str(tmp_path / "README.md"),
+        ],
+        cwd=ROOT,
+    )
     assert not load_readme_plan(tmp_path, settings).changed_paths
     stale = load_readme_plan(tmp_path, settings)
     previous = (tmp_path / "README.md").read_bytes()
