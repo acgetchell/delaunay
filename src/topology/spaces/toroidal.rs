@@ -5,7 +5,7 @@
 //! and [`LiftedLinkEdge`] are not TDS storage keys; they identify images in a
 //! local covering-space frame so ridge-link and vertex-link checks can preserve
 //! toroidal adjacency instead of collapsing immediately to quotient
-//! [`VertexKey`](crate::core::tds::VertexKey) values.
+//! [`crate::core::tds::VertexKey`] values.
 
 #![forbid(unsafe_code)]
 

@@ -9,7 +9,7 @@
 //! For chart-local geometry, use
 //! [`LabeledSimplexRealization::try_translated`](crate::geometry::realization::LabeledSimplexRealization::try_translated)
 //! to shift a simplex by integer periods and
-//! [`periodic_simplex_span`]
+//! [`crate::geometry::realization::periodic_simplex_span`]
 //! to find an axis spanning at least a full period. The domain proves period
 //! validity; translations still check newly computed coordinate representability.
 
