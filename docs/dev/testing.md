@@ -613,16 +613,18 @@ Large-scale performance validation belongs in **benchmarks**, not tests.
 All tests must pass under CI.
 
 During iterative review and fixes, use `just check` alongside targeted tests
-for changed behavior. Once those iterations are complete, core Rust/Cargo or
+for changed behavior. Run `just check` on the final working tree before every
+push. Once iterations are complete, core Rust/Cargo, substantial Python, or
 public-behavior changes require the comprehensive check before a PR is ready
-or the changes are pushed:
+or changes are pushed:
 
 ```bash
 just ci
 ```
 
 Test-only changes use the matching unit, doctest, integration, or CLI test
-bucket. Other non-core changes use their focused validators. Follow the
+bucket. Other small changes use their focused validators alongside the
+pre-push `just check` gate. A successful `just ci` already includes that gate. Follow the
 validation command selection matrix in [`commands.md`](commands.md), composing
 each affected surface once.
 

@@ -65,14 +65,15 @@ workflow references do not need to be loaded preemptively.
   changes and work with any overlapping edits.
 - **Unsafe Rust is forbidden.** The crate enforces `#![forbid(unsafe_code)]`.
 - **Validate with the right command.** Use `just check` during iterative
-  review and fixes, alongside targeted tests for changed behavior. Reserve
-  `just ci` for final validation once those iterations are complete; core
-  Rust/Cargo or public-behavior changes require that comprehensive pass before
-  a PR is ready or the changes are pushed. Documentation, configuration,
-  Python, notebook, Rust unit-test-only, doctest-only, integration-test-only, benchmark-only, and
-  example-only changes use the matching focused validators from
-  `docs/dev/commands.md`; compose those validators once each when multiple
-  focused surfaces changed.
+  review and fixes, alongside targeted tests for changed behavior. Run
+  `just check` on the final working tree before every push; focused validators
+  do not replace this gate. Core Rust/Cargo, substantial Python, or
+  public-behavior changes also require `just ci` before a PR is ready or changes
+  are pushed. A successful `just ci` includes and satisfies the `just check`
+  gate. Smaller documentation, configuration, Python, notebook, test-only,
+  benchmark-only, and example-only changes use the matching focused validators
+  from `docs/dev/commands.md` alongside the pre-push gate; compose those
+  validators once each when multiple focused surfaces changed.
 - **CodeRabbit review requires explicit authorization.** Never run CodeRabbit
   automatically. Run `just review` (or `just review-uncommitted`) only when the
   maintainer explicitly requests that command or gives permission for the

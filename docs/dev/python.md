@@ -20,6 +20,10 @@ just python-check
 just test-python
 ```
 
+Run `just check` on the final working tree before every push. Substantial Python
+changes also require `just ci`; see the [validation policy](commands.md#validation-command-selection)
+for the scope and focused-check exceptions.
+
 `just python-check` invokes shared `python check` for Ruff formatting, Ruff linting,
 and ty; `just python-fix` invokes shared `python fix`. All three checks use shared batching over tracked
 Python files plus new, unignored `.py` and `.pyi` files, including files outside

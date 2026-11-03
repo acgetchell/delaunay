@@ -32,6 +32,10 @@ reviews:
   # Deliberate violations are validated by repository-owned fixture checks.
   path_filters:
     - "!tests/semgrep/**"
+    # Immutable measurements and rendered reports are checked by shared evidence
+    # validators; their large generated diffs exceed hosted review limits.
+    - "!docs/performance-runs/runs/**"
+    - "!docs/performance_current.md"
   path_instructions:
     - path: "tooling/python/*.py"
       instructions: |
@@ -72,7 +76,9 @@ reviews:
     ast-grep:
       rule_dirs: []
       util_dirs: []
-      essential_rules: true
+      # The provider's essentials pack fails to parse java/security/cookies-persistence.yml.
+      # Keep repository Semgrep rules and Clippy active while that pack is broken.
+      essential_rules: false
       packages: []
 
     # Shell-script linter

@@ -71,20 +71,22 @@ During development, use `just check` alongside targeted tests for changed behavi
 
 | Command | Purpose |
 |---------|---------|
-| `just check` | Check code, configuration, documentation, formatting, and static analysis during development. |
+| `just check` | Check code, configuration, documentation, formatting, and static analysis; required before every push. |
 | `just test` | Run the default Rust and Python test suites. |
 | `just security` | Audit Rust and Python dependencies and scan reachable Git history and current files for secrets. |
-| `just ci` | Run comprehensive final validation for core Rust/Cargo or public-behavior changes before PR submission. |
+| `just ci` | Run comprehensive final validation for core Rust/Cargo, substantial Python, or public-behavior changes. |
 
 Use `just fix` to apply formatters and safe automatic fixes, then rerun the
 relevant checks. `just ci` includes `just check` and `just test`; earlier runs
 provide feedback while you work. Run `just security` separately: security scans
 require network access and a checkout with full Git history.
 
-Before submitting core Rust/Cargo or public-behavior changes, complete `just ci`.
-Documentation, configuration, Python, notebook, test-only, benchmark-only, and
-example-only changes use their focused validators; for example, Markdown-only
-changes use `just check-docs`. See [the command guide][dev-commands] for the
+Run `just check` on the final working tree before every push. Before submitting
+core Rust/Cargo, substantial Python, or public-behavior changes, complete `just ci`;
+that comprehensive command already includes `just check`. Smaller documentation,
+configuration, Python, notebook, test-only, benchmark-only, and example-only changes
+use their focused validators alongside the pre-push gate; for example, Markdown-only
+changes also use `just check-docs`. See [the command guide][dev-commands] for the
 authoritative validation matrix and security scan details.
 
 Before committing edited notebooks, clear generated outputs and execution counts

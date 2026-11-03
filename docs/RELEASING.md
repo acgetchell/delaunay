@@ -198,6 +198,16 @@ just performance-prepare
 just performance-release
 ```
 
+`performance-release` runs benchmarks locally and can take hours. The recipe
+defaults to one heartbeat every **300 seconds (five minutes)**; stage changes
+and failures are reported immediately. Use `--progress-cadence` to select a
+shorter or longer heartbeat interval in seconds:
+
+```bash
+just performance-release --progress-cadence 60
+just performance-release --progress-cadence 600
+```
+
 Preparation selects the current package and previous stable published release
 without timing. It requires reviewed tags already present locally. Shared
 schema-4 acquisition uses read-only source exports and overlays the current

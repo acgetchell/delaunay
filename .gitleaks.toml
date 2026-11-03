@@ -31,7 +31,7 @@ description = "Base64-encoded Criterion Tukey statistics in retained performance
 condition = "AND"
 paths = [ '''(^|/)docs/performance-runs/runs/[0-9a-f]{64}/run\.json$''' ]
 regexTarget = "match"
-# All 346 retained payloads decode to four finite numbers using only [0-9.,].
+# Retained payloads decode to four finite numbers using only [0-9.,].
 # Match Base64 for '[' + a digit + numeric bytes + ']', not arbitrary Base64:
 # the prefix consumes three bytes, repeated blocks consume numeric triples,
 # and the suffix handles ']' at each of the three possible byte alignments.
@@ -40,4 +40,6 @@ regexes = [
     '''^tukey\.json":\s*"Wz[AEIMQUYcgk][suw-z0-5](?:(?:(?:L[Ci]|[MN][CSiy]|O[CS])[w4]|(?:L[Dj]|[MN][DTjz]|O[DT])[AEIMQUYcgk])[suw-z0-5])*(?:XQ==|(?:L[Fl]|[MN][FVl1]|O[FV])0=|(?:(?:L[Ci]|[MN][CSiy]|O[CS])[x5]|(?:L[Dj]|[MN][DTjz]|O[DT])[BFJNRVZdhl])d)"?$''',
     # Exact truncated prefix of the retained [760939.1311688311,...] payload.
     '''^tukey\.json": "Wzc2MDkzOS4xMzExNjg4MzEx$''',
+    # Exact truncated prefix of the retained [14181.68786609986,...] payload.
+    '''^tukey\.json": "WzE0MTgxLjY4Nzg2NjA5OTg2LDE0MzEyLjk0NjI4NDYxOTUzOCwxNDY2Mi45Njg3MzQwM$''',
 ]

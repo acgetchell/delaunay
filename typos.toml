@@ -33,6 +33,11 @@ extend-ignore-identifiers-re = [
 # num-rational's numerator accessor, used by the independent exact test oracle.
 numer = "numer"
 
+[type.gitleaks]
+extend-glob = [ ".gitleaks.toml" ]
+# This exact retained numeric prefix is Base64 data; keep checking other text.
+extend-ignore-re = [ '''WzE0MTgxLjY4Nzg2NjA5OTg2LDE0MzEyLjk0NjI4NDYxOTUzOCwxNDY2Mi45Njg3MzQwM''' ]
+
 [type.md]
 # Generated HTML splits escaped identifiers with zero-width comments. Ignore
 # only tokens spanning those comments; ordinary prose remains spell-checked.

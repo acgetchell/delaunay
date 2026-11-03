@@ -64,11 +64,16 @@ targeted tests that exercise changed behavior. Focused validators provide
 quicker feedback on individual surfaces, and `just check-fast` is available
 for compile-only feedback.
 
+Before every push, run `just check` on the final working tree, including for
+documentation, configuration, and test-only changes. Focused validators
+supplement this gate; they do not replace it. A successful `just ci` satisfies
+the gate because it includes `just check`.
+
 Reserve `just ci` for final validation once those iterations are complete,
-when preparing core Rust/Cargo or public-behavior changes for PR readiness or
-push. Release validation and explicit maintainer requests may also require
+when preparing core Rust/Cargo, substantial Python, or public-behavior changes
+for PR readiness or push. Release validation and explicit maintainer requests may also require
 full CI. An intermediate local handoff records the checks run during iteration;
-it does not by itself trigger `just ci`. For non-core changes, compose the
+it does not by itself trigger `just ci`. For smaller changes, compose the
 matching focused validators once each.
 
 Core Rust code means production Rust or manifest changes that can affect library
@@ -77,10 +82,16 @@ does not include Rust doctest-only, unit-test-only, integration-test-only,
 benchmark-only, or example-only edits when the focused validator covers the
 changed surface.
 
+Substantial Python changes include runtime or cross-module behavior, packaging,
+dependency/environment policy, and CI or release orchestration. Small isolated
+fixes and test-only edits use focused validators unless they affect those
+contracts. The pre-push `just check` gate applies in either case.
+
 | Touched surface | Iteration validation | Final validation / PR readiness |
 |-----|-----|-----|
 | Markdown documentation (`*.md`) | `just markdown-check` | `just check-docs` |
 | Python sources and fixtures | Targeted pytest and `just python-check` | `just python-check`, `just python-fixture-lint`, and `just test-python` |
+| Substantial Python changes | `just check` and targeted pytest | `just ci` |
 | Jupyter notebooks (`notebooks/**/*.ipynb`) | `just notebook-check` | `just notebook-check` |
 | Configuration only (JSON, TOML, YAML, CFF, workflows) | Matching config validator | `just check-config` |
 | Rust unit tests only (`#[cfg(test)]` in `src/**`) | Targeted `cargo test --lib <filter>` or `just test-unit` | `just test-unit` |
@@ -89,13 +100,13 @@ changed surface.
 | Rust benchmark files only (`benches/**`) | Targeted benchmark command or `just bench-smoke` | Matching benchmark validator |
 | Rust examples only (`examples/**`) | Targeted `cargo run --example <name>` or `just examples` | `just examples` |
 | Core Rust code | `just check` and targeted tests | `just ci` |
-| Mixed focused surfaces without core Rust | Run each matching focused validator once | Run each matching focused validator once |
-| Mixed core Rust plus tests/benches/examples/docs/config | `just check` and targeted tests | `just ci` |
+| Mixed focused surfaces without core Rust or substantial Python | Each matching focused validator | Each matching focused validator |
+| Mixed core Rust or substantial Python plus other surfaces | `just check` and targeted tests | `just ci` |
 
 For Semgrep fixture changes, also run `just semgrep-test` to preserve the
 deliberate positive and negative cases.
 
-Do not run `just ci` merely because documentation, configuration, Python,
+Do not run `just ci` merely because documentation, configuration, small Python,
 notebook, or test-only Rust files changed. Do not run `just test` when a single
 focused test bucket covers the change unless you intentionally want the full
 default test suite. When a diff touches multiple focused test surfaces, compose
@@ -175,7 +186,7 @@ or handoff.
 
 Reuse a completed review of the same diff. Any rerun must be covered by the
 maintainer's explicit authorization and warranted by substantial fixes or new
-changes. After fixes, run `just ci` for core Rust/Cargo or public
+changes. After fixes, run `just ci` for core Rust/Cargo, substantial Python, or public
 behavior changes, or the focused final validators in the matrix above for
 other changes. Keep the GitHub PR review: its broader context can produce
 different findings from the local CLI review.
@@ -375,7 +386,7 @@ current-version changelog heading whose date matches `CITATION.cff`.
 
 ## Full CI Validation
 
-Once iterative review and fixes are complete, core Rust/Cargo or public-behavior
+Once iterative review and fixes are complete, core Rust/Cargo, substantial Python, or public-behavior
 changes must pass the full CI command before a PR is ready or the changes are
 pushed. Also run it for release validation or an explicit maintainer request:
 
@@ -700,7 +711,7 @@ commit checks and explicit upload/publication boundary. Scientific single-run
 summaries, construction diagnostics and saved-baseline checks retain their
 adapter because shared complete acquisition requires two phases.
 
-Before pushing core Rust/Cargo or public-behavior changes, complete final
+Before pushing core Rust/Cargo, substantial Python, or public-behavior changes, complete final
 comprehensive validation:
 
 ```bash
@@ -1143,10 +1154,11 @@ denied by `just clippy`. Keep any
 intentional warning-level exceptions explicit in `Cargo.toml`.
 
 Agents use `just check` and targeted tests during iterative review and fixes.
-For final PR readiness or push, core Rust/Cargo or public-behavior changes
-require `just ci`. Documentation, configuration, Python, notebook, test-only,
-benchmark-only, and example-only changes use the focused validators in the
-matrix above; compose each affected surface once.
+Before every push, run `just check` on the final working tree. Core Rust/Cargo,
+substantial Python, or public-behavior changes also require `just ci` for final
+PR readiness or push. Smaller documentation, configuration, Python, notebook,
+test-only, benchmark-only, and example-only changes use the focused validators
+in the matrix above alongside the pre-push gate; compose each affected surface once.
 
 ---
 
