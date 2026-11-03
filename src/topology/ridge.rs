@@ -5,8 +5,8 @@
 //! [`RidgeCandidate`] values from borrowed [`RidgeQuery`] and [`RidgeView`]
 //! values over one live triangulation. Periodic ridge links preserve toroidal
 //! covering-space identity with
-//! [`LiftedVertexId`](crate::topology::spaces::toroidal::LiftedVertexId) and
-//! [`LiftedLinkEdge`](crate::topology::spaces::toroidal::LiftedLinkEdge).
+//! [`crate::topology::spaces::toroidal::LiftedVertexId`] and
+//! [`crate::topology::spaces::toroidal::LiftedLinkEdge`].
 //!
 //! ## Closed stars and links
 //!

@@ -3,7 +3,7 @@
 //! This module owns validation at the [`DelaunayTriangulation`]
 //! boundary: Level 5 fast-fail checks, first diagnostics, aggregate reports,
 //! cumulative validation roll-up, and construction-time candidate promotion. The
-//! lower-level empty-circumsphere scan over bare [`Tds`](crate::tds::Tds) storage lives in
+//! lower-level empty-circumsphere scan over bare [`crate::tds::Tds`] storage lives in
 //! `property_validation`.
 
 #![forbid(unsafe_code)]

@@ -1,12 +1,12 @@
 //! Bounded deterministic PL-manifold topology repair.
 //!
 //! This module implements repair algorithms that attempt to bring a validated
-//! Levels 1–2 [`Tds`](crate::tds::Tds) closer to satisfying the
+//! Levels 1–2 [`crate::tds::Tds`] closer to satisfying the
 //! [`TopologyGuarantee::PLManifold`](crate::prelude::validation::TopologyGuarantee::PLManifold)
 //! invariant by removing simplices that cause facet over-sharing, non-closed
 //! boundary ridges, non-manifold ridge links, or non-manifold vertex links.
 //!
-//! The public [`repair_pl_manifold_tds`](crate::repair_pl_manifold_tds) entry
+//! The public [`crate::repair_pl_manifold_tds`] entry
 //! point consumes its input so a failed repair can roll back and return the
 //! original TDS rather than expose a partially modified value. A successful
 //! result still proves only the TDS contract plus the targeted repair

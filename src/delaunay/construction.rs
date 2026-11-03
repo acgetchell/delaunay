@@ -10,7 +10,7 @@
 //! Most examples should import these items through
 //! [`crate::prelude::construction`], which
 //! bundles the builder, construction options, construction errors, and
-//! [`Vertex`](crate::prelude::Vertex).
+//! [`crate::prelude::Vertex`].
 //!
 //! # Examples
 //!

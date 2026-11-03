@@ -1,7 +1,7 @@
 //! Versioned, integrity-checked persistence for Delaunay triangulations.
 //!
 //! Schema-v2 checkpoints carry a
-//! [`DelaunayCheckpointManifest`](crate::checkpoint::DelaunayCheckpointManifest) beside the
+//! [`crate::checkpoint::DelaunayCheckpointManifest`] beside the
 //! canonical TDS snapshot and proof context. The manifest is untrusted evidence:
 //! loading verifies it, rebuilds canonical storage, recomputes its topology
 //! metrics, and then re-establishes validation Levels 1–5. No manifest field is
