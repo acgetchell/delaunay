@@ -548,11 +548,11 @@ performance-prepare *args: _ensure-uv
 performance-readme *args: _ensure-uv
     {{ managed }} research-repo-tools performance readme tooling/performance-release.toml "$@"
 
-# Measure, retain, reload-validate, and promote release performance documentation.
+# Measure, retain, reload-validate, and promote release performance documentation with five-minute heartbeats.
 [group('benchmarks and performance')]
 [positional-arguments]
 performance-release *args: _ensure-uv
-    {{ managed }} research-repo-tools performance release tooling/performance-release.toml "$@"
+    {{ managed }} research-repo-tools performance release tooling/performance-release.toml --progress-cadence 300 "$@"
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 [group('benchmarks and performance')]

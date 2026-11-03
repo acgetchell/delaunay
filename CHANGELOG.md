@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.4] - 2026-11-01
+## [0.8.4] - 2026-11-03
 
 ### ⚠️ Breaking Changes
 
@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Merged Pull Requests
 
+- Adopt research-repo-tools v0.2.5 [#687](https://github.com/acgetchell/delaunay/pull/687)
 - Preserve periodic invariants and harden release boundaries [#684](https://github.com/acgetchell/delaunay/pull/684)
 - Align simplicial terminology and inverse move contracts [#683](https://github.com/acgetchell/delaunay/pull/683)
 - Preserve periodic vertex identities during realization [#682](https://github.com/acgetchell/delaunay/pull/682)
@@ -172,6 +173,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Adopt shared release tooling for frozen Cargo evidence, asset handoffs, and citation-date changelogs
   - Prepare verified stable drafts after tag pushes and dispatch release benchmarks at the exact tag
   - Verify evidence before tagging and refresh benchmark and notebook dependencies
+- Adopt research-repo-tools v0.2.5 [#687](https://github.com/acgetchell/delaunay/pull/687)
+  [`317a114`](https://github.com/acgetchell/delaunay/commit/317a114297007b1aa47082a73ed1c638a1e52fbf)
+
+#### build: adopt research-repo-tools 0.2.5 scanner policy
+
+  - Resolve the published package and exact Semgrep extra on the common Python baseline.
+  - Replace temporary scanner and Rustdoc adapters with public scope and retention APIs.
+  - Verify report digests before SARIF upload and retain native consumer regressions.
+
+#### docs: adopt shared performance and changelog rendering fixes
+
+  - Regenerate mutable performance views from retained measurements and publish rustdoc-safe links.
+  - Retain only the frozen report exemption and verify publication with missing first-run assets.
+  - Restore truncated migration notes through shared changelog generation and preserve all 34 release versions and dates.
+
+#### fix(ci): enforce report verification and simplify publication
+
+  - Fail the SARIF gate when current report verification fails and invalidate local attempt markers before scanning.
+  - Remove the obsolete README formatter and check LF/CRLF publication with the pinned Markdown validator.
+  - Align Codacy with generated HTML report ownership and fix an issue-reference heading false positive.
+
+#### fix: normalize Semgrep output before invalidating reports
+
+  - Use the scanner's pathlib rules for marker invalidation and scan output
+  - Cover trailing slashes, redundant separators, and dot components
+  - Preserve retained reports while rejecting stale evidence after precondition failures
+
+#### fix: avoid environment sync before report invalidation
+
+  - Resolve Semgrep output with locked execution and synchronization disabled
+  - Keep marker invalidation ahead of the scanner's environment synchronization
 
 ## [0.8.3] - 2026-10-25
 

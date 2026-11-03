@@ -1,15 +1,15 @@
 <!-- research-repo-tools/run-report/v3 -->
 # Delaunay public API performance
 
-Run: `bbd3170146eaa928e78d3888b7ef08643356b765b07de295baa3c94c0dd6071b`
+Run: `09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad`
 
-Evidence: [run payload](performance-runs/runs/bbd3170146eaa928e78d3888b7ef08643356b765b07de295baa3c94c0dd6071b/run.json) ·
-[evidence envelope](performance-runs/runs/bbd3170146eaa928e78d3888b7ef08643356b765b07de295baa3c94c0dd6071b/evidence.json).
+Evidence: [run payload](performance-runs/runs/09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad/run.json) ·
+[evidence envelope](performance-runs/runs/09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad/evidence.json).
 
 Intervals are marginal timing intervals. No significance or ratio interval is inferred.
 
 - baseline: measured in **baseline** phase (v0.8.3), revision `3fa8a9907101c523574a0d17991a1f652b5419dc`.
-- current: measured in **current** phase (v0.8.4), revision `4d7e9d63c6225418640fa881dc5a38bbf23b1d63`.
+- current: measured in **current** phase (v0.8.4), revision `317a114297007b1aa47082a73ed1c638a1e52fbf`.
 
 ## Mean (ns)
 
@@ -24,868 +24,868 @@ Intervals are marginal timing intervals. No significance or ratio interval is in
 <tbody>
 <tr>
 <td>2d/insphere</td>
-<td>52.3401 ns [51.8992, 52.7934] (0.95 confidence)</td>
-<td>50.1483 ns [49.9358, 50.3756] (0.95 confidence)</td>
+<td>50.3629 ns [50.1007, 50.632] (0.95 confidence)</td>
+<td>49.9714 ns [49.7588, 50.1938] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>2d/insphere&#95;distance</td>
-<td>13.8075 ns [13.7849, 13.8316] (0.95 confidence)</td>
-<td>13.3591 ns [13.3391, 13.3788] (0.95 confidence)</td>
+<td>13.4344 ns [13.4123, 13.4565] (0.95 confidence)</td>
+<td>13.7432 ns [13.7119, 13.7772] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>2d/insphere&#95;lifted</td>
-<td>52.7648 ns [52.4003, 53.1348] (0.95 confidence)</td>
-<td>50.0807 ns [49.8954, 50.273] (0.95 confidence)</td>
+<td>49.3667 ns [49.1805, 49.5559] (0.95 confidence)</td>
+<td>52.2499 ns [51.8981, 52.6023] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>3d/insphere</td>
-<td>112.102 ns [111.404, 112.81] (0.95 confidence)</td>
-<td>103.127 ns [102.784, 103.524] (0.95 confidence)</td>
+<td>107.807 ns [107.127, 108.55] (0.95 confidence)</td>
+<td>111.598 ns [110.877, 112.327] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>3d/insphere&#95;distance</td>
-<td>34.8821 ns [34.4904, 35.2798] (0.95 confidence)</td>
-<td>32.5821 ns [32.5288, 32.6361] (0.95 confidence)</td>
+<td>32.5374 ns [32.4341, 32.6407] (0.95 confidence)</td>
+<td>33.2631 ns [33.1675, 33.3635] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>3d/insphere&#95;lifted</td>
-<td>110.955 ns [110.304, 111.626] (0.95 confidence)</td>
-<td>103.749 ns [103.33, 104.193] (0.95 confidence)</td>
+<td>105.5 ns [105.122, 105.901] (0.95 confidence)</td>
+<td>107.329 ns [106.914, 107.781] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>4d/insphere</td>
-<td>770.837 ns [768.173, 773.441] (0.95 confidence)</td>
-<td>746.785 ns [744.561, 749.115] (0.95 confidence)</td>
+<td>749.057 ns [746.628, 751.571] (0.95 confidence)</td>
+<td>759.7 ns [758.152, 761.301] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>4d/insphere&#95;distance</td>
-<td>53.5976 ns [53.2346, 53.9791] (0.95 confidence)</td>
-<td>52.9732 ns [52.8602, 53.0798] (0.95 confidence)</td>
+<td>50.8807 ns [50.7535, 51.0078] (0.95 confidence)</td>
+<td>54.4821 ns [54.4075, 54.5543] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>4d/insphere&#95;lifted</td>
-<td>775.857 ns [773.317, 778.394] (0.95 confidence)</td>
-<td>732.997 ns [731.373, 734.609] (0.95 confidence)</td>
+<td>752.908 ns [749.769, 756.022] (0.95 confidence)</td>
+<td>764.499 ns [760.881, 768.229] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>5d/insphere</td>
-<td>1395.52 ns [1390.77, 1400.46] (0.95 confidence)</td>
-<td>1285.7 ns [1282.37, 1289.18] (0.95 confidence)</td>
+<td>1387.9 ns [1383.98, 1391.9] (0.95 confidence)</td>
+<td>1287.3 ns [1284.02, 1290.71] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>5d/insphere&#95;distance</td>
-<td>88.578 ns [88.2501, 88.9361] (0.95 confidence)</td>
-<td>86.6351 ns [86.3845, 86.8874] (0.95 confidence)</td>
+<td>87.4293 ns [87.1704, 87.6922] (0.95 confidence)</td>
+<td>87.0696 ns [86.8265, 87.3225] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>5d/insphere&#95;lifted</td>
-<td>1401.98 ns [1397.8, 1406.31] (0.95 confidence)</td>
-<td>1277.01 ns [1274, 1280.1] (0.95 confidence)</td>
+<td>1374.05 ns [1370.15, 1377.96] (0.95 confidence)</td>
+<td>1300.07 ns [1295.7, 1304.4] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k1&#95;roundtrip</td>
-<td>60436.7 ns [60048.7, 60794.6] (0.95 confidence)</td>
-<td>54929 ns [54599.8, 55307.3] (0.95 confidence)</td>
+<td>53991 ns [53907.8, 54086.5] (0.95 confidence)</td>
+<td>56295.4 ns [56144.4, 56459.1] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k1&#95;roundtrip&#95;adversarial</td>
-<td>181653 ns [179891, 183087] (0.95 confidence)</td>
-<td>162566 ns [162336, 162828] (0.95 confidence)</td>
+<td>162550 ns [162378, 162722] (0.95 confidence)</td>
+<td>166391 ns [166034, 166747] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k2&#95;edge&#95;flip</td>
-<td>29657 ns [29428.9, 29871.8] (0.95 confidence)</td>
-<td>26793.5 ns [26750.4, 26839.4] (0.95 confidence)</td>
+<td>26258.3 ns [26231.1, 26287.7] (0.95 confidence)</td>
+<td>27593.7 ns [27533.9, 27667.4] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k2&#95;edge&#95;flip&#95;adversarial</td>
-<td>113053 ns [112400, 113656] (0.95 confidence)</td>
-<td>101727 ns [101535, 101923] (0.95 confidence)</td>
+<td>101699 ns [99923.2, 103885] (0.95 confidence)</td>
+<td>102942 ns [102646, 103239] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k1&#95;roundtrip</td>
-<td>2.64921e+06 ns [2.63549e+06, 2.66233e+06] (0.95 confidence)</td>
-<td>2.35601e+06 ns [2.34786e+06, 2.36467e+06] (0.95 confidence)</td>
+<td>2.3395e+06 ns [2.33445e+06, 2.34426e+06] (0.95 confidence)</td>
+<td>2.41399e+06 ns [2.4096e+06, 2.41826e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k1&#95;roundtrip&#95;adversarial</td>
-<td>2.12039e+06 ns [2.07969e+06, 2.16021e+06] (0.95 confidence)</td>
-<td>1.92263e+06 ns [1.9198e+06, 1.92522e+06] (0.95 confidence)</td>
+<td>1.95481e+06 ns [1.94607e+06, 1.9653e+06] (0.95 confidence)</td>
+<td>2.00716e+06 ns [2.00541e+06, 2.00886e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k2&#95;roundtrip</td>
-<td>7.44442e+06 ns [7.3736e+06, 7.5044e+06] (0.95 confidence)</td>
-<td>6.52954e+06 ns [6.5179e+06, 6.54379e+06] (0.95 confidence)</td>
+<td>6.58713e+06 ns [6.47698e+06, 6.71913e+06] (0.95 confidence)</td>
+<td>6.63185e+06 ns [6.62046e+06, 6.64449e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k2&#95;roundtrip&#95;adversarial</td>
-<td>6.31696e+06 ns [6.20642e+06, 6.4446e+06] (0.95 confidence)</td>
-<td>5.8673e+06 ns [5.85763e+06, 5.87702e+06] (0.95 confidence)</td>
+<td>5.82996e+06 ns [5.81511e+06, 5.84711e+06] (0.95 confidence)</td>
+<td>6.02659e+06 ns [6.01725e+06, 6.03505e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k3&#95;forward</td>
-<td>1.53535e+06 ns [1.51967e+06, 1.55057e+06] (0.95 confidence)</td>
-<td>1.37701e+06 ns [1.37461e+06, 1.37978e+06] (0.95 confidence)</td>
+<td>1.35985e+06 ns [1.35702e+06, 1.36271e+06] (0.95 confidence)</td>
+<td>1.39557e+06 ns [1.39295e+06, 1.39875e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k3&#95;forward&#95;adversarial</td>
-<td>2.10566e+06 ns [2.08207e+06, 2.12724e+06] (0.95 confidence)</td>
-<td>1.82502e+06 ns [1.82293e+06, 1.8274e+06] (0.95 confidence)</td>
+<td>1.88579e+06 ns [1.87877e+06, 1.89349e+06] (0.95 confidence)</td>
+<td>1.87074e+06 ns [1.8671e+06, 1.8745e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k1&#95;roundtrip</td>
-<td>4.25154e+07 ns [4.16622e+07, 4.32113e+07] (0.95 confidence)</td>
-<td>3.90255e+07 ns [3.89323e+07, 3.91261e+07] (0.95 confidence)</td>
+<td>3.91942e+07 ns [3.89438e+07, 3.94883e+07] (0.95 confidence)</td>
+<td>3.9626e+07 ns [3.94912e+07, 3.98113e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k1&#95;roundtrip&#95;adversarial</td>
-<td>3.60958e+07 ns [3.58436e+07, 3.63853e+07] (0.95 confidence)</td>
-<td>3.31007e+07 ns [3.30072e+07, 3.31827e+07] (0.95 confidence)</td>
+<td>3.31749e+07 ns [3.30477e+07, 3.33109e+07] (0.95 confidence)</td>
+<td>3.33839e+07 ns [3.33368e+07, 3.34367e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k2&#95;roundtrip</td>
-<td>5.90303e+07 ns [5.83767e+07, 5.99518e+07] (0.95 confidence)</td>
-<td>5.58875e+07 ns [5.58058e+07, 5.59673e+07] (0.95 confidence)</td>
+<td>5.61884e+07 ns [5.59148e+07, 5.64898e+07] (0.95 confidence)</td>
+<td>5.63516e+07 ns [5.62749e+07, 5.64325e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k2&#95;roundtrip&#95;adversarial</td>
-<td>2.05857e+08 ns [2.04909e+08, 2.06865e+08] (0.95 confidence)</td>
-<td>1.93728e+08 ns [1.93433e+08, 1.94051e+08] (0.95 confidence)</td>
+<td>2.00254e+08 ns [1.98791e+08, 2.01988e+08] (0.95 confidence)</td>
+<td>1.98677e+08 ns [1.98407e+08, 1.98921e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k3&#95;roundtrip</td>
-<td>6.71714e+07 ns [6.70495e+07, 6.7297e+07] (0.95 confidence)</td>
-<td>6.41054e+07 ns [6.3986e+07, 6.42067e+07] (0.95 confidence)</td>
+<td>6.55919e+07 ns [6.51718e+07, 6.6026e+07] (0.95 confidence)</td>
+<td>6.50869e+07 ns [6.49496e+07, 6.52353e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k3&#95;roundtrip&#95;adversarial</td>
-<td>3.5825e+07 ns [3.55267e+07, 3.61366e+07] (0.95 confidence)</td>
-<td>3.48048e+07 ns [3.47316e+07, 3.49099e+07] (0.95 confidence)</td>
+<td>3.52388e+07 ns [3.5102e+07, 3.53859e+07] (0.95 confidence)</td>
+<td>3.51438e+07 ns [3.50984e+07, 3.51917e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k1&#95;roundtrip</td>
-<td>1.62108e+08 ns [1.61188e+08, 1.63032e+08] (0.95 confidence)</td>
-<td>1.56672e+08 ns [1.56507e+08, 1.56844e+08] (0.95 confidence)</td>
+<td>1.55988e+08 ns [1.55554e+08, 1.56426e+08] (0.95 confidence)</td>
+<td>1.59178e+08 ns [1.58857e+08, 1.5952e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k1&#95;roundtrip&#95;adversarial</td>
-<td>1.6878e+08 ns [1.68134e+08, 1.69431e+08] (0.95 confidence)</td>
-<td>1.59444e+08 ns [1.59136e+08, 1.59812e+08] (0.95 confidence)</td>
+<td>1.60754e+08 ns [1.59915e+08, 1.61653e+08] (0.95 confidence)</td>
+<td>1.62011e+08 ns [1.61557e+08, 1.62463e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k2&#95;roundtrip</td>
-<td>336780 ns [335825, 337493] (0.95 confidence)</td>
-<td>325864 ns [325487, 326237] (0.95 confidence)</td>
+<td>329220 ns [328636, 329841] (0.95 confidence)</td>
+<td>329108 ns [328883, 329324] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k2&#95;roundtrip&#95;adversarial</td>
-<td>363815 ns [363049, 364455] (0.95 confidence)</td>
-<td>353231 ns [352450, 354045] (0.95 confidence)</td>
+<td>352172 ns [351379, 352996] (0.95 confidence)</td>
+<td>356146 ns [355584, 356751] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k3&#95;roundtrip</td>
-<td>3.43309e+08 ns [3.40982e+08, 3.45998e+08] (0.95 confidence)</td>
-<td>3.25811e+08 ns [3.25388e+08, 3.26241e+08] (0.95 confidence)</td>
+<td>3.26703e+08 ns [3.25532e+08, 3.2809e+08] (0.95 confidence)</td>
+<td>3.30575e+08 ns [3.30234e+08, 3.30918e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k3&#95;roundtrip&#95;adversarial</td>
-<td>9.37077e+08 ns [9.35221e+08, 9.39237e+08] (0.95 confidence)</td>
-<td>8.62458e+08 ns [8.61267e+08, 8.63615e+08] (0.95 confidence)</td>
+<td>9.10658e+08 ns [9.07812e+08, 9.13841e+08] (0.95 confidence)</td>
+<td>8.82636e+08 ns [8.79657e+08, 8.86312e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;2d/500</td>
-<td>230986 ns [229140, 232799] (0.95 confidence)</td>
-<td>205462 ns [204999, 205995] (0.95 confidence)</td>
+<td>209632 ns [209098, 210187] (0.95 confidence)</td>
+<td>211250 ns [210527, 212025] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;2d&#95;adversarial/500</td>
-<td>230689 ns [228507, 232837] (0.95 confidence)</td>
-<td>205877 ns [205326, 206475] (0.95 confidence)</td>
+<td>209507 ns [209292, 209744] (0.95 confidence)</td>
+<td>210174 ns [209394, 210922] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;3d/100</td>
-<td>184270 ns [182942, 185632] (0.95 confidence)</td>
-<td>165487 ns [165211, 165754] (0.95 confidence)</td>
+<td>166339 ns [166016, 166741] (0.95 confidence)</td>
+<td>167056 ns [166588, 167540] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;3d&#95;adversarial/100</td>
-<td>187851 ns [186148, 189602] (0.95 confidence)</td>
-<td>167741 ns [167381, 168083] (0.95 confidence)</td>
+<td>168132 ns [167863, 168417] (0.95 confidence)</td>
+<td>168413 ns [168092, 168732] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;4d/30</td>
-<td>145887 ns [144585, 147152] (0.95 confidence)</td>
-<td>132541 ns [132220, 132863] (0.95 confidence)</td>
+<td>131622 ns [131385, 131915] (0.95 confidence)</td>
+<td>137706 ns [137303, 138107] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;4d&#95;adversarial/30</td>
-<td>144388 ns [143087, 145631] (0.95 confidence)</td>
-<td>131817 ns [131574, 132074] (0.95 confidence)</td>
+<td>131050 ns [130824, 131290] (0.95 confidence)</td>
+<td>134747 ns [134256, 135263] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;5d/12</td>
-<td>40294.8 ns [39952.1, 40627.9] (0.95 confidence)</td>
-<td>37312.6 ns [37162.2, 37468.4] (0.95 confidence)</td>
+<td>36669.9 ns [36519.8, 36840.6] (0.95 confidence)</td>
+<td>37385.2 ns [37266, 37504.3] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;5d&#95;adversarial/12</td>
-<td>39735.4 ns [39422.2, 40061.5] (0.95 confidence)</td>
-<td>36252.5 ns [36188.4, 36313.6] (0.95 confidence)</td>
+<td>35788.4 ns [35725.1, 35858.7] (0.95 confidence)</td>
+<td>36980.9 ns [36801.1, 37160.8] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>circumcenter/solve&#95;path/near&#95;singular&#95;exact&#95;fallback&#95;3d</td>
-<td>17119 ns [17093.4, 17144.4] (0.95 confidence)</td>
-<td>17174.1 ns [17152.2, 17195.6] (0.95 confidence)</td>
+<td>17669.4 ns [17626.9, 17711.7] (0.95 confidence)</td>
+<td>17606.8 ns [17584.7, 17628.7] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>circumcenter/solve&#95;path/regular&#95;lu&#95;3d</td>
-<td>22.9998 ns [22.9728, 23.0282] (0.95 confidence)</td>
-<td>23.305 ns [23.2702, 23.3407] (0.95 confidence)</td>
+<td>22.9912 ns [22.9638, 23.0195] (0.95 confidence)</td>
+<td>23.7471 ns [23.7008, 23.7993] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;2d/500</td>
-<td>377023 ns [373828, 380256] (0.95 confidence)</td>
-<td>388035 ns [387539, 388596] (0.95 confidence)</td>
+<td>343199 ns [341356, 345118] (0.95 confidence)</td>
+<td>391508 ns [390646, 392422] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;2d&#95;adversarial/500</td>
-<td>365804 ns [361966, 369317] (0.95 confidence)</td>
-<td>382118 ns [381484, 382804] (0.95 confidence)</td>
+<td>332771 ns [331997, 334037] (0.95 confidence)</td>
+<td>389851 ns [388690, 391118] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;3d/100</td>
-<td>304822 ns [302499, 307102] (0.95 confidence)</td>
-<td>275543 ns [275301, 275773] (0.95 confidence)</td>
+<td>275770 ns [275370, 276220] (0.95 confidence)</td>
+<td>277801 ns [276837, 278751] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;3d&#95;adversarial/100</td>
-<td>4.42763e+06 ns [4.38928e+06, 4.46532e+06] (0.95 confidence)</td>
-<td>3.97401e+06 ns [3.96524e+06, 3.98398e+06] (0.95 confidence)</td>
+<td>4.00082e+06 ns [3.9926e+06, 4.00978e+06] (0.95 confidence)</td>
+<td>4.03635e+06 ns [4.02751e+06, 4.04514e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;4d/30</td>
-<td>9.5876e+06 ns [9.50569e+06, 9.67417e+06] (0.95 confidence)</td>
-<td>8.76797e+06 ns [8.70573e+06, 8.83988e+06] (0.95 confidence)</td>
+<td>8.78704e+06 ns [8.73664e+06, 8.84747e+06] (0.95 confidence)</td>
+<td>8.9468e+06 ns [8.92504e+06, 8.96889e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;4d&#95;adversarial/30</td>
-<td>7.64228e+06 ns [7.58714e+06, 7.69392e+06] (0.95 confidence)</td>
-<td>7.00199e+06 ns [6.97681e+06, 7.02695e+06] (0.95 confidence)</td>
+<td>6.99418e+06 ns [6.95724e+06, 7.03573e+06] (0.95 confidence)</td>
+<td>7.07419e+06 ns [7.04404e+06, 7.11162e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;5d/12</td>
-<td>3.39448e+06 ns [3.36597e+06, 3.4234e+06] (0.95 confidence)</td>
-<td>3.03164e+06 ns [3.02216e+06, 3.04243e+06] (0.95 confidence)</td>
+<td>3.07103e+06 ns [3.06251e+06, 3.0796e+06] (0.95 confidence)</td>
+<td>3.07207e+06 ns [3.05725e+06, 3.09035e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;5d&#95;adversarial/12</td>
-<td>2.89774e+06 ns [2.86272e+06, 2.93142e+06] (0.95 confidence)</td>
-<td>2.65512e+06 ns [2.64863e+06, 2.66274e+06] (0.95 confidence)</td>
+<td>2.63914e+06 ns [2.63246e+06, 2.64712e+06] (0.95 confidence)</td>
+<td>2.73111e+06 ns [2.71267e+06, 2.74983e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;nearest&#95;visible&#95;facet&#95;3d/100</td>
-<td>1261.46 ns [1251.06, 1271.92] (0.95 confidence)</td>
-<td>1146.76 ns [1144.29, 1149.19] (0.95 confidence)</td>
+<td>1134.72 ns [1130.38, 1138.79] (0.95 confidence)</td>
+<td>1149.57 ns [1144.79, 1154.44] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;nearest&#95;visible&#95;facet&#95;3d&#95;adversarial/100</td>
-<td>45586.5 ns [45240, 45938] (0.95 confidence)</td>
-<td>41017.3 ns [40904.4, 41133.9] (0.95 confidence)</td>
+<td>40912.5 ns [40804.1, 41034.4] (0.95 confidence)</td>
+<td>41004.1 ns [40895.6, 41133.8] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;visible&#95;facets&#95;3d/100</td>
-<td>1365.76 ns [1345.65, 1385.14] (0.95 confidence)</td>
-<td>1220.15 ns [1208.07, 1234.29] (0.95 confidence)</td>
+<td>1212.91 ns [1201.63, 1227.13] (0.95 confidence)</td>
+<td>1222.44 ns [1216.82, 1228.52] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;visible&#95;facets&#95;3d&#95;adversarial/100</td>
-<td>45862.8 ns [45426.7, 46305] (0.95 confidence)</td>
-<td>40807.4 ns [40705.2, 40923.4] (0.95 confidence)</td>
+<td>41046.2 ns [40913.5, 41199.7] (0.95 confidence)</td>
+<td>41131.9 ns [41039.7, 41228] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/is&#95;point&#95;outside&#95;3d/100</td>
-<td>104.363 ns [103.263, 105.421] (0.95 confidence)</td>
-<td>95.3963 ns [95.317, 95.4723] (0.95 confidence)</td>
+<td>94.6067 ns [94.4914, 94.7352] (0.95 confidence)</td>
+<td>95.7992 ns [95.6301, 95.9675] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/is&#95;point&#95;outside&#95;3d&#95;adversarial/100</td>
-<td>851.922 ns [844.847, 858.708] (0.95 confidence)</td>
-<td>767.288 ns [765.443, 769.522] (0.95 confidence)</td>
+<td>770.856 ns [768.53, 773.297] (0.95 confidence)</td>
+<td>780.13 ns [776.819, 783.986] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/boundary&#95;point&#95;distance</td>
-<td>13.634 ns [13.6058, 13.6624] (0.95 confidence)</td>
-<td>13.4082 ns [13.3818, 13.4336] (0.95 confidence)</td>
+<td>13.5388 ns [13.514, 13.5649] (0.95 confidence)</td>
+<td>13.4266 ns [13.3943, 13.4638] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/boundary&#95;point&#95;insphere</td>
-<td>0.827435 ns [0.82465, 0.830304] (0.95 confidence)</td>
-<td>0.814717 ns [0.812755, 0.81673] (0.95 confidence)</td>
+<td>0.83637 ns [0.833595, 0.8392] (0.95 confidence)</td>
+<td>0.827141 ns [0.824016, 0.830381] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/boundary&#95;point&#95;lifted</td>
-<td>984.639 ns [980.747, 988.684] (0.95 confidence)</td>
-<td>959.351 ns [957.783, 960.976] (0.95 confidence)</td>
+<td>971.001 ns [969.089, 972.955] (0.95 confidence)</td>
+<td>978.53 ns [976.62, 980.488] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/far&#95;point&#95;distance</td>
-<td>14.0865 ns [14.0605, 14.114] (0.95 confidence)</td>
-<td>13.389 ns [13.3561, 13.4219] (0.95 confidence)</td>
+<td>13.5132 ns [13.4817, 13.5458] (0.95 confidence)</td>
+<td>13.6775 ns [13.6539, 13.7016] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/far&#95;point&#95;insphere</td>
-<td>51.6024 ns [51.1897, 52.0188] (0.95 confidence)</td>
-<td>50.0289 ns [49.7738, 50.2985] (0.95 confidence)</td>
+<td>48.9921 ns [48.8046, 49.1883] (0.95 confidence)</td>
+<td>50.7656 ns [50.4847, 51.0571] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/far&#95;point&#95;lifted</td>
-<td>51.4699 ns [51.1573, 51.7913] (0.95 confidence)</td>
-<td>49.8624 ns [49.6815, 50.0436] (0.95 confidence)</td>
+<td>50.5973 ns [50.2123, 51.0038] (0.95 confidence)</td>
+<td>50.5494 ns [50.2123, 50.8927] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/near&#95;boundary&#95;distance</td>
-<td>14.1756 ns [14.1322, 14.2197] (0.95 confidence)</td>
-<td>13.5411 ns [13.5132, 13.5687] (0.95 confidence)</td>
+<td>13.8014 ns [13.757, 13.8495] (0.95 confidence)</td>
+<td>13.8464 ns [13.8242, 13.868] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/near&#95;boundary&#95;insphere</td>
-<td>49.0976 ns [48.8394, 49.3591] (0.95 confidence)</td>
-<td>47.5618 ns [47.3438, 47.781] (0.95 confidence)</td>
+<td>47.0807 ns [46.8132, 47.361] (0.95 confidence)</td>
+<td>48.0824 ns [47.7365, 48.4402] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/near&#95;boundary&#95;lifted</td>
-<td>48.638 ns [48.3779, 48.9055] (0.95 confidence)</td>
-<td>46.6557 ns [46.4678, 46.8477] (0.95 confidence)</td>
+<td>47.3911 ns [47.0183, 47.7893] (0.95 confidence)</td>
+<td>47.5431 ns [47.261, 47.852] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/boundary&#95;point&#95;distance</td>
-<td>32.7357 ns [32.6842, 32.7912] (0.95 confidence)</td>
-<td>32.6704 ns [32.5979, 32.7427] (0.95 confidence)</td>
+<td>32.7541 ns [32.6327, 32.8795] (0.95 confidence)</td>
+<td>32.8153 ns [32.7445, 32.8948] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/boundary&#95;point&#95;insphere</td>
-<td>1.19968 ns [1.19451, 1.20397] (0.95 confidence)</td>
-<td>1.17421 ns [1.17168, 1.17669] (0.95 confidence)</td>
+<td>1.21494 ns [1.20195, 1.23087] (0.95 confidence)</td>
+<td>1.18188 ns [1.17849, 1.18493] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/boundary&#95;point&#95;lifted</td>
-<td>1798.77 ns [1792.21, 1805.26] (0.95 confidence)</td>
-<td>1756.77 ns [1754.26, 1759.35] (0.95 confidence)</td>
+<td>1744.54 ns [1742.43, 1746.66] (0.95 confidence)</td>
+<td>1776.98 ns [1775.41, 1778.57] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/far&#95;point&#95;distance</td>
-<td>33.0242 ns [32.9144, 33.136] (0.95 confidence)</td>
-<td>32.3407 ns [32.2731, 32.4101] (0.95 confidence)</td>
+<td>32.9828 ns [32.84, 33.1373] (0.95 confidence)</td>
+<td>33.1066 ns [33.0361, 33.1795] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/far&#95;point&#95;insphere</td>
-<td>110.781 ns [110.388, 111.183] (0.95 confidence)</td>
-<td>104.95 ns [104.639, 105.277] (0.95 confidence)</td>
+<td>108.102 ns [107.54, 108.695] (0.95 confidence)</td>
+<td>108.558 ns [107.966, 109.172] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/far&#95;point&#95;lifted</td>
-<td>110.992 ns [110.342, 111.656] (0.95 confidence)</td>
-<td>103.64 ns [103.49, 103.783] (0.95 confidence)</td>
+<td>111.197 ns [110.58, 111.827] (0.95 confidence)</td>
+<td>112.344 ns [111.798, 112.911] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/near&#95;boundary&#95;distance</td>
-<td>33.2564 ns [33.133, 33.3878] (0.95 confidence)</td>
-<td>32.5824 ns [32.5162, 32.6468] (0.95 confidence)</td>
+<td>32.6832 ns [32.5787, 32.7926] (0.95 confidence)</td>
+<td>32.7475 ns [32.6955, 32.803] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/near&#95;boundary&#95;insphere</td>
-<td>102.521 ns [101.692, 103.363] (0.95 confidence)</td>
-<td>94.7606 ns [93.9731, 95.5968] (0.95 confidence)</td>
+<td>94.5311 ns [94.2925, 94.7792] (0.95 confidence)</td>
+<td>92.2219 ns [91.8899, 92.5626] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/near&#95;boundary&#95;lifted</td>
-<td>101.254 ns [100.388, 102.165] (0.95 confidence)</td>
-<td>93.994 ns [93.3875, 94.6441] (0.95 confidence)</td>
+<td>95.1302 ns [94.7213, 95.565] (0.95 confidence)</td>
+<td>91.2777 ns [91.0512, 91.5091] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/boundary&#95;point&#95;distance</td>
-<td>51.7806 ns [51.6977, 51.8659] (0.95 confidence)</td>
-<td>53.335 ns [53.2364, 53.4396] (0.95 confidence)</td>
+<td>50.9981 ns [50.888, 51.1097] (0.95 confidence)</td>
+<td>54.6747 ns [54.5304, 54.8235] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/boundary&#95;point&#95;insphere</td>
-<td>1.56114 ns [1.53275, 1.58838] (0.95 confidence)</td>
-<td>1.54053 ns [1.51435, 1.56596] (0.95 confidence)</td>
+<td>1.57133 ns [1.54916, 1.59235] (0.95 confidence)</td>
+<td>1.56298 ns [1.53286, 1.59204] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/boundary&#95;point&#95;lifted</td>
-<td>3758.26 ns [3751.91, 3764.6] (0.95 confidence)</td>
-<td>3734.7 ns [3725.69, 3743.72] (0.95 confidence)</td>
+<td>3668.74 ns [3660.8, 3677.01] (0.95 confidence)</td>
+<td>3767.89 ns [3749.64, 3792.2] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/far&#95;point&#95;distance</td>
-<td>55.6529 ns [55.1293, 56.1643] (0.95 confidence)</td>
-<td>53.2062 ns [53.0935, 53.3137] (0.95 confidence)</td>
+<td>50.9772 ns [50.8599, 51.0953] (0.95 confidence)</td>
+<td>53.7173 ns [53.5935, 53.8393] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/far&#95;point&#95;insphere</td>
-<td>768.103 ns [764.94, 771.271] (0.95 confidence)</td>
-<td>733.219 ns [731.487, 735.008] (0.95 confidence)</td>
+<td>749.122 ns [743.645, 755.32] (0.95 confidence)</td>
+<td>736.251 ns [734.968, 737.559] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/far&#95;point&#95;lifted</td>
-<td>771.873 ns [769.445, 774.309] (0.95 confidence)</td>
-<td>731.2 ns [729.389, 733.06] (0.95 confidence)</td>
+<td>753 ns [750.441, 755.613] (0.95 confidence)</td>
+<td>738.213 ns [735.498, 741.145] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/near&#95;boundary&#95;distance</td>
-<td>52.2516 ns [52.1073, 52.4024] (0.95 confidence)</td>
-<td>53.6145 ns [53.5031, 53.7232] (0.95 confidence)</td>
+<td>53.1202 ns [52.8804, 53.372] (0.95 confidence)</td>
+<td>53.8261 ns [53.7072, 53.945] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/near&#95;boundary&#95;insphere</td>
-<td>758.769 ns [755.762, 761.745] (0.95 confidence)</td>
-<td>716.731 ns [714.862, 718.651] (0.95 confidence)</td>
+<td>766.167 ns [762.646, 769.643] (0.95 confidence)</td>
+<td>738.957 ns [736.84, 741.114] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/near&#95;boundary&#95;lifted</td>
-<td>753.078 ns [750.813, 755.301] (0.95 confidence)</td>
-<td>715.344 ns [713.397, 717.304] (0.95 confidence)</td>
+<td>740.171 ns [737.355, 743.093] (0.95 confidence)</td>
+<td>733.476 ns [731.047, 735.986] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/boundary&#95;point&#95;distance</td>
-<td>88.8377 ns [88.3871, 89.3443] (0.95 confidence)</td>
-<td>86.8255 ns [86.5779, 87.0725] (0.95 confidence)</td>
+<td>87.4714 ns [87.2609, 87.6868] (0.95 confidence)</td>
+<td>87.3212 ns [87.0458, 87.5977] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/boundary&#95;point&#95;insphere</td>
-<td>1.7196 ns [1.70928, 1.73176] (0.95 confidence)</td>
-<td>1.68417 ns [1.68026, 1.68923] (0.95 confidence)</td>
+<td>1.69288 ns [1.68869, 1.69786] (0.95 confidence)</td>
+<td>1.70035 ns [1.69221, 1.71066] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/boundary&#95;point&#95;lifted</td>
-<td>5957.58 ns [5939.07, 5978.05] (0.95 confidence)</td>
-<td>5812.07 ns [5801.58, 5822.99] (0.95 confidence)</td>
+<td>6047.39 ns [6008.53, 6095.32] (0.95 confidence)</td>
+<td>5867.63 ns [5857.43, 5878.07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/far&#95;point&#95;distance</td>
-<td>88.3474 ns [88.0294, 88.664] (0.95 confidence)</td>
-<td>86.9318 ns [86.6565, 87.212] (0.95 confidence)</td>
+<td>88.2959 ns [87.8611, 88.8142] (0.95 confidence)</td>
+<td>87.2551 ns [86.9283, 87.586] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/far&#95;point&#95;insphere</td>
-<td>1548.32 ns [1544.11, 1552.43] (0.95 confidence)</td>
-<td>1267.62 ns [1264.83, 1270.5] (0.95 confidence)</td>
+<td>1364.07 ns [1359.99, 1368.36] (0.95 confidence)</td>
+<td>1299.78 ns [1296.04, 1303.57] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/far&#95;point&#95;lifted</td>
-<td>1356.44 ns [1353.44, 1359.32] (0.95 confidence)</td>
-<td>1273.77 ns [1270.71, 1276.83] (0.95 confidence)</td>
+<td>1343.25 ns [1340.42, 1346.12] (0.95 confidence)</td>
+<td>1286.39 ns [1283.31, 1289.59] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/near&#95;boundary&#95;distance</td>
-<td>87.1305 ns [86.9404, 87.3264] (0.95 confidence)</td>
-<td>86.5561 ns [86.316, 86.8041] (0.95 confidence)</td>
+<td>88.5645 ns [88.23, 88.918] (0.95 confidence)</td>
+<td>87.9891 ns [87.6638, 88.3188] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/near&#95;boundary&#95;insphere</td>
-<td>1344.5 ns [1342.09, 1346.89] (0.95 confidence)</td>
-<td>1269.59 ns [1264.57, 1274.96] (0.95 confidence)</td>
+<td>1342.36 ns [1337.99, 1347.03] (0.95 confidence)</td>
+<td>1264.07 ns [1259.86, 1268.42] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/near&#95;boundary&#95;lifted</td>
-<td>1346.66 ns [1343.14, 1349.99] (0.95 confidence)</td>
-<td>1243.88 ns [1240.79, 1247.21] (0.95 confidence)</td>
+<td>1343.51 ns [1339.28, 1347.75] (0.95 confidence)</td>
+<td>1276.64 ns [1271.19, 1282.32] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;2d/vertices&#95;120&#95;simplices&#95;226</td>
-<td>1.68801e+06 ns [1.65952e+06, 1.71864e+06] (0.95 confidence)</td>
-<td>1.58412e+06 ns [1.58083e+06, 1.5877e+06] (0.95 confidence)</td>
+<td>1.61314e+06 ns [1.60877e+06, 1.61763e+06] (0.95 confidence)</td>
+<td>1.58605e+06 ns [1.58205e+06, 1.59041e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;3d/vertices&#95;30&#95;simplices&#95;115</td>
-<td>1.7239e+08 ns [1.70298e+08, 1.74461e+08] (0.95 confidence)</td>
-<td>1.56937e+08 ns [1.56702e+08, 1.5724e+08] (0.95 confidence)</td>
+<td>1.59381e+08 ns [1.59147e+08, 1.59635e+08] (0.95 confidence)</td>
+<td>1.58796e+08 ns [1.58487e+08, 1.59104e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;4d/vertices&#95;16&#95;simplices&#95;68</td>
-<td>5.1033e+08 ns [4.99454e+08, 5.22043e+08] (0.95 confidence)</td>
-<td>4.74908e+08 ns [4.64602e+08, 4.85462e+08] (0.95 confidence)</td>
+<td>4.79355e+08 ns [4.79046e+08, 4.79656e+08] (0.95 confidence)</td>
+<td>4.71827e+08 ns [4.71496e+08, 4.7218e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;5d/vertices&#95;10&#95;simplices&#95;20</td>
-<td>1.4414e+08 ns [1.42237e+08, 1.46249e+08] (0.95 confidence)</td>
-<td>1.33374e+08 ns [1.33129e+08, 1.33701e+08] (0.95 confidence)</td>
+<td>1.35104e+08 ns [1.34874e+08, 1.35354e+08] (0.95 confidence)</td>
+<td>1.3601e+08 ns [1.35542e+08, 1.36586e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;2d/10</td>
-<td>486041 ns [480133, 491754] (0.95 confidence)</td>
-<td>436031 ns [434652, 437625] (0.95 confidence)</td>
+<td>438463 ns [437691, 439250] (0.95 confidence)</td>
+<td>446524 ns [445029, 448210] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;2d&#95;adversarial/10</td>
-<td>3.1629e+06 ns [3.11415e+06, 3.20808e+06] (0.95 confidence)</td>
-<td>2.85668e+06 ns [2.85261e+06, 2.86172e+06] (0.95 confidence)</td>
+<td>2.86142e+06 ns [2.85555e+06, 2.86739e+06] (0.95 confidence)</td>
+<td>2.88115e+06 ns [2.86639e+06, 2.90276e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;3d/10</td>
-<td>2.8408e+06 ns [2.80307e+06, 2.87904e+06] (0.95 confidence)</td>
-<td>2.69187e+06 ns [2.68236e+06, 2.70429e+06] (0.95 confidence)</td>
+<td>2.81502e+06 ns [2.79423e+06, 2.83573e+06] (0.95 confidence)</td>
+<td>2.78132e+06 ns [2.76522e+06, 2.79975e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;3d&#95;adversarial/10</td>
-<td>1.41067e+07 ns [1.3918e+07, 1.43318e+07] (0.95 confidence)</td>
-<td>1.3278e+07 ns [1.32445e+07, 1.33212e+07] (0.95 confidence)</td>
+<td>1.39265e+07 ns [1.38698e+07, 1.39934e+07] (0.95 confidence)</td>
+<td>1.35294e+07 ns [1.34597e+07, 1.36191e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;4d/6</td>
-<td>2.74128e+07 ns [2.7069e+07, 2.77838e+07] (0.95 confidence)</td>
-<td>2.61869e+07 ns [2.61018e+07, 2.62781e+07] (0.95 confidence)</td>
+<td>2.65165e+07 ns [2.64711e+07, 2.65605e+07] (0.95 confidence)</td>
+<td>2.66044e+07 ns [2.64984e+07, 2.67056e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;4d&#95;adversarial/6</td>
-<td>6.65983e+07 ns [6.58803e+07, 6.74457e+07] (0.95 confidence)</td>
-<td>6.51669e+07 ns [6.50267e+07, 6.5329e+07] (0.95 confidence)</td>
+<td>6.57378e+07 ns [6.55044e+07, 6.59952e+07] (0.95 confidence)</td>
+<td>6.71733e+07 ns [6.68671e+07, 6.75122e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;5d/4</td>
-<td>5.03311e+07 ns [4.94892e+07, 5.12292e+07] (0.95 confidence)</td>
-<td>5.01032e+07 ns [4.99292e+07, 5.02935e+07] (0.95 confidence)</td>
+<td>4.79581e+07 ns [4.79015e+07, 4.80238e+07] (0.95 confidence)</td>
+<td>5.156e+07 ns [5.13765e+07, 5.17438e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;5d&#95;adversarial/4</td>
-<td>5.24763e+07 ns [5.17174e+07, 5.33731e+07] (0.95 confidence)</td>
-<td>5.44126e+07 ns [5.42807e+07, 5.45358e+07] (0.95 confidence)</td>
+<td>5.18702e+07 ns [5.16746e+07, 5.20777e+07] (0.95 confidence)</td>
+<td>5.59724e+07 ns [5.58076e+07, 5.61503e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/2d/vertices&#95;100&#95;simplices&#95;187&#95;seed&#95;dd618c77b9187836&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>7067.61 ns [7037.72, 7109.79] (0.95 confidence)</td>
-<td>7164.34 ns [7144.1, 7187.45] (0.95 confidence)</td>
+<td>7081.94 ns [7068.22, 7095.66] (0.95 confidence)</td>
+<td>7239.28 ns [7216.59, 7272.07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/2d/vertices&#95;2000&#95;simplices&#95;3978&#95;seed&#95;01acf93075e96412&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>7259.21 ns [7248.36, 7272.11] (0.95 confidence)</td>
-<td>7415.04 ns [7376.55, 7459.91] (0.95 confidence)</td>
+<td>7274.62 ns [7263.47, 7290.86] (0.95 confidence)</td>
+<td>7512.78 ns [7490.83, 7537.37] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/2d/vertices&#95;500&#95;simplices&#95;983&#95;seed&#95;1493be4e9d7a5906&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>7412.89 ns [7399.52, 7426.61] (0.95 confidence)</td>
-<td>7481.82 ns [7474.71, 7490.18] (0.95 confidence)</td>
+<td>7398.82 ns [7385.78, 7411.32] (0.95 confidence)</td>
+<td>7710.9 ns [7650.55, 7799.29] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/3d/vertices&#95;150&#95;simplices&#95;829&#95;seed&#95;a44b52b395a4b44d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>14567.3 ns [14521.5, 14621.5] (0.95 confidence)</td>
-<td>14729.9 ns [14689.9, 14787.7] (0.95 confidence)</td>
+<td>14620.8 ns [14552.5, 14700.4] (0.95 confidence)</td>
+<td>15143.6 ns [15082.8, 15206.8] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/3d/vertices&#95;500&#95;simplices&#95;3052&#95;seed&#95;1493be4f9d7a5907&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>14521.9 ns [14479, 14560.4] (0.95 confidence)</td>
-<td>14646.2 ns [14598.4, 14697.3] (0.95 confidence)</td>
+<td>14483 ns [14428.5, 14533] (0.95 confidence)</td>
+<td>15071.4 ns [15023.9, 15117.8] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/3d/vertices&#95;50&#95;simplices&#95;222&#95;seed&#95;f61fc639dc8c3c19&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>14510 ns [14464.9, 14560.6] (0.95 confidence)</td>
-<td>14743.1 ns [14700.5, 14794.9] (0.95 confidence)</td>
+<td>14566.2 ns [14526.3, 14605.3] (0.95 confidence)</td>
+<td>15218.3 ns [15163, 15277.9] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/4d/vertices&#95;100&#95;simplices&#95;1677&#95;seed&#95;dd618c71b9187830&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.98769e+06 ns [1.98548e+06, 1.98986e+06] (0.95 confidence)</td>
-<td>2.00994e+06 ns [1.99341e+06, 2.02617e+06] (0.95 confidence)</td>
+<td>1.98439e+06 ns [1.98071e+06, 1.98819e+06] (0.95 confidence)</td>
+<td>2.03576e+06 ns [2.0319e+06, 2.03999e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/4d/vertices&#95;50&#95;simplices&#95;626&#95;seed&#95;f61fc63edc8c3c1e&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.96787e+06 ns [1.95757e+06, 1.97716e+06] (0.95 confidence)</td>
-<td>1.96829e+06 ns [1.95338e+06, 1.98289e+06] (0.95 confidence)</td>
+<td>1.96e+06 ns [1.94697e+06, 1.97463e+06] (0.95 confidence)</td>
+<td>2.02676e+06 ns [2.00081e+06, 2.05853e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/5d/vertices&#95;25&#95;simplices&#95;410&#95;seed&#95;63a0e3186e461e08&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>4.69948e+06 ns [4.68479e+06, 4.71854e+06] (0.95 confidence)</td>
-<td>4.66761e+06 ns [4.65878e+06, 4.67599e+06] (0.95 confidence)</td>
+<td>4.77285e+06 ns [4.74467e+06, 4.79882e+06] (0.95 confidence)</td>
+<td>4.82906e+06 ns [4.80623e+06, 4.85173e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/5d/vertices&#95;40&#95;simplices&#95;1208&#95;seed&#95;a86104fee3a3634d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>4.74163e+06 ns [4.73714e+06, 4.74638e+06] (0.95 confidence)</td>
-<td>4.77138e+06 ns [4.74314e+06, 4.80092e+06] (0.95 confidence)</td>
+<td>4.85416e+06 ns [4.83084e+06, 4.87952e+06] (0.95 confidence)</td>
+<td>4.87375e+06 ns [4.85958e+06, 4.88793e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/2d/vertices&#95;100&#95;simplices&#95;187&#95;seed&#95;dd618c77b9187836&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>73613.1 ns [73210.3, 74027.8] (0.95 confidence)</td>
-<td>74342.9 ns [74179.3, 74485.4] (0.95 confidence)</td>
+<td>73882.7 ns [73699.6, 74068.9] (0.95 confidence)</td>
+<td>76547.4 ns [75702, 77660.7] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/2d/vertices&#95;2000&#95;simplices&#95;3978&#95;seed&#95;01acf93075e96412&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>265273 ns [264495, 266061] (0.95 confidence)</td>
-<td>272494 ns [269898, 275492] (0.95 confidence)</td>
+<td>268491 ns [266780, 270672] (0.95 confidence)</td>
+<td>276458 ns [274145, 279685] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/2d/vertices&#95;500&#95;simplices&#95;983&#95;seed&#95;1493be4e9d7a5906&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>121980 ns [121785, 122147] (0.95 confidence)</td>
-<td>123311 ns [123143, 123454] (0.95 confidence)</td>
+<td>123961 ns [123167, 124787] (0.95 confidence)</td>
+<td>125920 ns [125494, 126310] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/3d/vertices&#95;150&#95;simplices&#95;829&#95;seed&#95;a44b52b395a4b44d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>123506 ns [123205, 123763] (0.95 confidence)</td>
-<td>126082 ns [125311, 126746] (0.95 confidence)</td>
+<td>124045 ns [123827, 124332] (0.95 confidence)</td>
+<td>129863 ns [128882, 130850] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/3d/vertices&#95;500&#95;simplices&#95;3052&#95;seed&#95;1493be4f9d7a5907&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>189739 ns [189044, 190508] (0.95 confidence)</td>
-<td>192655 ns [191065, 194239] (0.95 confidence)</td>
+<td>191201 ns [189411, 193110] (0.95 confidence)</td>
+<td>201218 ns [197993, 205126] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/3d/vertices&#95;50&#95;simplices&#95;222&#95;seed&#95;f61fc639dc8c3c19&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>65481.1 ns [65097.5, 65931.5] (0.95 confidence)</td>
-<td>65637.3 ns [65350.3, 65948.9] (0.95 confidence)</td>
+<td>64983.6 ns [64694.3, 65309.3] (0.95 confidence)</td>
+<td>69547.6 ns [68299.2, 71462.6] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/4d/vertices&#95;100&#95;simplices&#95;1677&#95;seed&#95;dd618c71b9187830&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.12567e+07 ns [1.123e+07, 1.12865e+07] (0.95 confidence)</td>
-<td>1.11329e+07 ns [1.11172e+07, 1.11487e+07] (0.95 confidence)</td>
+<td>1.12189e+07 ns [1.12025e+07, 1.12351e+07] (0.95 confidence)</td>
+<td>1.16001e+07 ns [1.1538e+07, 1.16563e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/4d/vertices&#95;50&#95;simplices&#95;626&#95;seed&#95;f61fc63edc8c3c1e&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.11665e+07 ns [1.11061e+07, 1.12343e+07] (0.95 confidence)</td>
-<td>1.11337e+07 ns [1.10646e+07, 1.12065e+07] (0.95 confidence)</td>
+<td>1.12709e+07 ns [1.11852e+07, 1.13586e+07] (0.95 confidence)</td>
+<td>1.14055e+07 ns [1.1377e+07, 1.14328e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/5d/vertices&#95;25&#95;simplices&#95;410&#95;seed&#95;63a0e3186e461e08&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>2.21073e+07 ns [2.19759e+07, 2.22285e+07] (0.95 confidence)</td>
-<td>2.20804e+07 ns [2.20053e+07, 2.21828e+07] (0.95 confidence)</td>
+<td>2.19654e+07 ns [2.19286e+07, 2.20029e+07] (0.95 confidence)</td>
+<td>2.26343e+07 ns [2.25583e+07, 2.27176e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/5d/vertices&#95;40&#95;simplices&#95;1208&#95;seed&#95;a86104fee3a3634d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>3.97055e+07 ns [3.968e+07, 3.97358e+07] (0.95 confidence)</td>
-<td>3.97228e+07 ns [3.9666e+07, 3.97855e+07] (0.95 confidence)</td>
+<td>4.00702e+07 ns [3.99473e+07, 4.02048e+07] (0.95 confidence)</td>
+<td>4.13841e+07 ns [4.10856e+07, 4.17361e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;2d/simplices&#95;226</td>
-<td>126314 ns [123897, 128732] (0.95 confidence)</td>
-<td>119600 ns [118091, 121199] (0.95 confidence)</td>
+<td>115003 ns [113590, 116852] (0.95 confidence)</td>
+<td>118699 ns [118022, 119742] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;3d/simplices&#95;115</td>
-<td>159117 ns [155352, 162915] (0.95 confidence)</td>
-<td>147538 ns [146512, 148848] (0.95 confidence)</td>
+<td>141173 ns [140126, 142660] (0.95 confidence)</td>
+<td>155207 ns [153563, 156859] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;4d/simplices&#95;68</td>
-<td>1.30989e+06 ns [1.28994e+06, 1.33145e+06] (0.95 confidence)</td>
-<td>1.22981e+06 ns [1.22058e+06, 1.23871e+06] (0.95 confidence)</td>
+<td>1.20253e+06 ns [1.19344e+06, 1.21485e+06] (0.95 confidence)</td>
+<td>1.27174e+06 ns [1.26183e+06, 1.28122e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;5d/simplices&#95;20</td>
-<td>520314 ns [515778, 525084] (0.95 confidence)</td>
-<td>464480 ns [460716, 468471] (0.95 confidence)</td>
+<td>455130 ns [452645, 458226] (0.95 confidence)</td>
+<td>483222 ns [480869, 486056] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;2d/simplices&#95;226</td>
-<td>1.40538e+06 ns [1.37784e+06, 1.43629e+06] (0.95 confidence)</td>
-<td>1.33846e+06 ns [1.33577e+06, 1.34118e+06] (0.95 confidence)</td>
+<td>1.32186e+06 ns [1.31451e+06, 1.3356e+06] (0.95 confidence)</td>
+<td>1.32725e+06 ns [1.32312e+06, 1.33212e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;3d/simplices&#95;115</td>
-<td>1.73465e+08 ns [1.71278e+08, 1.75972e+08] (0.95 confidence)</td>
-<td>1.56965e+08 ns [1.56711e+08, 1.57192e+08] (0.95 confidence)</td>
+<td>1.549e+08 ns [1.54525e+08, 1.55339e+08] (0.95 confidence)</td>
+<td>1.59589e+08 ns [1.592e+08, 1.59906e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;4d/simplices&#95;68</td>
-<td>5.15014e+08 ns [5.03077e+08, 5.28087e+08] (0.95 confidence)</td>
-<td>4.58556e+08 ns [4.58251e+08, 4.58872e+08] (0.95 confidence)</td>
+<td>4.6906e+08 ns [4.6741e+08, 4.71092e+08] (0.95 confidence)</td>
+<td>4.71969e+08 ns [4.71084e+08, 4.72921e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;5d/simplices&#95;20</td>
-<td>1.53354e+08 ns [1.52258e+08, 1.5482e+08] (0.95 confidence)</td>
-<td>1.32133e+08 ns [1.3193e+08, 1.32345e+08] (0.95 confidence)</td>
+<td>1.33311e+08 ns [1.33108e+08, 1.33521e+08] (0.95 confidence)</td>
+<td>1.38963e+08 ns [1.36488e+08, 1.4229e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;2d/simplices&#95;226</td>
-<td>1.34486e+06 ns [1.31496e+06, 1.37507e+06] (0.95 confidence)</td>
-<td>1.32524e+06 ns [1.29429e+06, 1.36145e+06] (0.95 confidence)</td>
+<td>1.23762e+06 ns [1.23506e+06, 1.24136e+06] (0.95 confidence)</td>
+<td>1.25076e+06 ns [1.24641e+06, 1.25557e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;3d/simplices&#95;115</td>
-<td>1.72485e+08 ns [1.70033e+08, 1.74893e+08] (0.95 confidence)</td>
-<td>1.57396e+08 ns [1.57121e+08, 1.57628e+08] (0.95 confidence)</td>
+<td>1.54604e+08 ns [1.54401e+08, 1.54873e+08] (0.95 confidence)</td>
+<td>1.59552e+08 ns [1.5926e+08, 1.59807e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;4d/simplices&#95;68</td>
-<td>5.05104e+08 ns [4.95945e+08, 5.15638e+08] (0.95 confidence)</td>
-<td>4.573e+08 ns [4.56928e+08, 4.57639e+08] (0.95 confidence)</td>
+<td>4.6949e+08 ns [4.68395e+08, 4.71262e+08] (0.95 confidence)</td>
+<td>4.72816e+08 ns [4.71484e+08, 4.74132e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;5d/simplices&#95;20</td>
-<td>1.50999e+08 ns [1.48889e+08, 1.52791e+08] (0.95 confidence)</td>
-<td>1.31641e+08 ns [1.31442e+08, 1.31818e+08] (0.95 confidence)</td>
+<td>1.32966e+08 ns [1.32768e+08, 1.33227e+08] (0.95 confidence)</td>
+<td>1.36289e+08 ns [1.3595e+08, 1.36622e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>random/insphere&#95;1000&#95;queries</td>
-<td>435437 ns [433602, 437377] (0.95 confidence)</td>
-<td>416587 ns [415229, 417976] (0.95 confidence)</td>
+<td>414983 ns [413766, 416195] (0.95 confidence)</td>
+<td>425759 ns [424725, 426748] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>random/insphere&#95;distance&#95;1000&#95;queries</td>
-<td>66411.5 ns [66288.2, 66536.9] (0.95 confidence)</td>
-<td>64162.1 ns [63988, 64339.5] (0.95 confidence)</td>
+<td>63190.2 ns [62875, 63503.8] (0.95 confidence)</td>
+<td>65623.2 ns [65453.4, 65795] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>random/insphere&#95;lifted&#95;1000&#95;queries</td>
-<td>431747 ns [430058, 433509] (0.95 confidence)</td>
-<td>414552 ns [413517, 415681] (0.95 confidence)</td>
+<td>415100 ns [413851, 416329] (0.95 confidence)</td>
+<td>421148 ns [419926, 422384] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;2d/tds&#95;new/500</td>
-<td>5.07618e+07 ns [5.034e+07, 5.11476e+07] (0.95 confidence)</td>
-<td>4.61542e+07 ns [4.55714e+07, 4.71861e+07] (0.95 confidence)</td>
+<td>4.58298e+07 ns [4.56359e+07, 4.60524e+07] (0.95 confidence)</td>
+<td>4.58099e+07 ns [4.57014e+07, 4.59412e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;2d/tds&#95;new&#95;adversarial/500</td>
-<td>5.91104e+07 ns [5.77995e+07, 6.01601e+07] (0.95 confidence)</td>
-<td>5.33118e+07 ns [5.32538e+07, 5.33879e+07] (0.95 confidence)</td>
+<td>5.36853e+07 ns [5.36105e+07, 5.37802e+07] (0.95 confidence)</td>
+<td>5.52124e+07 ns [5.45396e+07, 5.60237e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;3d/tds&#95;new/100</td>
-<td>4.13526e+07 ns [4.1008e+07, 4.17056e+07] (0.95 confidence)</td>
-<td>3.75032e+07 ns [3.72446e+07, 3.77972e+07] (0.95 confidence)</td>
+<td>3.69066e+07 ns [3.68702e+07, 3.69438e+07] (0.95 confidence)</td>
+<td>3.75031e+07 ns [3.72991e+07, 3.78407e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;3d/tds&#95;new&#95;adversarial/100</td>
-<td>9.26514e+07 ns [9.18003e+07, 9.34205e+07] (0.95 confidence)</td>
-<td>8.37331e+07 ns [8.35578e+07, 8.39064e+07] (0.95 confidence)</td>
+<td>8.36544e+07 ns [8.35455e+07, 8.37654e+07] (0.95 confidence)</td>
+<td>8.5111e+07 ns [8.49203e+07, 8.53172e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;4d/tds&#95;new/30</td>
-<td>1.04843e+08 ns [1.04138e+08, 1.05692e+08] (0.95 confidence)</td>
-<td>9.58649e+07 ns [9.53988e+07, 9.62441e+07] (0.95 confidence)</td>
+<td>9.27933e+07 ns [9.25165e+07, 9.30309e+07] (0.95 confidence)</td>
+<td>9.69391e+07 ns [9.64397e+07, 9.7463e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;4d/tds&#95;new&#95;adversarial/30</td>
-<td>9.88616e+07 ns [9.81979e+07, 9.96077e+07] (0.95 confidence)</td>
-<td>9.07478e+07 ns [9.03424e+07, 9.11959e+07] (0.95 confidence)</td>
+<td>8.76889e+07 ns [8.74524e+07, 8.79472e+07] (0.95 confidence)</td>
+<td>9.32569e+07 ns [9.26047e+07, 9.39296e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;5d/tds&#95;new/12</td>
-<td>2.28336e+07 ns [2.27616e+07, 2.28976e+07] (0.95 confidence)</td>
-<td>2.13796e+07 ns [2.13205e+07, 2.14496e+07] (0.95 confidence)</td>
+<td>2.03289e+07 ns [2.02847e+07, 2.03842e+07] (0.95 confidence)</td>
+<td>2.20169e+07 ns [2.18847e+07, 2.21549e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;5d/tds&#95;new&#95;adversarial/12</td>
-<td>2.1035e+07 ns [2.08651e+07, 2.12351e+07] (0.95 confidence)</td>
-<td>1.96296e+07 ns [1.95818e+07, 1.96948e+07] (0.95 confidence)</td>
+<td>1.8768e+07 ns [1.8727e+07, 1.88139e+07] (0.95 confidence)</td>
+<td>2.0144e+07 ns [2.00767e+07, 2.02078e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;2d/500</td>
-<td>937961 ns [929713, 946867] (0.95 confidence)</td>
-<td>787728 ns [782790, 793760] (0.95 confidence)</td>
+<td>801130 ns [798392, 804216] (0.95 confidence)</td>
+<td>803256 ns [796832, 810647] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;2d&#95;adversarial/500</td>
-<td>1.27383e+06 ns [1.26082e+06, 1.28809e+06] (0.95 confidence)</td>
-<td>1.09517e+06 ns [1.08947e+06, 1.1021e+06] (0.95 confidence)</td>
+<td>1.11441e+06 ns [1.10652e+06, 1.12334e+06] (0.95 confidence)</td>
+<td>1.10062e+06 ns [1.09588e+06, 1.10648e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;3d/100</td>
-<td>1.29595e+06 ns [1.27925e+06, 1.31348e+06] (0.95 confidence)</td>
-<td>1.20706e+06 ns [1.20013e+06, 1.21811e+06] (0.95 confidence)</td>
+<td>1.09475e+06 ns [1.08545e+06, 1.10593e+06] (0.95 confidence)</td>
+<td>1.26063e+06 ns [1.24818e+06, 1.27497e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;3d&#95;adversarial/100</td>
-<td>2.35112e+06 ns [2.31796e+06, 2.38067e+06] (0.95 confidence)</td>
-<td>2.17505e+06 ns [2.16184e+06, 2.1924e+06] (0.95 confidence)</td>
+<td>2.0728e+06 ns [2.05892e+06, 2.09007e+06] (0.95 confidence)</td>
+<td>2.29704e+06 ns [2.27329e+06, 2.32178e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;4d/30</td>
-<td>4.55223e+06 ns [4.51062e+06, 4.59543e+06] (0.95 confidence)</td>
-<td>4.56482e+06 ns [4.55032e+06, 4.58077e+06] (0.95 confidence)</td>
+<td>3.91667e+06 ns [3.89426e+06, 3.94176e+06] (0.95 confidence)</td>
+<td>4.65163e+06 ns [4.62715e+06, 4.67919e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;4d&#95;adversarial/30</td>
-<td>4.41495e+06 ns [4.3715e+06, 4.45353e+06] (0.95 confidence)</td>
-<td>4.48057e+06 ns [4.43856e+06, 4.52496e+06] (0.95 confidence)</td>
+<td>3.9108e+06 ns [3.89131e+06, 3.93431e+06] (0.95 confidence)</td>
+<td>4.53008e+06 ns [4.49007e+06, 4.57261e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;5d/12</td>
-<td>1.87233e+06 ns [1.85063e+06, 1.892e+06] (0.95 confidence)</td>
-<td>2.10696e+06 ns [2.10038e+06, 2.11512e+06] (0.95 confidence)</td>
+<td>1.64355e+06 ns [1.63576e+06, 1.65299e+06] (0.95 confidence)</td>
+<td>2.22168e+06 ns [2.21012e+06, 2.23297e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;5d&#95;adversarial/12</td>
-<td>1.66132e+06 ns [1.6444e+06, 1.67781e+06] (0.95 confidence)</td>
-<td>1.9127e+06 ns [1.90437e+06, 1.92147e+06] (0.95 confidence)</td>
+<td>1.45774e+06 ns [1.45228e+06, 1.46423e+06] (0.95 confidence)</td>
+<td>2.03222e+06 ns [2.00881e+06, 2.05906e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;2d/500</td>
-<td>933498 ns [924059, 942099] (0.95 confidence)</td>
-<td>789668 ns [784872, 794806] (0.95 confidence)</td>
+<td>811161 ns [804633, 818051] (0.95 confidence)</td>
+<td>807948 ns [805044, 810962] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;2d&#95;adversarial/500</td>
-<td>1.29168e+06 ns [1.27908e+06, 1.30509e+06] (0.95 confidence)</td>
-<td>1.09265e+06 ns [1.08506e+06, 1.10168e+06] (0.95 confidence)</td>
+<td>1.10928e+06 ns [1.10314e+06, 1.11699e+06] (0.95 confidence)</td>
+<td>1.10756e+06 ns [1.10003e+06, 1.11638e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;3d/100</td>
-<td>1.28243e+06 ns [1.27035e+06, 1.29388e+06] (0.95 confidence)</td>
-<td>1.21562e+06 ns [1.20515e+06, 1.22835e+06] (0.95 confidence)</td>
+<td>1.08753e+06 ns [1.08005e+06, 1.09706e+06] (0.95 confidence)</td>
+<td>1.26255e+06 ns [1.25076e+06, 1.27508e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;3d&#95;adversarial/100</td>
-<td>2.37079e+06 ns [2.34554e+06, 2.39358e+06] (0.95 confidence)</td>
-<td>2.21607e+06 ns [2.20143e+06, 2.23212e+06] (0.95 confidence)</td>
+<td>2.09203e+06 ns [2.08352e+06, 2.10219e+06] (0.95 confidence)</td>
+<td>2.21589e+06 ns [2.20568e+06, 2.23e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;4d/30</td>
-<td>4.52679e+06 ns [4.48462e+06, 4.56872e+06] (0.95 confidence)</td>
-<td>4.54118e+06 ns [4.50998e+06, 4.58163e+06] (0.95 confidence)</td>
+<td>3.90339e+06 ns [3.89295e+06, 3.91543e+06] (0.95 confidence)</td>
+<td>4.60834e+06 ns [4.5705e+06, 4.65022e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;4d&#95;adversarial/30</td>
-<td>4.44274e+06 ns [4.40947e+06, 4.47463e+06] (0.95 confidence)</td>
-<td>4.44593e+06 ns [4.43184e+06, 4.45981e+06] (0.95 confidence)</td>
+<td>3.88432e+06 ns [3.86614e+06, 3.90274e+06] (0.95 confidence)</td>
+<td>4.5034e+06 ns [4.47919e+06, 4.53115e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;5d/12</td>
-<td>1.89658e+06 ns [1.87033e+06, 1.9246e+06] (0.95 confidence)</td>
-<td>2.09892e+06 ns [2.0925e+06, 2.10815e+06] (0.95 confidence)</td>
+<td>1.63436e+06 ns [1.62792e+06, 1.64243e+06] (0.95 confidence)</td>
+<td>2.20013e+06 ns [2.18496e+06, 2.21644e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;5d&#95;adversarial/12</td>
-<td>1.64966e+06 ns [1.62644e+06, 1.67146e+06] (0.95 confidence)</td>
-<td>1.91003e+06 ns [1.90026e+06, 1.92146e+06] (0.95 confidence)</td>
+<td>1.46203e+06 ns [1.45489e+06, 1.47004e+06] (0.95 confidence)</td>
+<td>2.05526e+06 ns [2.04179e+06, 2.06787e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;2d/500</td>
-<td>9.17943e+06 ns [9.10385e+06, 9.25028e+06] (0.95 confidence)</td>
-<td>8.23276e+06 ns [8.19904e+06, 8.2817e+06] (0.95 confidence)</td>
+<td>8.08984e+06 ns [8.0598e+06, 8.12096e+06] (0.95 confidence)</td>
+<td>8.26879e+06 ns [8.24496e+06, 8.3039e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;2d&#95;adversarial/500</td>
-<td>5.99543e+07 ns [5.94671e+07, 6.03927e+07] (0.95 confidence)</td>
-<td>4.83265e+07 ns [4.82381e+07, 4.8428e+07] (0.95 confidence)</td>
+<td>5.33314e+07 ns [5.31204e+07, 5.36288e+07] (0.95 confidence)</td>
+<td>4.9046e+07 ns [4.8909e+07, 4.92022e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;3d/100</td>
-<td>9.75962e+08 ns [9.74415e+08, 9.77415e+08] (0.95 confidence)</td>
-<td>8.45087e+08 ns [8.44102e+08, 8.46217e+08] (0.95 confidence)</td>
+<td>8.32432e+08 ns [8.31613e+08, 8.33192e+08] (0.95 confidence)</td>
+<td>8.53956e+08 ns [8.45629e+08, 8.64738e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;3d&#95;adversarial/100</td>
-<td>1.20818e+09 ns [1.20576e+09, 1.21065e+09] (0.95 confidence)</td>
-<td>1.02567e+09 ns [1.02453e+09, 1.02681e+09] (0.95 confidence)</td>
+<td>1.03672e+09 ns [1.03521e+09, 1.03861e+09] (0.95 confidence)</td>
+<td>1.02922e+09 ns [1.02506e+09, 1.03481e+09] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;4d/30</td>
-<td>4.43729e+09 ns [4.43249e+09, 4.44136e+09] (0.95 confidence)</td>
-<td>3.8109e+09 ns [3.80726e+09, 3.81434e+09] (0.95 confidence)</td>
+<td>3.89267e+09 ns [3.88764e+09, 3.89776e+09] (0.95 confidence)</td>
+<td>3.88936e+09 ns [3.88379e+09, 3.89558e+09] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;4d&#95;adversarial/30</td>
-<td>4.61014e+09 ns [4.60603e+09, 4.61368e+09] (0.95 confidence)</td>
-<td>3.97079e+09 ns [3.9667e+09, 3.97554e+09] (0.95 confidence)</td>
+<td>4.01795e+09 ns [4.01429e+09, 4.02161e+09] (0.95 confidence)</td>
+<td>3.95997e+09 ns [3.95652e+09, 3.96281e+09] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;5d/12</td>
-<td>9.9855e+08 ns [9.96619e+08, 1.00054e+09] (0.95 confidence)</td>
-<td>8.55873e+08 ns [8.54942e+08, 8.56853e+08] (0.95 confidence)</td>
+<td>8.68036e+08 ns [8.67052e+08, 8.6905e+08] (0.95 confidence)</td>
+<td>8.90802e+08 ns [8.88827e+08, 8.93075e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;5d&#95;adversarial/12</td>
-<td>9.21654e+08 ns [9.08792e+08, 9.32536e+08] (0.95 confidence)</td>
-<td>8.01478e+08 ns [8.00785e+08, 8.02142e+08] (0.95 confidence)</td>
+<td>8.12403e+08 ns [8.10949e+08, 8.14223e+08] (0.95 confidence)</td>
+<td>8.27638e+08 ns [8.26199e+08, 8.2914e+08] (0.95 confidence)</td>
 </tr>
 </tbody>
 </table>
@@ -903,868 +903,868 @@ Intervals are marginal timing intervals. No significance or ratio interval is in
 <tbody>
 <tr>
 <td>2d/insphere</td>
-<td>51.7748 ns [51.1807, 53.0187] (0.95 confidence)</td>
-<td>49.9235 ns [49.7377, 50.1051] (0.95 confidence)</td>
+<td>50.1092 ns [49.848, 50.5596] (0.95 confidence)</td>
+<td>49.7992 ns [49.5648, 49.944] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>2d/insphere&#95;distance</td>
-<td>13.7663 ns [13.7436, 13.8066] (0.95 confidence)</td>
-<td>13.3699 ns [13.3531, 13.3809] (0.95 confidence)</td>
+<td>13.4401 ns [13.4206, 13.4698] (0.95 confidence)</td>
+<td>13.726 ns [13.6908, 13.7554] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>2d/insphere&#95;lifted</td>
-<td>52.4449 ns [52.0211, 52.783] (0.95 confidence)</td>
-<td>50.01 ns [49.8113, 50.2562] (0.95 confidence)</td>
+<td>49.2497 ns [49.0745, 49.592] (0.95 confidence)</td>
+<td>52.2912 ns [51.4278, 52.7419] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>3d/insphere</td>
-<td>111.406 ns [110.614, 112.352] (0.95 confidence)</td>
-<td>102.609 ns [102.46, 102.873] (0.95 confidence)</td>
+<td>106.658 ns [106.221, 107.189] (0.95 confidence)</td>
+<td>111.255 ns [110.496, 112.198] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>3d/insphere&#95;distance</td>
-<td>33.7179 ns [33.4594, 35.7227] (0.95 confidence)</td>
-<td>32.5516 ns [32.5221, 32.6425] (0.95 confidence)</td>
+<td>32.4923 ns [32.3933, 32.6123] (0.95 confidence)</td>
+<td>33.1128 ns [33.0555, 33.2232] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>3d/insphere&#95;lifted</td>
-<td>110.859 ns [109.504, 111.684] (0.95 confidence)</td>
-<td>103.279 ns [103.01, 103.84] (0.95 confidence)</td>
+<td>104.815 ns [104.6, 105.321] (0.95 confidence)</td>
+<td>106.862 ns [106.441, 107.378] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>4d/insphere</td>
-<td>774.55 ns [768.131, 777.224] (0.95 confidence)</td>
-<td>743.603 ns [741.363, 746.344] (0.95 confidence)</td>
+<td>747.004 ns [743.918, 749.977] (0.95 confidence)</td>
+<td>759.223 ns [757.018, 760.743] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>4d/insphere&#95;distance</td>
-<td>53.6494 ns [52.7203, 53.9089] (0.95 confidence)</td>
-<td>53.0602 ns [52.965, 53.1702] (0.95 confidence)</td>
+<td>50.8489 ns [50.7376, 50.9947] (0.95 confidence)</td>
+<td>54.5802 ns [54.4765, 54.6172] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>4d/insphere&#95;lifted</td>
-<td>775.09 ns [773.22, 777.495] (0.95 confidence)</td>
-<td>731.824 ns [730.405, 734.87] (0.95 confidence)</td>
+<td>753.788 ns [750.524, 758.167] (0.95 confidence)</td>
+<td>759.285 ns [756.423, 763.036] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>5d/insphere</td>
-<td>1391.42 ns [1385.28, 1399.42] (0.95 confidence)</td>
-<td>1283.9 ns [1278.86, 1286.81] (0.95 confidence)</td>
+<td>1385.45 ns [1382.1, 1394.56] (0.95 confidence)</td>
+<td>1286.71 ns [1279.96, 1290.72] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>5d/insphere&#95;distance</td>
-<td>88.3021 ns [87.9863, 88.7915] (0.95 confidence)</td>
-<td>86.6227 ns [86.3007, 86.8063] (0.95 confidence)</td>
+<td>87.3461 ns [87.0225, 87.7041] (0.95 confidence)</td>
+<td>86.7869 ns [86.5354, 87.0731] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>5d/insphere&#95;lifted</td>
-<td>1397.81 ns [1393.68, 1403.95] (0.95 confidence)</td>
-<td>1273.65 ns [1270.41, 1277.78] (0.95 confidence)</td>
+<td>1376.03 ns [1369.93, 1379.99] (0.95 confidence)</td>
+<td>1302.44 ns [1299.59, 1309.34] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k1&#95;roundtrip</td>
-<td>60628.4 ns [59931.6, 60989.1] (0.95 confidence)</td>
-<td>54790.3 ns [54372, 55359.3] (0.95 confidence)</td>
+<td>54000.8 ns [53909.2, 54035.1] (0.95 confidence)</td>
+<td>56204.2 ns [56072.9, 56509.9] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k1&#95;roundtrip&#95;adversarial</td>
-<td>182570 ns [180316, 183172] (0.95 confidence)</td>
-<td>162514 ns [162247, 162785] (0.95 confidence)</td>
+<td>162505 ns [162330, 162869] (0.95 confidence)</td>
+<td>166362 ns [166098, 166712] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k2&#95;edge&#95;flip</td>
-<td>29692.2 ns [29346.3, 29975.7] (0.95 confidence)</td>
-<td>26757.7 ns [26738.4, 26878.6] (0.95 confidence)</td>
+<td>26249.9 ns [26232.6, 26287.1] (0.95 confidence)</td>
+<td>27565.7 ns [27524.3, 27644.7] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k2&#95;edge&#95;flip&#95;adversarial</td>
-<td>113210 ns [112295, 113807] (0.95 confidence)</td>
-<td>101725 ns [101509, 101954] (0.95 confidence)</td>
+<td>99726.9 ns [99343, 104002] (0.95 confidence)</td>
+<td>102897 ns [102472, 103421] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k1&#95;roundtrip</td>
-<td>2.65225e+06 ns [2.63445e+06, 2.66358e+06] (0.95 confidence)</td>
-<td>2.35554e+06 ns [2.34226e+06, 2.36897e+06] (0.95 confidence)</td>
+<td>2.34166e+06 ns [2.3307e+06, 2.34545e+06] (0.95 confidence)</td>
+<td>2.41318e+06 ns [2.41013e+06, 2.41962e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k1&#95;roundtrip&#95;adversarial</td>
-<td>2.14804e+06 ns [2.04398e+06, 2.17658e+06] (0.95 confidence)</td>
-<td>1.92417e+06 ns [1.91966e+06, 1.92508e+06] (0.95 confidence)</td>
+<td>1.95074e+06 ns [1.94268e+06, 1.96614e+06] (0.95 confidence)</td>
+<td>2.00787e+06 ns [2.00469e+06, 2.00924e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k2&#95;roundtrip</td>
-<td>7.43517e+06 ns [7.41022e+06, 7.53863e+06] (0.95 confidence)</td>
-<td>6.52305e+06 ns [6.51504e+06, 6.53939e+06] (0.95 confidence)</td>
+<td>6.48654e+06 ns [6.4556e+06, 6.71931e+06] (0.95 confidence)</td>
+<td>6.63016e+06 ns [6.61571e+06, 6.64311e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k2&#95;roundtrip&#95;adversarial</td>
-<td>6.22037e+06 ns [6.17177e+06, 6.55844e+06] (0.95 confidence)</td>
-<td>5.8689e+06 ns [5.85116e+06, 5.87981e+06] (0.95 confidence)</td>
+<td>5.81532e+06 ns [5.80934e+06, 5.8581e+06] (0.95 confidence)</td>
+<td>6.0278e+06 ns [6.01418e+06, 6.03928e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k3&#95;forward</td>
-<td>1.53579e+06 ns [1.51615e+06, 1.56131e+06] (0.95 confidence)</td>
-<td>1.37717e+06 ns [1.37257e+06, 1.37863e+06] (0.95 confidence)</td>
+<td>1.35868e+06 ns [1.35581e+06, 1.36452e+06] (0.95 confidence)</td>
+<td>1.39463e+06 ns [1.39224e+06, 1.39778e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k3&#95;forward&#95;adversarial</td>
-<td>2.12092e+06 ns [2.06924e+06, 2.13984e+06] (0.95 confidence)</td>
-<td>1.8233e+06 ns [1.82213e+06, 1.82906e+06] (0.95 confidence)</td>
+<td>1.88336e+06 ns [1.87501e+06, 1.89621e+06] (0.95 confidence)</td>
+<td>1.87019e+06 ns [1.86514e+06, 1.87771e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k1&#95;roundtrip</td>
-<td>4.30895e+07 ns [4.15037e+07, 4.33851e+07] (0.95 confidence)</td>
-<td>3.90077e+07 ns [3.8922e+07, 3.91568e+07] (0.95 confidence)</td>
+<td>3.90274e+07 ns [3.88461e+07, 3.94982e+07] (0.95 confidence)</td>
+<td>3.95682e+07 ns [3.94503e+07, 3.97138e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k1&#95;roundtrip&#95;adversarial</td>
-<td>3.58876e+07 ns [3.57422e+07, 3.64171e+07] (0.95 confidence)</td>
-<td>3.31256e+07 ns [3.30088e+07, 3.31995e+07] (0.95 confidence)</td>
+<td>3.31514e+07 ns [3.29728e+07, 3.33958e+07] (0.95 confidence)</td>
+<td>3.33688e+07 ns [3.33203e+07, 3.34525e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k2&#95;roundtrip</td>
-<td>5.8635e+07 ns [5.81687e+07, 5.93776e+07] (0.95 confidence)</td>
-<td>5.5873e+07 ns [5.57893e+07, 5.60143e+07] (0.95 confidence)</td>
+<td>5.61352e+07 ns [5.58892e+07, 5.64552e+07] (0.95 confidence)</td>
+<td>5.63513e+07 ns [5.62663e+07, 5.64285e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k2&#95;roundtrip&#95;adversarial</td>
-<td>2.05886e+08 ns [2.04546e+08, 2.07089e+08] (0.95 confidence)</td>
-<td>1.93729e+08 ns [1.93399e+08, 1.93944e+08] (0.95 confidence)</td>
+<td>1.99368e+08 ns [1.98132e+08, 2.02114e+08] (0.95 confidence)</td>
+<td>1.98789e+08 ns [1.98305e+08, 1.991e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k3&#95;roundtrip</td>
-<td>6.7128e+07 ns [6.71086e+07, 6.73037e+07] (0.95 confidence)</td>
-<td>6.41335e+07 ns [6.40053e+07, 6.42357e+07] (0.95 confidence)</td>
+<td>6.55242e+07 ns [6.48063e+07, 6.62473e+07] (0.95 confidence)</td>
+<td>6.50276e+07 ns [6.48731e+07, 6.53269e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k3&#95;roundtrip&#95;adversarial</td>
-<td>3.56616e+07 ns [3.5332e+07, 3.63135e+07] (0.95 confidence)</td>
-<td>3.47598e+07 ns [3.47219e+07, 3.48371e+07] (0.95 confidence)</td>
+<td>3.52332e+07 ns [3.50915e+07, 3.53577e+07] (0.95 confidence)</td>
+<td>3.51389e+07 ns [3.50783e+07, 3.52025e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k1&#95;roundtrip</td>
-<td>1.61923e+08 ns [1.60646e+08, 1.63972e+08] (0.95 confidence)</td>
-<td>1.56636e+08 ns [1.56479e+08, 1.56925e+08] (0.95 confidence)</td>
+<td>1.56021e+08 ns [1.5524e+08, 1.56609e+08] (0.95 confidence)</td>
+<td>1.59211e+08 ns [1.58697e+08, 1.5958e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k1&#95;roundtrip&#95;adversarial</td>
-<td>1.68796e+08 ns [1.67823e+08, 1.69662e+08] (0.95 confidence)</td>
-<td>1.5931e+08 ns [1.59126e+08, 1.59757e+08] (0.95 confidence)</td>
+<td>1.60523e+08 ns [1.59329e+08, 1.62374e+08] (0.95 confidence)</td>
+<td>1.62075e+08 ns [1.61284e+08, 1.62754e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k2&#95;roundtrip</td>
-<td>337033 ns [336448, 337715] (0.95 confidence)</td>
-<td>325822 ns [325428, 326376] (0.95 confidence)</td>
+<td>329262 ns [328432, 329725] (0.95 confidence)</td>
+<td>329144 ns [328738, 329472] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k2&#95;roundtrip&#95;adversarial</td>
-<td>364046 ns [363501, 364402] (0.95 confidence)</td>
-<td>352961 ns [351903, 354672] (0.95 confidence)</td>
+<td>351655 ns [351125, 353596] (0.95 confidence)</td>
+<td>355912 ns [355447, 356975] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k3&#95;roundtrip</td>
-<td>3.42169e+08 ns [3.40016e+08, 3.46268e+08] (0.95 confidence)</td>
-<td>3.25718e+08 ns [3.25276e+08, 3.26482e+08] (0.95 confidence)</td>
+<td>3.25946e+08 ns [3.25327e+08, 3.2806e+08] (0.95 confidence)</td>
+<td>3.3058e+08 ns [3.29996e+08, 3.31248e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k3&#95;roundtrip&#95;adversarial</td>
-<td>9.37764e+08 ns [9.33774e+08, 9.37918e+08] (0.95 confidence)</td>
-<td>8.62429e+08 ns [8.60951e+08, 8.64249e+08] (0.95 confidence)</td>
+<td>9.10817e+08 ns [9.05801e+08, 9.13939e+08] (0.95 confidence)</td>
+<td>8.80643e+08 ns [8.79082e+08, 8.87402e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;2d/500</td>
-<td>231563 ns [227566, 234936] (0.95 confidence)</td>
-<td>205181 ns [204705, 205512] (0.95 confidence)</td>
+<td>209562 ns [209034, 210230] (0.95 confidence)</td>
+<td>211221 ns [210268, 212175] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;2d&#95;adversarial/500</td>
-<td>230098 ns [226984, 234447] (0.95 confidence)</td>
-<td>205598 ns [204872, 206489] (0.95 confidence)</td>
+<td>209513 ns [209181, 209774] (0.95 confidence)</td>
+<td>210209 ns [209479, 211489] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;3d/100</td>
-<td>183885 ns [181766, 187026] (0.95 confidence)</td>
-<td>165447 ns [165297, 165660] (0.95 confidence)</td>
+<td>166076 ns [165838, 166377] (0.95 confidence)</td>
+<td>167047 ns [166601, 167730] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;3d&#95;adversarial/100</td>
-<td>188481 ns [185438, 189566] (0.95 confidence)</td>
-<td>167658 ns [167484, 168327] (0.95 confidence)</td>
+<td>168031 ns [167794, 168426] (0.95 confidence)</td>
+<td>168502 ns [167967, 169046] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;4d/30</td>
-<td>146659 ns [143943, 148314] (0.95 confidence)</td>
-<td>132442 ns [131931, 133244] (0.95 confidence)</td>
+<td>131569 ns [131126, 131936] (0.95 confidence)</td>
+<td>137524 ns [137215, 138533] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;4d&#95;adversarial/30</td>
-<td>144940 ns [143036, 146093] (0.95 confidence)</td>
-<td>131580 ns [131376, 132113] (0.95 confidence)</td>
+<td>131032 ns [130833, 131317] (0.95 confidence)</td>
+<td>134701 ns [133737, 135556] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;5d/12</td>
-<td>40308.5 ns [39850.9, 40789.5] (0.95 confidence)</td>
-<td>37292.2 ns [37126.9, 37481.8] (0.95 confidence)</td>
+<td>36654.2 ns [36470.3, 36765.5] (0.95 confidence)</td>
+<td>37389.5 ns [37223.5, 37551.3] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;5d&#95;adversarial/12</td>
-<td>39821.9 ns [39109.8, 40183.7] (0.95 confidence)</td>
-<td>36257.7 ns [36180.4, 36354.4] (0.95 confidence)</td>
+<td>35795.4 ns [35701.2, 35822.3] (0.95 confidence)</td>
+<td>37132.8 ns [36604.9, 37270.3] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>circumcenter/solve&#95;path/near&#95;singular&#95;exact&#95;fallback&#95;3d</td>
-<td>17134.3 ns [17083, 17190.5] (0.95 confidence)</td>
-<td>17180.1 ns [17156.4, 17220.7] (0.95 confidence)</td>
+<td>17640.3 ns [17580.6, 17731.2] (0.95 confidence)</td>
+<td>17613.1 ns [17600.3, 17640.5] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>circumcenter/solve&#95;path/regular&#95;lu&#95;3d</td>
-<td>23.0111 ns [22.9801, 23.0442] (0.95 confidence)</td>
-<td>23.3084 ns [23.2922, 23.3385] (0.95 confidence)</td>
+<td>22.9798 ns [22.9558, 23.0117] (0.95 confidence)</td>
+<td>23.7081 ns [23.6859, 23.7351] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;2d/500</td>
-<td>377227 ns [372810, 379671] (0.95 confidence)</td>
-<td>387928 ns [387484, 388440] (0.95 confidence)</td>
+<td>342006 ns [340284, 346989] (0.95 confidence)</td>
+<td>391106 ns [390514, 391997] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;2d&#95;adversarial/500</td>
-<td>367240 ns [361506, 372793] (0.95 confidence)</td>
-<td>381857 ns [381388, 382561] (0.95 confidence)</td>
+<td>332161 ns [331937, 332384] (0.95 confidence)</td>
+<td>389051 ns [388532, 390267] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;3d/100</td>
-<td>305217 ns [300781, 308654] (0.95 confidence)</td>
-<td>275540 ns [275322, 275864] (0.95 confidence)</td>
+<td>275635 ns [275398, 275863] (0.95 confidence)</td>
+<td>278225 ns [276392, 279325] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;3d&#95;adversarial/100</td>
-<td>4.43733e+06 ns [4.35267e+06, 4.50233e+06] (0.95 confidence)</td>
-<td>3.96605e+06 ns [3.95796e+06, 3.98308e+06] (0.95 confidence)</td>
+<td>3.99637e+06 ns [3.9847e+06, 4.00945e+06] (0.95 confidence)</td>
+<td>4.03778e+06 ns [4.02506e+06, 4.04675e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;4d/30</td>
-<td>9.51842e+06 ns [9.46772e+06, 9.71907e+06] (0.95 confidence)</td>
-<td>8.68864e+06 ns [8.68008e+06, 8.72138e+06] (0.95 confidence)</td>
+<td>8.74927e+06 ns [8.70822e+06, 8.78023e+06] (0.95 confidence)</td>
+<td>8.94034e+06 ns [8.91084e+06, 8.97114e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;4d&#95;adversarial/30</td>
-<td>7.69513e+06 ns [7.5749e+06, 7.72141e+06] (0.95 confidence)</td>
-<td>7.00561e+06 ns [6.97487e+06, 7.03969e+06] (0.95 confidence)</td>
+<td>6.9623e+06 ns [6.94382e+06, 7.04273e+06] (0.95 confidence)</td>
+<td>7.0671e+06 ns [7.0428e+06, 7.08885e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;5d/12</td>
-<td>3.37854e+06 ns [3.34432e+06, 3.4578e+06] (0.95 confidence)</td>
-<td>3.02379e+06 ns [3.01774e+06, 3.03165e+06] (0.95 confidence)</td>
+<td>3.06658e+06 ns [3.05793e+06, 3.08456e+06] (0.95 confidence)</td>
+<td>3.0662e+06 ns [3.05676e+06, 3.07035e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;5d&#95;adversarial/12</td>
-<td>2.90952e+06 ns [2.85553e+06, 2.94804e+06] (0.95 confidence)</td>
-<td>2.65185e+06 ns [2.64796e+06, 2.65555e+06] (0.95 confidence)</td>
+<td>2.63396e+06 ns [2.62985e+06, 2.63979e+06] (0.95 confidence)</td>
+<td>2.74079e+06 ns [2.69681e+06, 2.75869e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;nearest&#95;visible&#95;facet&#95;3d/100</td>
-<td>1259.13 ns [1253.45, 1276.86] (0.95 confidence)</td>
-<td>1145.81 ns [1143.66, 1150.01] (0.95 confidence)</td>
+<td>1137.03 ns [1128.88, 1142.16] (0.95 confidence)</td>
+<td>1147.85 ns [1141.34, 1157.37] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;nearest&#95;visible&#95;facet&#95;3d&#95;adversarial/100</td>
-<td>45544.2 ns [45285.3, 45960.7] (0.95 confidence)</td>
-<td>41016.7 ns [40928.4, 41133.3] (0.95 confidence)</td>
+<td>40780.6 ns [40718, 41006.2] (0.95 confidence)</td>
+<td>40876 ns [40835.4, 41076.6] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;visible&#95;facets&#95;3d/100</td>
-<td>1370.44 ns [1335.09, 1400.4] (0.95 confidence)</td>
-<td>1208.21 ns [1201.75, 1214.69] (0.95 confidence)</td>
+<td>1201.26 ns [1199.6, 1204.63] (0.95 confidence)</td>
+<td>1218.89 ns [1212.32, 1229.78] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;visible&#95;facets&#95;3d&#95;adversarial/100</td>
-<td>45988.3 ns [45118.7, 46323.5] (0.95 confidence)</td>
-<td>40748.7 ns [40672.2, 40822.9] (0.95 confidence)</td>
+<td>40899.2 ns [40825.6, 41050.1] (0.95 confidence)</td>
+<td>41117.1 ns [40947.5, 41210.7] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/is&#95;point&#95;outside&#95;3d/100</td>
-<td>104.446 ns [103.145, 105.821] (0.95 confidence)</td>
-<td>95.3838 ns [95.3453, 95.4939] (0.95 confidence)</td>
+<td>94.5441 ns [94.463, 94.6819] (0.95 confidence)</td>
+<td>95.7865 ns [95.6158, 96.0063] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/is&#95;point&#95;outside&#95;3d&#95;adversarial/100</td>
-<td>852.119 ns [846.633, 861.099] (0.95 confidence)</td>
-<td>765.594 ns [764.806, 767.807] (0.95 confidence)</td>
+<td>769.964 ns [766.355, 773.105] (0.95 confidence)</td>
+<td>779.861 ns [777.258, 781.948] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/boundary&#95;point&#95;distance</td>
-<td>13.6074 ns [13.5739, 13.6577] (0.95 confidence)</td>
-<td>13.4417 ns [13.3934, 13.4663] (0.95 confidence)</td>
+<td>13.5288 ns [13.51, 13.5461] (0.95 confidence)</td>
+<td>13.4062 ns [13.3819, 13.4332] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/boundary&#95;point&#95;insphere</td>
-<td>0.824134 ns [0.81879, 0.829862] (0.95 confidence)</td>
-<td>0.812233 ns [0.810711, 0.815776] (0.95 confidence)</td>
+<td>0.834018 ns [0.829442, 0.840486] (0.95 confidence)</td>
+<td>0.824192 ns [0.820206, 0.828035] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/boundary&#95;point&#95;lifted</td>
-<td>978.418 ns [974.007, 982.54] (0.95 confidence)</td>
-<td>958.188 ns [956.676, 960.844] (0.95 confidence)</td>
+<td>971.276 ns [968.414, 973.27] (0.95 confidence)</td>
+<td>978.066 ns [975.719, 979.711] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/far&#95;point&#95;distance</td>
-<td>14.0628 ns [14.0356, 14.0888] (0.95 confidence)</td>
-<td>13.4314 ns [13.375, 13.4565] (0.95 confidence)</td>
+<td>13.5336 ns [13.472, 13.562] (0.95 confidence)</td>
+<td>13.6807 ns [13.6655, 13.6952] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/far&#95;point&#95;insphere</td>
-<td>51.551 ns [51.1163, 51.9971] (0.95 confidence)</td>
-<td>49.8199 ns [49.6088, 50.1115] (0.95 confidence)</td>
+<td>48.7027 ns [48.5061, 49.2727] (0.95 confidence)</td>
+<td>50.4632 ns [50.1711, 50.9138] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/far&#95;point&#95;lifted</td>
-<td>51.0153 ns [50.5571, 51.6818] (0.95 confidence)</td>
-<td>49.8813 ns [49.6163, 50.1134] (0.95 confidence)</td>
+<td>50.3157 ns [50.0255, 50.8672] (0.95 confidence)</td>
+<td>50.2393 ns [49.9158, 50.6124] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/near&#95;boundary&#95;distance</td>
-<td>14.215 ns [14.1234, 14.2452] (0.95 confidence)</td>
-<td>13.5542 ns [13.5239, 13.5828] (0.95 confidence)</td>
+<td>13.7547 ns [13.7128, 13.8018] (0.95 confidence)</td>
+<td>13.863 ns [13.8355, 13.8754] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/near&#95;boundary&#95;insphere</td>
-<td>49.0638 ns [48.8343, 49.2938] (0.95 confidence)</td>
-<td>47.5333 ns [47.2916, 47.9295] (0.95 confidence)</td>
+<td>46.7575 ns [46.4319, 47.0373] (0.95 confidence)</td>
+<td>47.9387 ns [47.3356, 48.7013] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/near&#95;boundary&#95;lifted</td>
-<td>48.5003 ns [48.276, 48.9281] (0.95 confidence)</td>
-<td>46.5847 ns [46.4311, 46.778] (0.95 confidence)</td>
+<td>46.9163 ns [46.674, 47.2773] (0.95 confidence)</td>
+<td>47.1651 ns [46.9816, 47.4493] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/boundary&#95;point&#95;distance</td>
-<td>32.6711 ns [32.6236, 32.7192] (0.95 confidence)</td>
-<td>32.6806 ns [32.5825, 32.7785] (0.95 confidence)</td>
+<td>32.7802 ns [32.6747, 32.8726] (0.95 confidence)</td>
+<td>32.7567 ns [32.7287, 32.8127] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/boundary&#95;point&#95;insphere</td>
-<td>1.20422 ns [1.20256, 1.20687] (0.95 confidence)</td>
-<td>1.1763 ns [1.17406, 1.17755] (0.95 confidence)</td>
+<td>1.20305 ns [1.19205, 1.2131] (0.95 confidence)</td>
+<td>1.18514 ns [1.18415, 1.18685] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/boundary&#95;point&#95;lifted</td>
-<td>1805.79 ns [1797.53, 1813.08] (0.95 confidence)</td>
-<td>1755.5 ns [1750.87, 1759.39] (0.95 confidence)</td>
+<td>1743.94 ns [1741.74, 1747.78] (0.95 confidence)</td>
+<td>1776.77 ns [1775.6, 1778.42] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/far&#95;point&#95;distance</td>
-<td>32.8737 ns [32.795, 33.1024] (0.95 confidence)</td>
-<td>32.2929 ns [32.2159, 32.3814] (0.95 confidence)</td>
+<td>32.9444 ns [32.7991, 33.0584] (0.95 confidence)</td>
+<td>33.055 ns [32.9826, 33.1455] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/far&#95;point&#95;insphere</td>
-<td>110.546 ns [110.134, 110.96] (0.95 confidence)</td>
-<td>104.529 ns [104.253, 104.762] (0.95 confidence)</td>
+<td>106.896 ns [106.396, 107.985] (0.95 confidence)</td>
+<td>108.06 ns [107.29, 108.514] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/far&#95;point&#95;lifted</td>
-<td>110.058 ns [109.305, 111.453] (0.95 confidence)</td>
-<td>103.761 ns [103.522, 103.892] (0.95 confidence)</td>
+<td>110.883 ns [109.859, 111.96] (0.95 confidence)</td>
+<td>111.93 ns [111.072, 112.671] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/near&#95;boundary&#95;distance</td>
-<td>33.0942 ns [32.9649, 33.2967] (0.95 confidence)</td>
-<td>32.6113 ns [32.5156, 32.6664] (0.95 confidence)</td>
+<td>32.5457 ns [32.4897, 32.6581] (0.95 confidence)</td>
+<td>32.6778 ns [32.5913, 32.7874] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/near&#95;boundary&#95;insphere</td>
-<td>101.987 ns [100.404, 103.556] (0.95 confidence)</td>
-<td>93.017 ns [92.7146, 93.7508] (0.95 confidence)</td>
+<td>94.6386 ns [94.2886, 94.8593] (0.95 confidence)</td>
+<td>91.7483 ns [91.4309, 92.275] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/near&#95;boundary&#95;lifted</td>
-<td>99.7627 ns [99.1531, 101.038] (0.95 confidence)</td>
-<td>92.721 ns [92.3883, 93.4807] (0.95 confidence)</td>
+<td>94.4608 ns [94.2695, 94.7991] (0.95 confidence)</td>
+<td>91.1181 ns [90.8352, 91.4838] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/boundary&#95;point&#95;distance</td>
-<td>51.6762 ns [51.5706, 51.8019] (0.95 confidence)</td>
-<td>53.2911 ns [53.2456, 53.3341] (0.95 confidence)</td>
+<td>50.9147 ns [50.8632, 51.0103] (0.95 confidence)</td>
+<td>54.5232 ns [54.426, 54.7848] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/boundary&#95;point&#95;insphere</td>
-<td>1.64015 ns [1.61877, 1.65124] (0.95 confidence)</td>
-<td>1.61005 ns [1.58204, 1.62364] (0.95 confidence)</td>
+<td>1.59133 ns [1.56825, 1.63252] (0.95 confidence)</td>
+<td>1.62258 ns [1.59762, 1.63584] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/boundary&#95;point&#95;lifted</td>
-<td>3762.07 ns [3756.54, 3767.67] (0.95 confidence)</td>
-<td>3733.27 ns [3722.01, 3744.7] (0.95 confidence)</td>
+<td>3661.35 ns [3644.14, 3669.88] (0.95 confidence)</td>
+<td>3743.3 ns [3737.16, 3751.01] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/far&#95;point&#95;distance</td>
-<td>56.7716 ns [55.7843, 57.2835] (0.95 confidence)</td>
-<td>53.3451 ns [53.2751, 53.4279] (0.95 confidence)</td>
+<td>50.9457 ns [50.7928, 51.1858] (0.95 confidence)</td>
+<td>53.785 ns [53.6993, 53.8672] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/far&#95;point&#95;insphere</td>
-<td>767.736 ns [763.09, 772.269] (0.95 confidence)</td>
-<td>733.482 ns [731.428, 734.252] (0.95 confidence)</td>
+<td>739.458 ns [736.823, 743.367] (0.95 confidence)</td>
+<td>734.974 ns [734.041, 736.579] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/far&#95;point&#95;lifted</td>
-<td>771.507 ns [769.149, 774.422] (0.95 confidence)</td>
-<td>729.362 ns [727.624, 732.282] (0.95 confidence)</td>
+<td>750.996 ns [748.18, 754.36] (0.95 confidence)</td>
+<td>735.177 ns [733.162, 738.653] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/near&#95;boundary&#95;distance</td>
-<td>52.1812 ns [51.9926, 52.3115] (0.95 confidence)</td>
-<td>53.7404 ns [53.5688, 53.8779] (0.95 confidence)</td>
+<td>52.8975 ns [52.7226, 53.0971] (0.95 confidence)</td>
+<td>53.76 ns [53.6802, 53.8752] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/near&#95;boundary&#95;insphere</td>
-<td>760.567 ns [754.825, 763.27] (0.95 confidence)</td>
-<td>715.97 ns [714.725, 717.405] (0.95 confidence)</td>
+<td>767.016 ns [762.379, 770.426] (0.95 confidence)</td>
+<td>738.435 ns [735.268, 740.814] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/near&#95;boundary&#95;lifted</td>
-<td>752.711 ns [750.584, 755.935] (0.95 confidence)</td>
-<td>715.2 ns [713.209, 718.434] (0.95 confidence)</td>
+<td>740.084 ns [734.833, 742.987] (0.95 confidence)</td>
+<td>731.9 ns [730.117, 733.995] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/boundary&#95;point&#95;distance</td>
-<td>88.1913 ns [87.9182, 89.0996] (0.95 confidence)</td>
-<td>86.7508 ns [86.5302, 87.0497] (0.95 confidence)</td>
+<td>87.3195 ns [87.0258, 87.6664] (0.95 confidence)</td>
+<td>87.2981 ns [86.9738, 87.5919] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/boundary&#95;point&#95;insphere</td>
-<td>1.70688 ns [1.69987, 1.71275] (0.95 confidence)</td>
-<td>1.67872 ns [1.67833, 1.67915] (0.95 confidence)</td>
+<td>1.6864 ns [1.68458, 1.68851] (0.95 confidence)</td>
+<td>1.68596 ns [1.68471, 1.68775] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/boundary&#95;point&#95;lifted</td>
-<td>5949.32 ns [5929.47, 5963.23] (0.95 confidence)</td>
-<td>5818.7 ns [5805.94, 5825] (0.95 confidence)</td>
+<td>5994 ns [5978.03, 6007.1] (0.95 confidence)</td>
+<td>5866.53 ns [5853.3, 5878.73] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/far&#95;point&#95;distance</td>
-<td>87.9912 ns [87.835, 88.4974] (0.95 confidence)</td>
-<td>86.6725 ns [86.4176, 86.8682] (0.95 confidence)</td>
+<td>87.9312 ns [87.578, 88.4201] (0.95 confidence)</td>
+<td>86.8675 ns [86.5583, 87.3029] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/far&#95;point&#95;insphere</td>
-<td>1550.4 ns [1544.74, 1554.07] (0.95 confidence)</td>
-<td>1262.79 ns [1260.3, 1268.79] (0.95 confidence)</td>
+<td>1362.44 ns [1360.16, 1364.8] (0.95 confidence)</td>
+<td>1299.78 ns [1294.16, 1305.41] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/far&#95;point&#95;lifted</td>
-<td>1359.74 ns [1356.23, 1362.69] (0.95 confidence)</td>
-<td>1273.57 ns [1268.68, 1276.79] (0.95 confidence)</td>
+<td>1342.84 ns [1339.3, 1346.42] (0.95 confidence)</td>
+<td>1283.44 ns [1278, 1291.41] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/near&#95;boundary&#95;distance</td>
-<td>87.1071 ns [87.0047, 87.2501] (0.95 confidence)</td>
-<td>86.2855 ns [86.0404, 86.6116] (0.95 confidence)</td>
+<td>88.1716 ns [87.862, 88.6902] (0.95 confidence)</td>
+<td>88.0049 ns [87.48, 88.4176] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/near&#95;boundary&#95;insphere</td>
-<td>1342.7 ns [1340.69, 1348.15] (0.95 confidence)</td>
-<td>1265.51 ns [1261.02, 1271.36] (0.95 confidence)</td>
+<td>1341.82 ns [1337.86, 1347.84] (0.95 confidence)</td>
+<td>1264.31 ns [1253.57, 1271.42] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/near&#95;boundary&#95;lifted</td>
-<td>1350.21 ns [1347.22, 1354.03] (0.95 confidence)</td>
-<td>1241.45 ns [1238.71, 1244.55] (0.95 confidence)</td>
+<td>1344.52 ns [1339.95, 1348.64] (0.95 confidence)</td>
+<td>1269.15 ns [1263.02, 1277.78] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;2d/vertices&#95;120&#95;simplices&#95;226</td>
-<td>1.68328e+06 ns [1.64736e+06, 1.72126e+06] (0.95 confidence)</td>
-<td>1.58232e+06 ns [1.58083e+06, 1.58885e+06] (0.95 confidence)</td>
+<td>1.6106e+06 ns [1.60906e+06, 1.61988e+06] (0.95 confidence)</td>
+<td>1.58499e+06 ns [1.58111e+06, 1.59224e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;3d/vertices&#95;30&#95;simplices&#95;115</td>
-<td>1.72205e+08 ns [1.68609e+08, 1.76264e+08] (0.95 confidence)</td>
-<td>1.56768e+08 ns [1.5662e+08, 1.57131e+08] (0.95 confidence)</td>
+<td>1.59241e+08 ns [1.59056e+08, 1.59898e+08] (0.95 confidence)</td>
+<td>1.58735e+08 ns [1.58588e+08, 1.59076e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;4d/vertices&#95;16&#95;simplices&#95;68</td>
-<td>5.0591e+08 ns [4.91961e+08, 5.28971e+08] (0.95 confidence)</td>
-<td>4.79105e+08 ns [4.54487e+08, 4.81165e+08] (0.95 confidence)</td>
+<td>4.79301e+08 ns [4.79099e+08, 4.79747e+08] (0.95 confidence)</td>
+<td>4.71789e+08 ns [4.71364e+08, 4.72273e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;5d/vertices&#95;10&#95;simplices&#95;20</td>
-<td>1.42034e+08 ns [1.41515e+08, 1.47875e+08] (0.95 confidence)</td>
-<td>1.33196e+08 ns [1.33177e+08, 1.33483e+08] (0.95 confidence)</td>
+<td>1.35148e+08 ns [1.34706e+08, 1.35436e+08] (0.95 confidence)</td>
+<td>1.35781e+08 ns [1.35361e+08, 1.36668e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;2d/10</td>
-<td>486876 ns [479543, 494899] (0.95 confidence)</td>
-<td>434406 ns [433830, 438395] (0.95 confidence)</td>
+<td>438082 ns [437281, 439893] (0.95 confidence)</td>
+<td>445654 ns [444366, 448249] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;2d&#95;adversarial/10</td>
-<td>3.17294e+06 ns [3.07109e+06, 3.24209e+06] (0.95 confidence)</td>
-<td>2.85566e+06 ns [2.8507e+06, 2.86174e+06] (0.95 confidence)</td>
+<td>2.86017e+06 ns [2.85193e+06, 2.87156e+06] (0.95 confidence)</td>
+<td>2.87317e+06 ns [2.86372e+06, 2.8881e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;3d/10</td>
-<td>2.86009e+06 ns [2.77362e+06, 2.90505e+06] (0.95 confidence)</td>
-<td>2.68686e+06 ns [2.677e+06, 2.69931e+06] (0.95 confidence)</td>
+<td>2.80449e+06 ns [2.78661e+06, 2.85818e+06] (0.95 confidence)</td>
+<td>2.76847e+06 ns [2.75686e+06, 2.80461e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;3d&#95;adversarial/10</td>
-<td>1.39455e+07 ns [1.38636e+07, 1.41424e+07] (0.95 confidence)</td>
-<td>1.32524e+07 ns [1.32305e+07, 1.32811e+07] (0.95 confidence)</td>
+<td>1.38972e+07 ns [1.38257e+07, 1.39696e+07] (0.95 confidence)</td>
+<td>1.34891e+07 ns [1.34256e+07, 1.35395e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;4d/6</td>
-<td>2.69959e+07 ns [2.68642e+07, 2.80703e+07] (0.95 confidence)</td>
-<td>2.61164e+07 ns [2.60328e+07, 2.641e+07] (0.95 confidence)</td>
+<td>2.6514e+07 ns [2.64656e+07, 2.65863e+07] (0.95 confidence)</td>
+<td>2.66587e+07 ns [2.64179e+07, 2.67239e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;4d&#95;adversarial/6</td>
-<td>6.58094e+07 ns [6.55033e+07, 6.76807e+07] (0.95 confidence)</td>
-<td>6.50104e+07 ns [6.49724e+07, 6.52365e+07] (0.95 confidence)</td>
+<td>6.54877e+07 ns [6.54055e+07, 6.63194e+07] (0.95 confidence)</td>
+<td>6.69383e+07 ns [6.65567e+07, 6.78261e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;5d/4</td>
-<td>5.05615e+07 ns [4.88198e+07, 5.13955e+07] (0.95 confidence)</td>
-<td>5.00269e+07 ns [4.98419e+07, 5.03326e+07] (0.95 confidence)</td>
+<td>4.79069e+07 ns [4.78736e+07, 4.80433e+07] (0.95 confidence)</td>
+<td>5.16133e+07 ns [5.12724e+07, 5.19268e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;5d&#95;adversarial/4</td>
-<td>5.18135e+07 ns [5.12698e+07, 5.25216e+07] (0.95 confidence)</td>
-<td>5.44593e+07 ns [5.43461e+07, 5.45987e+07] (0.95 confidence)</td>
+<td>5.17334e+07 ns [5.15766e+07, 5.21e+07] (0.95 confidence)</td>
+<td>5.59504e+07 ns [5.57077e+07, 5.62505e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/2d/vertices&#95;100&#95;simplices&#95;187&#95;seed&#95;dd618c77b9187836&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>7040.92 ns [7033.9, 7080.71] (0.95 confidence)</td>
-<td>7151.28 ns [7133.28, 7192.15] (0.95 confidence)</td>
+<td>7082.06 ns [7059.69, 7105.54] (0.95 confidence)</td>
+<td>7224.27 ns [7207.74, 7250.53] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/2d/vertices&#95;2000&#95;simplices&#95;3978&#95;seed&#95;01acf93075e96412&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>7254.38 ns [7245.6, 7269.13] (0.95 confidence)</td>
-<td>7380.24 ns [7360.89, 7486.29] (0.95 confidence)</td>
+<td>7263.14 ns [7262.07, 7279.77] (0.95 confidence)</td>
+<td>7501.88 ns [7480.79, 7547.05] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/2d/vertices&#95;500&#95;simplices&#95;983&#95;seed&#95;1493be4e9d7a5906&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>7408.7 ns [7398.11, 7432.94] (0.95 confidence)</td>
-<td>7479.54 ns [7472.76, 7488.89] (0.95 confidence)</td>
+<td>7399.87 ns [7378.24, 7420.05] (0.95 confidence)</td>
+<td>7664.94 ns [7637.86, 7734.44] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/3d/vertices&#95;150&#95;simplices&#95;829&#95;seed&#95;a44b52b395a4b44d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>14527.9 ns [14520, 14615.3] (0.95 confidence)</td>
-<td>14713.9 ns [14677.4, 14742] (0.95 confidence)</td>
+<td>14609.1 ns [14578.8, 14648.2] (0.95 confidence)</td>
+<td>15127.8 ns [15056.4, 15227.6] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/3d/vertices&#95;500&#95;simplices&#95;3052&#95;seed&#95;1493be4f9d7a5907&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>14519.5 ns [14496.9, 14569.2] (0.95 confidence)</td>
-<td>14648.8 ns [14569.8, 14703.9] (0.95 confidence)</td>
+<td>14495.2 ns [14424.1, 14547.9] (0.95 confidence)</td>
+<td>15087.7 ns [14996.4, 15135.6] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/3d/vertices&#95;50&#95;simplices&#95;222&#95;seed&#95;f61fc639dc8c3c19&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>14496.2 ns [14457.6, 14572.5] (0.95 confidence)</td>
-<td>14724.3 ns [14694.4, 14792.2] (0.95 confidence)</td>
+<td>14576.4 ns [14505.6, 14611.1] (0.95 confidence)</td>
+<td>15191.1 ns [15152.9, 15289.5] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/4d/vertices&#95;100&#95;simplices&#95;1677&#95;seed&#95;dd618c71b9187830&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.98727e+06 ns [1.98491e+06, 1.99131e+06] (0.95 confidence)</td>
-<td>2.01644e+06 ns [1.98143e+06, 2.0316e+06] (0.95 confidence)</td>
+<td>1.9836e+06 ns [1.97822e+06, 1.99155e+06] (0.95 confidence)</td>
+<td>2.03493e+06 ns [2.02926e+06, 2.0414e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/4d/vertices&#95;50&#95;simplices&#95;626&#95;seed&#95;f61fc63edc8c3c1e&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.96984e+06 ns [1.95668e+06, 1.97924e+06] (0.95 confidence)</td>
-<td>1.96487e+06 ns [1.94881e+06, 1.99347e+06] (0.95 confidence)</td>
+<td>1.94638e+06 ns [1.94188e+06, 1.97995e+06] (0.95 confidence)</td>
+<td>2.00914e+06 ns [1.99173e+06, 2.05971e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/5d/vertices&#95;25&#95;simplices&#95;410&#95;seed&#95;63a0e3186e461e08&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>4.68824e+06 ns [4.68203e+06, 4.72151e+06] (0.95 confidence)</td>
-<td>4.67057e+06 ns [4.65061e+06, 4.67978e+06] (0.95 confidence)</td>
+<td>4.79056e+06 ns [4.73236e+06, 4.80565e+06] (0.95 confidence)</td>
+<td>4.8289e+06 ns [4.79594e+06, 4.85938e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/5d/vertices&#95;40&#95;simplices&#95;1208&#95;seed&#95;a86104fee3a3634d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>4.74095e+06 ns [4.73559e+06, 4.74811e+06] (0.95 confidence)</td>
-<td>4.7691e+06 ns [4.72842e+06, 4.8082e+06] (0.95 confidence)</td>
+<td>4.84244e+06 ns [4.814e+06, 4.88676e+06] (0.95 confidence)</td>
+<td>4.87845e+06 ns [4.85105e+06, 4.88873e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/2d/vertices&#95;100&#95;simplices&#95;187&#95;seed&#95;dd618c77b9187836&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>73560 ns [72898.3, 74234.3] (0.95 confidence)</td>
-<td>74378.6 ns [74173.3, 74506] (0.95 confidence)</td>
+<td>73859.5 ns [73585, 74142.7] (0.95 confidence)</td>
+<td>76133.8 ns [75632.7, 77069.9] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/2d/vertices&#95;2000&#95;simplices&#95;3978&#95;seed&#95;01acf93075e96412&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>265173 ns [264278, 266360] (0.95 confidence)</td>
-<td>271418 ns [268652, 274889] (0.95 confidence)</td>
+<td>266907 ns [266410, 270219] (0.95 confidence)</td>
+<td>275166 ns [273843, 277460] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/2d/vertices&#95;500&#95;simplices&#95;983&#95;seed&#95;1493be4e9d7a5906&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>122042 ns [121827, 122136] (0.95 confidence)</td>
-<td>123437 ns [123123, 123510] (0.95 confidence)</td>
+<td>123902 ns [122725, 125259] (0.95 confidence)</td>
+<td>126235 ns [125310, 126485] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/3d/vertices&#95;150&#95;simplices&#95;829&#95;seed&#95;a44b52b395a4b44d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>123571 ns [123210, 123903] (0.95 confidence)</td>
-<td>126568 ns [124744, 127013] (0.95 confidence)</td>
+<td>123998 ns [123737, 124169] (0.95 confidence)</td>
+<td>129685 ns [128498, 130943] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/3d/vertices&#95;500&#95;simplices&#95;3052&#95;seed&#95;1493be4f9d7a5907&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>189530 ns [188720, 190613] (0.95 confidence)</td>
-<td>192622 ns [190008, 195141] (0.95 confidence)</td>
+<td>190140 ns [188533, 194990] (0.95 confidence)</td>
+<td>200305 ns [196416, 204526] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/3d/vertices&#95;50&#95;simplices&#95;222&#95;seed&#95;f61fc639dc8c3c19&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>65133.1 ns [64949.1, 66011.8] (0.95 confidence)</td>
-<td>65603 ns [65271.1, 66018.3] (0.95 confidence)</td>
+<td>64754.9 ns [64610.4, 65431.5] (0.95 confidence)</td>
+<td>68612.7 ns [68075, 69922.5] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/4d/vertices&#95;100&#95;simplices&#95;1677&#95;seed&#95;dd618c71b9187830&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.12477e+07 ns [1.12225e+07, 1.12874e+07] (0.95 confidence)</td>
-<td>1.11308e+07 ns [1.11167e+07, 1.11512e+07] (0.95 confidence)</td>
+<td>1.12311e+07 ns [1.11889e+07, 1.12375e+07] (0.95 confidence)</td>
+<td>1.16295e+07 ns [1.15206e+07, 1.16777e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/4d/vertices&#95;50&#95;simplices&#95;626&#95;seed&#95;f61fc63edc8c3c1e&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.11301e+07 ns [1.10873e+07, 1.12542e+07] (0.95 confidence)</td>
-<td>1.10981e+07 ns [1.10185e+07, 1.12542e+07] (0.95 confidence)</td>
+<td>1.12474e+07 ns [1.11289e+07, 1.14043e+07] (0.95 confidence)</td>
+<td>1.13948e+07 ns [1.13787e+07, 1.14494e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/5d/vertices&#95;25&#95;simplices&#95;410&#95;seed&#95;63a0e3186e461e08&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>2.21897e+07 ns [2.19175e+07, 2.22396e+07] (0.95 confidence)</td>
-<td>2.20413e+07 ns [2.20058e+07, 2.21122e+07] (0.95 confidence)</td>
+<td>2.19571e+07 ns [2.19042e+07, 2.20358e+07] (0.95 confidence)</td>
+<td>2.25962e+07 ns [2.25014e+07, 2.27729e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/5d/vertices&#95;40&#95;simplices&#95;1208&#95;seed&#95;a86104fee3a3634d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>3.9685e+07 ns [3.96748e+07, 3.97398e+07] (0.95 confidence)</td>
-<td>3.96744e+07 ns [3.96554e+07, 3.98316e+07] (0.95 confidence)</td>
+<td>4.00131e+07 ns [3.98984e+07, 4.02994e+07] (0.95 confidence)</td>
+<td>4.13241e+07 ns [4.09816e+07, 4.16525e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;2d/simplices&#95;226</td>
-<td>126902 ns [122427, 130097] (0.95 confidence)</td>
-<td>119248 ns [117009, 121851] (0.95 confidence)</td>
+<td>113706 ns [113380, 116433] (0.95 confidence)</td>
+<td>118087 ns [117946, 118774] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;3d/simplices&#95;115</td>
-<td>159671 ns [153019, 164650] (0.95 confidence)</td>
-<td>146791 ns [146127, 148264] (0.95 confidence)</td>
+<td>140309 ns [139802, 141797] (0.95 confidence)</td>
+<td>155413 ns [152286, 158090] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;4d/simplices&#95;68</td>
-<td>1.29785e+06 ns [1.27929e+06, 1.34505e+06] (0.95 confidence)</td>
-<td>1.23085e+06 ns [1.2201e+06, 1.23794e+06] (0.95 confidence)</td>
+<td>1.19527e+06 ns [1.19108e+06, 1.20959e+06] (0.95 confidence)</td>
+<td>1.26828e+06 ns [1.26473e+06, 1.28291e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;5d/simplices&#95;20</td>
-<td>520540 ns [517593, 522343] (0.95 confidence)</td>
-<td>464066 ns [457978, 470400] (0.95 confidence)</td>
+<td>453331 ns [451896, 458299] (0.95 confidence)</td>
+<td>482687 ns [479600, 484885] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;2d/simplices&#95;226</td>
-<td>1.39981e+06 ns [1.35854e+06, 1.43931e+06] (0.95 confidence)</td>
-<td>1.33805e+06 ns [1.33511e+06, 1.34218e+06] (0.95 confidence)</td>
+<td>1.31516e+06 ns [1.31421e+06, 1.31691e+06] (0.95 confidence)</td>
+<td>1.32428e+06 ns [1.3215e+06, 1.33438e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;3d/simplices&#95;115</td>
-<td>1.7288e+08 ns [1.70127e+08, 1.7621e+08] (0.95 confidence)</td>
-<td>1.57059e+08 ns [1.5664e+08, 1.57325e+08] (0.95 confidence)</td>
+<td>1.5458e+08 ns [1.54382e+08, 1.55717e+08] (0.95 confidence)</td>
+<td>1.59732e+08 ns [1.59239e+08, 1.60071e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;4d/simplices&#95;68</td>
-<td>5.14095e+08 ns [4.94659e+08, 5.32075e+08] (0.95 confidence)</td>
-<td>4.58397e+08 ns [4.58195e+08, 4.59048e+08] (0.95 confidence)</td>
+<td>4.67943e+08 ns [4.6699e+08, 4.71205e+08] (0.95 confidence)</td>
+<td>4.71706e+08 ns [4.7072e+08, 4.73105e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;5d/simplices&#95;20</td>
-<td>1.53107e+08 ns [1.52415e+08, 1.53576e+08] (0.95 confidence)</td>
-<td>1.32029e+08 ns [1.31837e+08, 1.32479e+08] (0.95 confidence)</td>
+<td>1.33248e+08 ns [1.32979e+08, 1.33702e+08] (0.95 confidence)</td>
+<td>1.36566e+08 ns [1.36235e+08, 1.42933e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;2d/simplices&#95;226</td>
-<td>1.34848e+06 ns [1.29526e+06, 1.39252e+06] (0.95 confidence)</td>
-<td>1.32395e+06 ns [1.27935e+06, 1.35159e+06] (0.95 confidence)</td>
+<td>1.23551e+06 ns [1.23473e+06, 1.23851e+06] (0.95 confidence)</td>
+<td>1.25009e+06 ns [1.24388e+06, 1.25688e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;3d/simplices&#95;115</td>
-<td>1.72569e+08 ns [1.6873e+08, 1.76329e+08] (0.95 confidence)</td>
-<td>1.57449e+08 ns [1.57175e+08, 1.57741e+08] (0.95 confidence)</td>
+<td>1.54503e+08 ns [1.54353e+08, 1.54775e+08] (0.95 confidence)</td>
+<td>1.59599e+08 ns [1.59298e+08, 1.59917e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;4d/simplices&#95;68</td>
-<td>4.95993e+08 ns [4.92e+08, 5.16369e+08] (0.95 confidence)</td>
-<td>4.57527e+08 ns [4.56779e+08, 4.57752e+08] (0.95 confidence)</td>
+<td>4.68775e+08 ns [4.68203e+08, 4.69334e+08] (0.95 confidence)</td>
+<td>4.72702e+08 ns [4.71021e+08, 4.74873e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;5d/simplices&#95;20</td>
-<td>1.52749e+08 ns [1.48333e+08, 1.53105e+08] (0.95 confidence)</td>
-<td>1.31667e+08 ns [1.31432e+08, 1.31937e+08] (0.95 confidence)</td>
+<td>1.32884e+08 ns [1.32736e+08, 1.33101e+08] (0.95 confidence)</td>
+<td>1.3625e+08 ns [1.35804e+08, 1.36801e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>random/insphere&#95;1000&#95;queries</td>
-<td>434277 ns [432196, 436109] (0.95 confidence)</td>
-<td>416465 ns [415203, 417710] (0.95 confidence)</td>
+<td>414611 ns [413134, 415783] (0.95 confidence)</td>
+<td>425710 ns [424627, 426552] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>random/insphere&#95;distance&#95;1000&#95;queries</td>
-<td>66339.7 ns [66256.6, 66484.3] (0.95 confidence)</td>
-<td>63930.4 ns [63730.6, 64312.8] (0.95 confidence)</td>
+<td>63732.1 ns [63100.7, 64093.6] (0.95 confidence)</td>
+<td>65710 ns [65364.6, 66013.6] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>random/insphere&#95;lifted&#95;1000&#95;queries</td>
-<td>430250 ns [429026, 432529] (0.95 confidence)</td>
-<td>415158 ns [414163, 415873] (0.95 confidence)</td>
+<td>415647 ns [413885, 416441] (0.95 confidence)</td>
+<td>420119 ns [419303, 421430] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;2d/tds&#95;new/500</td>
-<td>5.07864e+07 ns [5.02226e+07, 5.13329e+07] (0.95 confidence)</td>
-<td>4.56466e+07 ns [4.54887e+07, 4.59654e+07] (0.95 confidence)</td>
+<td>4.57108e+07 ns [4.56421e+07, 4.60575e+07] (0.95 confidence)</td>
+<td>4.57306e+07 ns [4.56665e+07, 4.59635e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;2d/tds&#95;new&#95;adversarial/500</td>
-<td>5.99177e+07 ns [5.76739e+07, 6.00593e+07] (0.95 confidence)</td>
-<td>5.32696e+07 ns [5.32416e+07, 5.33689e+07] (0.95 confidence)</td>
+<td>5.36238e+07 ns [5.35895e+07, 5.37677e+07] (0.95 confidence)</td>
+<td>5.48306e+07 ns [5.41766e+07, 5.59895e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;3d/tds&#95;new/100</td>
-<td>4.13705e+07 ns [4.10921e+07, 4.15683e+07] (0.95 confidence)</td>
-<td>3.72588e+07 ns [3.71412e+07, 3.81017e+07] (0.95 confidence)</td>
+<td>3.6891e+07 ns [3.68746e+07, 3.69504e+07] (0.95 confidence)</td>
+<td>3.73342e+07 ns [3.72714e+07, 3.74754e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;3d/tds&#95;new&#95;adversarial/100</td>
-<td>9.28583e+07 ns [9.19991e+07, 9.35127e+07] (0.95 confidence)</td>
-<td>8.37737e+07 ns [8.33869e+07, 8.39913e+07] (0.95 confidence)</td>
+<td>8.36588e+07 ns [8.34731e+07, 8.38007e+07] (0.95 confidence)</td>
+<td>8.50726e+07 ns [8.48532e+07, 8.53613e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;4d/tds&#95;new/30</td>
-<td>1.04583e+08 ns [1.03845e+08, 1.05634e+08] (0.95 confidence)</td>
-<td>9.60714e+07 ns [9.53888e+07, 9.63171e+07] (0.95 confidence)</td>
+<td>9.29788e+07 ns [9.24575e+07, 9.30817e+07] (0.95 confidence)</td>
+<td>9.68993e+07 ns [9.63217e+07, 9.74279e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;4d/tds&#95;new&#95;adversarial/30</td>
-<td>9.86389e+07 ns [9.78027e+07, 9.98538e+07] (0.95 confidence)</td>
-<td>9.07406e+07 ns [9.02577e+07, 9.10667e+07] (0.95 confidence)</td>
+<td>8.7584e+07 ns [8.74508e+07, 8.79803e+07] (0.95 confidence)</td>
+<td>9.31245e+07 ns [9.22912e+07, 9.43113e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;5d/tds&#95;new/12</td>
-<td>2.28432e+07 ns [2.27722e+07, 2.29052e+07] (0.95 confidence)</td>
-<td>2.13448e+07 ns [2.13053e+07, 2.14477e+07] (0.95 confidence)</td>
+<td>2.03154e+07 ns [2.02609e+07, 2.03676e+07] (0.95 confidence)</td>
+<td>2.20554e+07 ns [2.17983e+07, 2.21252e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;5d/tds&#95;new&#95;adversarial/12</td>
-<td>2.09961e+07 ns [2.08782e+07, 2.11521e+07] (0.95 confidence)</td>
-<td>1.95846e+07 ns [1.95681e+07, 1.96716e+07] (0.95 confidence)</td>
+<td>1.87543e+07 ns [1.87061e+07, 1.8823e+07] (0.95 confidence)</td>
+<td>2.01585e+07 ns [2.00459e+07, 2.02357e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;2d/500</td>
-<td>937650 ns [924609, 941452] (0.95 confidence)</td>
-<td>784537 ns [780421, 786438] (0.95 confidence)</td>
+<td>799819 ns [795378, 805903] (0.95 confidence)</td>
+<td>798370 ns [793957, 809065] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;2d&#95;adversarial/500</td>
-<td>1.27193e+06 ns [1.25398e+06, 1.28964e+06] (0.95 confidence)</td>
-<td>1.09014e+06 ns [1.08639e+06, 1.10281e+06] (0.95 confidence)</td>
+<td>1.1116e+06 ns [1.10194e+06, 1.12261e+06] (0.95 confidence)</td>
+<td>1.09745e+06 ns [1.09278e+06, 1.10645e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;3d/100</td>
-<td>1.29734e+06 ns [1.26193e+06, 1.3213e+06] (0.95 confidence)</td>
-<td>1.20076e+06 ns [1.19843e+06, 1.20374e+06] (0.95 confidence)</td>
+<td>1.08627e+06 ns [1.08194e+06, 1.10765e+06] (0.95 confidence)</td>
+<td>1.24811e+06 ns [1.24347e+06, 1.27866e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;3d&#95;adversarial/100</td>
-<td>2.34942e+06 ns [2.32523e+06, 2.39519e+06] (0.95 confidence)</td>
-<td>2.16492e+06 ns [2.15727e+06, 2.16635e+06] (0.95 confidence)</td>
+<td>2.06373e+06 ns [2.0512e+06, 2.07848e+06] (0.95 confidence)</td>
+<td>2.30001e+06 ns [2.28126e+06, 2.31235e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;4d/30</td>
-<td>4.53073e+06 ns [4.50981e+06, 4.59259e+06] (0.95 confidence)</td>
-<td>4.55557e+06 ns [4.53853e+06, 4.58301e+06] (0.95 confidence)</td>
+<td>3.90205e+06 ns [3.87952e+06, 3.93979e+06] (0.95 confidence)</td>
+<td>4.63703e+06 ns [4.61541e+06, 4.69135e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;4d&#95;adversarial/30</td>
-<td>4.42732e+06 ns [4.36869e+06, 4.46224e+06] (0.95 confidence)</td>
-<td>4.46398e+06 ns [4.41775e+06, 4.57648e+06] (0.95 confidence)</td>
+<td>3.89595e+06 ns [3.87945e+06, 3.93443e+06] (0.95 confidence)</td>
+<td>4.48868e+06 ns [4.47928e+06, 4.62317e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;5d/12</td>
-<td>1.88612e+06 ns [1.83691e+06, 1.91323e+06] (0.95 confidence)</td>
-<td>2.10336e+06 ns [2.09708e+06, 2.10915e+06] (0.95 confidence)</td>
+<td>1.63808e+06 ns [1.63165e+06, 1.64264e+06] (0.95 confidence)</td>
+<td>2.22542e+06 ns [2.20907e+06, 2.2319e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;5d&#95;adversarial/12</td>
-<td>1.66652e+06 ns [1.62847e+06, 1.69771e+06] (0.95 confidence)</td>
-<td>1.91334e+06 ns [1.90191e+06, 1.91787e+06] (0.95 confidence)</td>
+<td>1.45267e+06 ns [1.44949e+06, 1.45832e+06] (0.95 confidence)</td>
+<td>2.01777e+06 ns [1.98922e+06, 2.05224e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;2d/500</td>
-<td>936970 ns [923056, 941505] (0.95 confidence)</td>
-<td>788727 ns [784042, 794483] (0.95 confidence)</td>
+<td>806365 ns [804279, 819642] (0.95 confidence)</td>
+<td>805717 ns [803169, 812790] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;2d&#95;adversarial/500</td>
-<td>1.29158e+06 ns [1.2704e+06, 1.30938e+06] (0.95 confidence)</td>
-<td>1.08547e+06 ns [1.08308e+06, 1.09271e+06] (0.95 confidence)</td>
+<td>1.1068e+06 ns [1.10044e+06, 1.11426e+06] (0.95 confidence)</td>
+<td>1.10322e+06 ns [1.09618e+06, 1.12075e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;3d/100</td>
-<td>1.28526e+06 ns [1.26713e+06, 1.29676e+06] (0.95 confidence)</td>
-<td>1.20928e+06 ns [1.1988e+06, 1.21739e+06] (0.95 confidence)</td>
+<td>1.08289e+06 ns [1.07588e+06, 1.08437e+06] (0.95 confidence)</td>
+<td>1.24881e+06 ns [1.2427e+06, 1.28673e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;3d&#95;adversarial/100</td>
-<td>2.37747e+06 ns [2.32735e+06, 2.40159e+06] (0.95 confidence)</td>
-<td>2.20899e+06 ns [2.19e+06, 2.22917e+06] (0.95 confidence)</td>
+<td>2.08592e+06 ns [2.08096e+06, 2.09407e+06] (0.95 confidence)</td>
+<td>2.2076e+06 ns [2.20215e+06, 2.21738e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;4d/30</td>
-<td>4.52425e+06 ns [4.46096e+06, 4.55809e+06] (0.95 confidence)</td>
-<td>4.51418e+06 ns [4.5061e+06, 4.5737e+06] (0.95 confidence)</td>
+<td>3.89641e+06 ns [3.89275e+06, 3.91188e+06] (0.95 confidence)</td>
+<td>4.56328e+06 ns [4.54607e+06, 4.63134e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;4d&#95;adversarial/30</td>
-<td>4.45155e+06 ns [4.38411e+06, 4.50431e+06] (0.95 confidence)</td>
-<td>4.44792e+06 ns [4.42615e+06, 4.47103e+06] (0.95 confidence)</td>
+<td>3.89025e+06 ns [3.84674e+06, 3.9132e+06] (0.95 confidence)</td>
+<td>4.48366e+06 ns [4.46312e+06, 4.5549e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;5d/12</td>
-<td>1.89873e+06 ns [1.8706e+06, 1.91349e+06] (0.95 confidence)</td>
-<td>2.09556e+06 ns [2.08806e+06, 2.10269e+06] (0.95 confidence)</td>
+<td>1.62775e+06 ns [1.62652e+06, 1.63767e+06] (0.95 confidence)</td>
+<td>2.18356e+06 ns [2.17152e+06, 2.22679e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;5d&#95;adversarial/12</td>
-<td>1.66075e+06 ns [1.61684e+06, 1.69119e+06] (0.95 confidence)</td>
-<td>1.90089e+06 ns [1.89581e+06, 1.92398e+06] (0.95 confidence)</td>
+<td>1.45753e+06 ns [1.44897e+06, 1.47137e+06] (0.95 confidence)</td>
+<td>2.05986e+06 ns [2.03154e+06, 2.07317e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;2d/500</td>
-<td>9.18069e+06 ns [9.05266e+06, 9.28151e+06] (0.95 confidence)</td>
-<td>8.20634e+06 ns [8.18494e+06, 8.25625e+06] (0.95 confidence)</td>
+<td>8.08093e+06 ns [8.05422e+06, 8.13458e+06] (0.95 confidence)</td>
+<td>8.25328e+06 ns [8.23195e+06, 8.27608e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;2d&#95;adversarial/500</td>
-<td>6.00353e+07 ns [5.95977e+07, 6.06547e+07] (0.95 confidence)</td>
-<td>4.82401e+07 ns [4.81871e+07, 4.84094e+07] (0.95 confidence)</td>
+<td>5.32499e+07 ns [5.31235e+07, 5.33963e+07] (0.95 confidence)</td>
+<td>4.89219e+07 ns [4.87912e+07, 4.92393e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;3d/100</td>
-<td>9.75998e+08 ns [9.74123e+08, 9.77279e+08] (0.95 confidence)</td>
-<td>8.45428e+08 ns [8.43634e+08, 8.46212e+08] (0.95 confidence)</td>
+<td>8.32626e+08 ns [8.31399e+08, 8.33958e+08] (0.95 confidence)</td>
+<td>8.47454e+08 ns [8.43921e+08, 8.48996e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;3d&#95;adversarial/100</td>
-<td>1.20769e+09 ns [1.20489e+09, 1.21127e+09] (0.95 confidence)</td>
-<td>1.02508e+09 ns [1.02344e+09, 1.02764e+09] (0.95 confidence)</td>
+<td>1.03543e+09 ns [1.03458e+09, 1.03684e+09] (0.95 confidence)</td>
+<td>1.02596e+09 ns [1.02339e+09, 1.03239e+09] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;4d/30</td>
-<td>4.44126e+09 ns [4.43405e+09, 4.44248e+09] (0.95 confidence)</td>
-<td>3.81257e+09 ns [3.80392e+09, 3.81697e+09] (0.95 confidence)</td>
+<td>3.89185e+09 ns [3.88675e+09, 3.90015e+09] (0.95 confidence)</td>
+<td>3.88661e+09 ns [3.87856e+09, 3.8948e+09] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;4d&#95;adversarial/30</td>
-<td>4.61096e+09 ns [4.60445e+09, 4.61595e+09] (0.95 confidence)</td>
-<td>3.97138e+09 ns [3.96275e+09, 3.97369e+09] (0.95 confidence)</td>
+<td>4.01774e+09 ns [4.01138e+09, 4.02486e+09] (0.95 confidence)</td>
+<td>3.96141e+09 ns [3.9566e+09, 3.96395e+09] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;5d/12</td>
-<td>9.9699e+08 ns [9.95393e+08, 1.00146e+09] (0.95 confidence)</td>
-<td>8.56135e+08 ns [8.54239e+08, 8.5649e+08] (0.95 confidence)</td>
+<td>8.67833e+08 ns [8.66515e+08, 8.69927e+08] (0.95 confidence)</td>
+<td>8.90769e+08 ns [8.87632e+08, 8.92131e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;5d&#95;adversarial/12</td>
-<td>9.33266e+08 ns [9.22588e+08, 9.36139e+08] (0.95 confidence)</td>
-<td>8.01929e+08 ns [8.00269e+08, 8.02178e+08] (0.95 confidence)</td>
+<td>8.11157e+08 ns [8.10397e+08, 8.13022e+08] (0.95 confidence)</td>
+<td>8.271e+08 ns [8.25242e+08, 8.29735e+08] (0.95 confidence)</td>
 </tr>
 </tbody>
 </table>
@@ -1786,868 +1786,868 @@ Ratio eligibility: compatible recorded identities
 <tbody>
 <tr>
 <td>2d/insphere</td>
-<td>52.3401 ns [51.8992, 52.7934] (0.95 confidence)</td>
-<td>50.1483 ns [49.9358, 50.3756] (0.95 confidence)</td>
+<td>50.3629 ns [50.1007, 50.632] (0.95 confidence)</td>
+<td>49.9714 ns [49.7588, 50.1938] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>2d/insphere&#95;distance</td>
-<td>13.8075 ns [13.7849, 13.8316] (0.95 confidence)</td>
-<td>13.3591 ns [13.3391, 13.3788] (0.95 confidence)</td>
+<td>13.4344 ns [13.4123, 13.4565] (0.95 confidence)</td>
+<td>13.7432 ns [13.7119, 13.7772] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>2d/insphere&#95;lifted</td>
-<td>52.7648 ns [52.4003, 53.1348] (0.95 confidence)</td>
-<td>50.0807 ns [49.8954, 50.273] (0.95 confidence)</td>
+<td>49.3667 ns [49.1805, 49.5559] (0.95 confidence)</td>
+<td>52.2499 ns [51.8981, 52.6023] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>3d/insphere</td>
-<td>112.102 ns [111.404, 112.81] (0.95 confidence)</td>
-<td>103.127 ns [102.784, 103.524] (0.95 confidence)</td>
+<td>107.807 ns [107.127, 108.55] (0.95 confidence)</td>
+<td>111.598 ns [110.877, 112.327] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>3d/insphere&#95;distance</td>
-<td>34.8821 ns [34.4904, 35.2798] (0.95 confidence)</td>
-<td>32.5821 ns [32.5288, 32.6361] (0.95 confidence)</td>
+<td>32.5374 ns [32.4341, 32.6407] (0.95 confidence)</td>
+<td>33.2631 ns [33.1675, 33.3635] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>3d/insphere&#95;lifted</td>
-<td>110.955 ns [110.304, 111.626] (0.95 confidence)</td>
-<td>103.749 ns [103.33, 104.193] (0.95 confidence)</td>
+<td>105.5 ns [105.122, 105.901] (0.95 confidence)</td>
+<td>107.329 ns [106.914, 107.781] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>4d/insphere</td>
-<td>770.837 ns [768.173, 773.441] (0.95 confidence)</td>
-<td>746.785 ns [744.561, 749.115] (0.95 confidence)</td>
+<td>749.057 ns [746.628, 751.571] (0.95 confidence)</td>
+<td>759.7 ns [758.152, 761.301] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>4d/insphere&#95;distance</td>
-<td>53.5976 ns [53.2346, 53.9791] (0.95 confidence)</td>
-<td>52.9732 ns [52.8602, 53.0798] (0.95 confidence)</td>
+<td>50.8807 ns [50.7535, 51.0078] (0.95 confidence)</td>
+<td>54.4821 ns [54.4075, 54.5543] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>4d/insphere&#95;lifted</td>
-<td>775.857 ns [773.317, 778.394] (0.95 confidence)</td>
-<td>732.997 ns [731.373, 734.609] (0.95 confidence)</td>
+<td>752.908 ns [749.769, 756.022] (0.95 confidence)</td>
+<td>764.499 ns [760.881, 768.229] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>5d/insphere</td>
-<td>1395.52 ns [1390.77, 1400.46] (0.95 confidence)</td>
-<td>1285.7 ns [1282.37, 1289.18] (0.95 confidence)</td>
+<td>1387.9 ns [1383.98, 1391.9] (0.95 confidence)</td>
+<td>1287.3 ns [1284.02, 1290.71] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>5d/insphere&#95;distance</td>
-<td>88.578 ns [88.2501, 88.9361] (0.95 confidence)</td>
-<td>86.6351 ns [86.3845, 86.8874] (0.95 confidence)</td>
+<td>87.4293 ns [87.1704, 87.6922] (0.95 confidence)</td>
+<td>87.0696 ns [86.8265, 87.3225] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>5d/insphere&#95;lifted</td>
-<td>1401.98 ns [1397.8, 1406.31] (0.95 confidence)</td>
-<td>1277.01 ns [1274, 1280.1] (0.95 confidence)</td>
+<td>1374.05 ns [1370.15, 1377.96] (0.95 confidence)</td>
+<td>1300.07 ns [1295.7, 1304.4] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k1&#95;roundtrip</td>
-<td>60436.7 ns [60048.7, 60794.6] (0.95 confidence)</td>
-<td>54929 ns [54599.8, 55307.3] (0.95 confidence)</td>
+<td>53991 ns [53907.8, 54086.5] (0.95 confidence)</td>
+<td>56295.4 ns [56144.4, 56459.1] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k1&#95;roundtrip&#95;adversarial</td>
-<td>181653 ns [179891, 183087] (0.95 confidence)</td>
-<td>162566 ns [162336, 162828] (0.95 confidence)</td>
+<td>162550 ns [162378, 162722] (0.95 confidence)</td>
+<td>166391 ns [166034, 166747] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k2&#95;edge&#95;flip</td>
-<td>29657 ns [29428.9, 29871.8] (0.95 confidence)</td>
-<td>26793.5 ns [26750.4, 26839.4] (0.95 confidence)</td>
+<td>26258.3 ns [26231.1, 26287.7] (0.95 confidence)</td>
+<td>27593.7 ns [27533.9, 27667.4] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;2d/k2&#95;edge&#95;flip&#95;adversarial</td>
-<td>113053 ns [112400, 113656] (0.95 confidence)</td>
-<td>101727 ns [101535, 101923] (0.95 confidence)</td>
+<td>101699 ns [99923.2, 103885] (0.95 confidence)</td>
+<td>102942 ns [102646, 103239] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k1&#95;roundtrip</td>
-<td>2.64921e+06 ns [2.63549e+06, 2.66233e+06] (0.95 confidence)</td>
-<td>2.35601e+06 ns [2.34786e+06, 2.36467e+06] (0.95 confidence)</td>
+<td>2.3395e+06 ns [2.33445e+06, 2.34426e+06] (0.95 confidence)</td>
+<td>2.41399e+06 ns [2.4096e+06, 2.41826e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k1&#95;roundtrip&#95;adversarial</td>
-<td>2.12039e+06 ns [2.07969e+06, 2.16021e+06] (0.95 confidence)</td>
-<td>1.92263e+06 ns [1.9198e+06, 1.92522e+06] (0.95 confidence)</td>
+<td>1.95481e+06 ns [1.94607e+06, 1.9653e+06] (0.95 confidence)</td>
+<td>2.00716e+06 ns [2.00541e+06, 2.00886e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k2&#95;roundtrip</td>
-<td>7.44442e+06 ns [7.3736e+06, 7.5044e+06] (0.95 confidence)</td>
-<td>6.52954e+06 ns [6.5179e+06, 6.54379e+06] (0.95 confidence)</td>
+<td>6.58713e+06 ns [6.47698e+06, 6.71913e+06] (0.95 confidence)</td>
+<td>6.63185e+06 ns [6.62046e+06, 6.64449e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k2&#95;roundtrip&#95;adversarial</td>
-<td>6.31696e+06 ns [6.20642e+06, 6.4446e+06] (0.95 confidence)</td>
-<td>5.8673e+06 ns [5.85763e+06, 5.87702e+06] (0.95 confidence)</td>
+<td>5.82996e+06 ns [5.81511e+06, 5.84711e+06] (0.95 confidence)</td>
+<td>6.02659e+06 ns [6.01725e+06, 6.03505e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k3&#95;forward</td>
-<td>1.53535e+06 ns [1.51967e+06, 1.55057e+06] (0.95 confidence)</td>
-<td>1.37701e+06 ns [1.37461e+06, 1.37978e+06] (0.95 confidence)</td>
+<td>1.35985e+06 ns [1.35702e+06, 1.36271e+06] (0.95 confidence)</td>
+<td>1.39557e+06 ns [1.39295e+06, 1.39875e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;3d/k3&#95;forward&#95;adversarial</td>
-<td>2.10566e+06 ns [2.08207e+06, 2.12724e+06] (0.95 confidence)</td>
-<td>1.82502e+06 ns [1.82293e+06, 1.8274e+06] (0.95 confidence)</td>
+<td>1.88579e+06 ns [1.87877e+06, 1.89349e+06] (0.95 confidence)</td>
+<td>1.87074e+06 ns [1.8671e+06, 1.8745e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k1&#95;roundtrip</td>
-<td>4.25154e+07 ns [4.16622e+07, 4.32113e+07] (0.95 confidence)</td>
-<td>3.90255e+07 ns [3.89323e+07, 3.91261e+07] (0.95 confidence)</td>
+<td>3.91942e+07 ns [3.89438e+07, 3.94883e+07] (0.95 confidence)</td>
+<td>3.9626e+07 ns [3.94912e+07, 3.98113e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k1&#95;roundtrip&#95;adversarial</td>
-<td>3.60958e+07 ns [3.58436e+07, 3.63853e+07] (0.95 confidence)</td>
-<td>3.31007e+07 ns [3.30072e+07, 3.31827e+07] (0.95 confidence)</td>
+<td>3.31749e+07 ns [3.30477e+07, 3.33109e+07] (0.95 confidence)</td>
+<td>3.33839e+07 ns [3.33368e+07, 3.34367e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k2&#95;roundtrip</td>
-<td>5.90303e+07 ns [5.83767e+07, 5.99518e+07] (0.95 confidence)</td>
-<td>5.58875e+07 ns [5.58058e+07, 5.59673e+07] (0.95 confidence)</td>
+<td>5.61884e+07 ns [5.59148e+07, 5.64898e+07] (0.95 confidence)</td>
+<td>5.63516e+07 ns [5.62749e+07, 5.64325e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k2&#95;roundtrip&#95;adversarial</td>
-<td>2.05857e+08 ns [2.04909e+08, 2.06865e+08] (0.95 confidence)</td>
-<td>1.93728e+08 ns [1.93433e+08, 1.94051e+08] (0.95 confidence)</td>
+<td>2.00254e+08 ns [1.98791e+08, 2.01988e+08] (0.95 confidence)</td>
+<td>1.98677e+08 ns [1.98407e+08, 1.98921e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k3&#95;roundtrip</td>
-<td>6.71714e+07 ns [6.70495e+07, 6.7297e+07] (0.95 confidence)</td>
-<td>6.41054e+07 ns [6.3986e+07, 6.42067e+07] (0.95 confidence)</td>
+<td>6.55919e+07 ns [6.51718e+07, 6.6026e+07] (0.95 confidence)</td>
+<td>6.50869e+07 ns [6.49496e+07, 6.52353e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;4d/k3&#95;roundtrip&#95;adversarial</td>
-<td>3.5825e+07 ns [3.55267e+07, 3.61366e+07] (0.95 confidence)</td>
-<td>3.48048e+07 ns [3.47316e+07, 3.49099e+07] (0.95 confidence)</td>
+<td>3.52388e+07 ns [3.5102e+07, 3.53859e+07] (0.95 confidence)</td>
+<td>3.51438e+07 ns [3.50984e+07, 3.51917e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k1&#95;roundtrip</td>
-<td>1.62108e+08 ns [1.61188e+08, 1.63032e+08] (0.95 confidence)</td>
-<td>1.56672e+08 ns [1.56507e+08, 1.56844e+08] (0.95 confidence)</td>
+<td>1.55988e+08 ns [1.55554e+08, 1.56426e+08] (0.95 confidence)</td>
+<td>1.59178e+08 ns [1.58857e+08, 1.5952e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k1&#95;roundtrip&#95;adversarial</td>
-<td>1.6878e+08 ns [1.68134e+08, 1.69431e+08] (0.95 confidence)</td>
-<td>1.59444e+08 ns [1.59136e+08, 1.59812e+08] (0.95 confidence)</td>
+<td>1.60754e+08 ns [1.59915e+08, 1.61653e+08] (0.95 confidence)</td>
+<td>1.62011e+08 ns [1.61557e+08, 1.62463e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k2&#95;roundtrip</td>
-<td>336780 ns [335825, 337493] (0.95 confidence)</td>
-<td>325864 ns [325487, 326237] (0.95 confidence)</td>
+<td>329220 ns [328636, 329841] (0.95 confidence)</td>
+<td>329108 ns [328883, 329324] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k2&#95;roundtrip&#95;adversarial</td>
-<td>363815 ns [363049, 364455] (0.95 confidence)</td>
-<td>353231 ns [352450, 354045] (0.95 confidence)</td>
+<td>352172 ns [351379, 352996] (0.95 confidence)</td>
+<td>356146 ns [355584, 356751] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k3&#95;roundtrip</td>
-<td>3.43309e+08 ns [3.40982e+08, 3.45998e+08] (0.95 confidence)</td>
-<td>3.25811e+08 ns [3.25388e+08, 3.26241e+08] (0.95 confidence)</td>
+<td>3.26703e+08 ns [3.25532e+08, 3.2809e+08] (0.95 confidence)</td>
+<td>3.30575e+08 ns [3.30234e+08, 3.30918e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>bistellar&#95;flips&#95;5d/k3&#95;roundtrip&#95;adversarial</td>
-<td>9.37077e+08 ns [9.35221e+08, 9.39237e+08] (0.95 confidence)</td>
-<td>8.62458e+08 ns [8.61267e+08, 8.63615e+08] (0.95 confidence)</td>
+<td>9.10658e+08 ns [9.07812e+08, 9.13841e+08] (0.95 confidence)</td>
+<td>8.82636e+08 ns [8.79657e+08, 8.86312e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;2d/500</td>
-<td>230986 ns [229140, 232799] (0.95 confidence)</td>
-<td>205462 ns [204999, 205995] (0.95 confidence)</td>
+<td>209632 ns [209098, 210187] (0.95 confidence)</td>
+<td>211250 ns [210527, 212025] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;2d&#95;adversarial/500</td>
-<td>230689 ns [228507, 232837] (0.95 confidence)</td>
-<td>205877 ns [205326, 206475] (0.95 confidence)</td>
+<td>209507 ns [209292, 209744] (0.95 confidence)</td>
+<td>210174 ns [209394, 210922] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;3d/100</td>
-<td>184270 ns [182942, 185632] (0.95 confidence)</td>
-<td>165487 ns [165211, 165754] (0.95 confidence)</td>
+<td>166339 ns [166016, 166741] (0.95 confidence)</td>
+<td>167056 ns [166588, 167540] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;3d&#95;adversarial/100</td>
-<td>187851 ns [186148, 189602] (0.95 confidence)</td>
-<td>167741 ns [167381, 168083] (0.95 confidence)</td>
+<td>168132 ns [167863, 168417] (0.95 confidence)</td>
+<td>168413 ns [168092, 168732] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;4d/30</td>
-<td>145887 ns [144585, 147152] (0.95 confidence)</td>
-<td>132541 ns [132220, 132863] (0.95 confidence)</td>
+<td>131622 ns [131385, 131915] (0.95 confidence)</td>
+<td>137706 ns [137303, 138107] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;4d&#95;adversarial/30</td>
-<td>144388 ns [143087, 145631] (0.95 confidence)</td>
-<td>131817 ns [131574, 132074] (0.95 confidence)</td>
+<td>131050 ns [130824, 131290] (0.95 confidence)</td>
+<td>134747 ns [134256, 135263] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;5d/12</td>
-<td>40294.8 ns [39952.1, 40627.9] (0.95 confidence)</td>
-<td>37312.6 ns [37162.2, 37468.4] (0.95 confidence)</td>
+<td>36669.9 ns [36519.8, 36840.6] (0.95 confidence)</td>
+<td>37385.2 ns [37266, 37504.3] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>boundary&#95;facets/boundary&#95;facets&#95;5d&#95;adversarial/12</td>
-<td>39735.4 ns [39422.2, 40061.5] (0.95 confidence)</td>
-<td>36252.5 ns [36188.4, 36313.6] (0.95 confidence)</td>
+<td>35788.4 ns [35725.1, 35858.7] (0.95 confidence)</td>
+<td>36980.9 ns [36801.1, 37160.8] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>circumcenter/solve&#95;path/near&#95;singular&#95;exact&#95;fallback&#95;3d</td>
-<td>17119 ns [17093.4, 17144.4] (0.95 confidence)</td>
-<td>17174.1 ns [17152.2, 17195.6] (0.95 confidence)</td>
+<td>17669.4 ns [17626.9, 17711.7] (0.95 confidence)</td>
+<td>17606.8 ns [17584.7, 17628.7] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>circumcenter/solve&#95;path/regular&#95;lu&#95;3d</td>
-<td>22.9998 ns [22.9728, 23.0282] (0.95 confidence)</td>
-<td>23.305 ns [23.2702, 23.3407] (0.95 confidence)</td>
+<td>22.9912 ns [22.9638, 23.0195] (0.95 confidence)</td>
+<td>23.7471 ns [23.7008, 23.7993] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;2d/500</td>
-<td>377023 ns [373828, 380256] (0.95 confidence)</td>
-<td>388035 ns [387539, 388596] (0.95 confidence)</td>
+<td>343199 ns [341356, 345118] (0.95 confidence)</td>
+<td>391508 ns [390646, 392422] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;2d&#95;adversarial/500</td>
-<td>365804 ns [361966, 369317] (0.95 confidence)</td>
-<td>382118 ns [381484, 382804] (0.95 confidence)</td>
+<td>332771 ns [331997, 334037] (0.95 confidence)</td>
+<td>389851 ns [388690, 391118] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;3d/100</td>
-<td>304822 ns [302499, 307102] (0.95 confidence)</td>
-<td>275543 ns [275301, 275773] (0.95 confidence)</td>
+<td>275770 ns [275370, 276220] (0.95 confidence)</td>
+<td>277801 ns [276837, 278751] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;3d&#95;adversarial/100</td>
-<td>4.42763e+06 ns [4.38928e+06, 4.46532e+06] (0.95 confidence)</td>
-<td>3.97401e+06 ns [3.96524e+06, 3.98398e+06] (0.95 confidence)</td>
+<td>4.00082e+06 ns [3.9926e+06, 4.00978e+06] (0.95 confidence)</td>
+<td>4.03635e+06 ns [4.02751e+06, 4.04514e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;4d/30</td>
-<td>9.5876e+06 ns [9.50569e+06, 9.67417e+06] (0.95 confidence)</td>
-<td>8.76797e+06 ns [8.70573e+06, 8.83988e+06] (0.95 confidence)</td>
+<td>8.78704e+06 ns [8.73664e+06, 8.84747e+06] (0.95 confidence)</td>
+<td>8.9468e+06 ns [8.92504e+06, 8.96889e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;4d&#95;adversarial/30</td>
-<td>7.64228e+06 ns [7.58714e+06, 7.69392e+06] (0.95 confidence)</td>
-<td>7.00199e+06 ns [6.97681e+06, 7.02695e+06] (0.95 confidence)</td>
+<td>6.99418e+06 ns [6.95724e+06, 7.03573e+06] (0.95 confidence)</td>
+<td>7.07419e+06 ns [7.04404e+06, 7.11162e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;5d/12</td>
-<td>3.39448e+06 ns [3.36597e+06, 3.4234e+06] (0.95 confidence)</td>
-<td>3.03164e+06 ns [3.02216e+06, 3.04243e+06] (0.95 confidence)</td>
+<td>3.07103e+06 ns [3.06251e+06, 3.0796e+06] (0.95 confidence)</td>
+<td>3.07207e+06 ns [3.05725e+06, 3.09035e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull/from&#95;triangulation&#95;5d&#95;adversarial/12</td>
-<td>2.89774e+06 ns [2.86272e+06, 2.93142e+06] (0.95 confidence)</td>
-<td>2.65512e+06 ns [2.64863e+06, 2.66274e+06] (0.95 confidence)</td>
+<td>2.63914e+06 ns [2.63246e+06, 2.64712e+06] (0.95 confidence)</td>
+<td>2.73111e+06 ns [2.71267e+06, 2.74983e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;nearest&#95;visible&#95;facet&#95;3d/100</td>
-<td>1261.46 ns [1251.06, 1271.92] (0.95 confidence)</td>
-<td>1146.76 ns [1144.29, 1149.19] (0.95 confidence)</td>
+<td>1134.72 ns [1130.38, 1138.79] (0.95 confidence)</td>
+<td>1149.57 ns [1144.79, 1154.44] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;nearest&#95;visible&#95;facet&#95;3d&#95;adversarial/100</td>
-<td>45586.5 ns [45240, 45938] (0.95 confidence)</td>
-<td>41017.3 ns [40904.4, 41133.9] (0.95 confidence)</td>
+<td>40912.5 ns [40804.1, 41034.4] (0.95 confidence)</td>
+<td>41004.1 ns [40895.6, 41133.8] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;visible&#95;facets&#95;3d/100</td>
-<td>1365.76 ns [1345.65, 1385.14] (0.95 confidence)</td>
-<td>1220.15 ns [1208.07, 1234.29] (0.95 confidence)</td>
+<td>1212.91 ns [1201.63, 1227.13] (0.95 confidence)</td>
+<td>1222.44 ns [1216.82, 1228.52] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/find&#95;visible&#95;facets&#95;3d&#95;adversarial/100</td>
-<td>45862.8 ns [45426.7, 46305] (0.95 confidence)</td>
-<td>40807.4 ns [40705.2, 40923.4] (0.95 confidence)</td>
+<td>41046.2 ns [40913.5, 41199.7] (0.95 confidence)</td>
+<td>41131.9 ns [41039.7, 41228] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/is&#95;point&#95;outside&#95;3d/100</td>
-<td>104.363 ns [103.263, 105.421] (0.95 confidence)</td>
-<td>95.3963 ns [95.317, 95.4723] (0.95 confidence)</td>
+<td>94.6067 ns [94.4914, 94.7352] (0.95 confidence)</td>
+<td>95.7992 ns [95.6301, 95.9675] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>convex&#95;hull&#95;queries/is&#95;point&#95;outside&#95;3d&#95;adversarial/100</td>
-<td>851.922 ns [844.847, 858.708] (0.95 confidence)</td>
-<td>767.288 ns [765.443, 769.522] (0.95 confidence)</td>
+<td>770.856 ns [768.53, 773.297] (0.95 confidence)</td>
+<td>780.13 ns [776.819, 783.986] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/boundary&#95;point&#95;distance</td>
-<td>13.634 ns [13.6058, 13.6624] (0.95 confidence)</td>
-<td>13.4082 ns [13.3818, 13.4336] (0.95 confidence)</td>
+<td>13.5388 ns [13.514, 13.5649] (0.95 confidence)</td>
+<td>13.4266 ns [13.3943, 13.4638] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/boundary&#95;point&#95;insphere</td>
-<td>0.827435 ns [0.82465, 0.830304] (0.95 confidence)</td>
-<td>0.814717 ns [0.812755, 0.81673] (0.95 confidence)</td>
+<td>0.83637 ns [0.833595, 0.8392] (0.95 confidence)</td>
+<td>0.827141 ns [0.824016, 0.830381] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/boundary&#95;point&#95;lifted</td>
-<td>984.639 ns [980.747, 988.684] (0.95 confidence)</td>
-<td>959.351 ns [957.783, 960.976] (0.95 confidence)</td>
+<td>971.001 ns [969.089, 972.955] (0.95 confidence)</td>
+<td>978.53 ns [976.62, 980.488] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/far&#95;point&#95;distance</td>
-<td>14.0865 ns [14.0605, 14.114] (0.95 confidence)</td>
-<td>13.389 ns [13.3561, 13.4219] (0.95 confidence)</td>
+<td>13.5132 ns [13.4817, 13.5458] (0.95 confidence)</td>
+<td>13.6775 ns [13.6539, 13.7016] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/far&#95;point&#95;insphere</td>
-<td>51.6024 ns [51.1897, 52.0188] (0.95 confidence)</td>
-<td>50.0289 ns [49.7738, 50.2985] (0.95 confidence)</td>
+<td>48.9921 ns [48.8046, 49.1883] (0.95 confidence)</td>
+<td>50.7656 ns [50.4847, 51.0571] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/far&#95;point&#95;lifted</td>
-<td>51.4699 ns [51.1573, 51.7913] (0.95 confidence)</td>
-<td>49.8624 ns [49.6815, 50.0436] (0.95 confidence)</td>
+<td>50.5973 ns [50.2123, 51.0038] (0.95 confidence)</td>
+<td>50.5494 ns [50.2123, 50.8927] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/near&#95;boundary&#95;distance</td>
-<td>14.1756 ns [14.1322, 14.2197] (0.95 confidence)</td>
-<td>13.5411 ns [13.5132, 13.5687] (0.95 confidence)</td>
+<td>13.8014 ns [13.757, 13.8495] (0.95 confidence)</td>
+<td>13.8464 ns [13.8242, 13.868] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/near&#95;boundary&#95;insphere</td>
-<td>49.0976 ns [48.8394, 49.3591] (0.95 confidence)</td>
-<td>47.5618 ns [47.3438, 47.781] (0.95 confidence)</td>
+<td>47.0807 ns [46.8132, 47.361] (0.95 confidence)</td>
+<td>48.0824 ns [47.7365, 48.4402] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;2d/near&#95;boundary&#95;lifted</td>
-<td>48.638 ns [48.3779, 48.9055] (0.95 confidence)</td>
-<td>46.6557 ns [46.4678, 46.8477] (0.95 confidence)</td>
+<td>47.3911 ns [47.0183, 47.7893] (0.95 confidence)</td>
+<td>47.5431 ns [47.261, 47.852] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/boundary&#95;point&#95;distance</td>
-<td>32.7357 ns [32.6842, 32.7912] (0.95 confidence)</td>
-<td>32.6704 ns [32.5979, 32.7427] (0.95 confidence)</td>
+<td>32.7541 ns [32.6327, 32.8795] (0.95 confidence)</td>
+<td>32.8153 ns [32.7445, 32.8948] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/boundary&#95;point&#95;insphere</td>
-<td>1.19968 ns [1.19451, 1.20397] (0.95 confidence)</td>
-<td>1.17421 ns [1.17168, 1.17669] (0.95 confidence)</td>
+<td>1.21494 ns [1.20195, 1.23087] (0.95 confidence)</td>
+<td>1.18188 ns [1.17849, 1.18493] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/boundary&#95;point&#95;lifted</td>
-<td>1798.77 ns [1792.21, 1805.26] (0.95 confidence)</td>
-<td>1756.77 ns [1754.26, 1759.35] (0.95 confidence)</td>
+<td>1744.54 ns [1742.43, 1746.66] (0.95 confidence)</td>
+<td>1776.98 ns [1775.41, 1778.57] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/far&#95;point&#95;distance</td>
-<td>33.0242 ns [32.9144, 33.136] (0.95 confidence)</td>
-<td>32.3407 ns [32.2731, 32.4101] (0.95 confidence)</td>
+<td>32.9828 ns [32.84, 33.1373] (0.95 confidence)</td>
+<td>33.1066 ns [33.0361, 33.1795] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/far&#95;point&#95;insphere</td>
-<td>110.781 ns [110.388, 111.183] (0.95 confidence)</td>
-<td>104.95 ns [104.639, 105.277] (0.95 confidence)</td>
+<td>108.102 ns [107.54, 108.695] (0.95 confidence)</td>
+<td>108.558 ns [107.966, 109.172] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/far&#95;point&#95;lifted</td>
-<td>110.992 ns [110.342, 111.656] (0.95 confidence)</td>
-<td>103.64 ns [103.49, 103.783] (0.95 confidence)</td>
+<td>111.197 ns [110.58, 111.827] (0.95 confidence)</td>
+<td>112.344 ns [111.798, 112.911] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/near&#95;boundary&#95;distance</td>
-<td>33.2564 ns [33.133, 33.3878] (0.95 confidence)</td>
-<td>32.5824 ns [32.5162, 32.6468] (0.95 confidence)</td>
+<td>32.6832 ns [32.5787, 32.7926] (0.95 confidence)</td>
+<td>32.7475 ns [32.6955, 32.803] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/near&#95;boundary&#95;insphere</td>
-<td>102.521 ns [101.692, 103.363] (0.95 confidence)</td>
-<td>94.7606 ns [93.9731, 95.5968] (0.95 confidence)</td>
+<td>94.5311 ns [94.2925, 94.7792] (0.95 confidence)</td>
+<td>92.2219 ns [91.8899, 92.5626] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;3d/near&#95;boundary&#95;lifted</td>
-<td>101.254 ns [100.388, 102.165] (0.95 confidence)</td>
-<td>93.994 ns [93.3875, 94.6441] (0.95 confidence)</td>
+<td>95.1302 ns [94.7213, 95.565] (0.95 confidence)</td>
+<td>91.2777 ns [91.0512, 91.5091] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/boundary&#95;point&#95;distance</td>
-<td>51.7806 ns [51.6977, 51.8659] (0.95 confidence)</td>
-<td>53.335 ns [53.2364, 53.4396] (0.95 confidence)</td>
+<td>50.9981 ns [50.888, 51.1097] (0.95 confidence)</td>
+<td>54.6747 ns [54.5304, 54.8235] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/boundary&#95;point&#95;insphere</td>
-<td>1.56114 ns [1.53275, 1.58838] (0.95 confidence)</td>
-<td>1.54053 ns [1.51435, 1.56596] (0.95 confidence)</td>
+<td>1.57133 ns [1.54916, 1.59235] (0.95 confidence)</td>
+<td>1.56298 ns [1.53286, 1.59204] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/boundary&#95;point&#95;lifted</td>
-<td>3758.26 ns [3751.91, 3764.6] (0.95 confidence)</td>
-<td>3734.7 ns [3725.69, 3743.72] (0.95 confidence)</td>
+<td>3668.74 ns [3660.8, 3677.01] (0.95 confidence)</td>
+<td>3767.89 ns [3749.64, 3792.2] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/far&#95;point&#95;distance</td>
-<td>55.6529 ns [55.1293, 56.1643] (0.95 confidence)</td>
-<td>53.2062 ns [53.0935, 53.3137] (0.95 confidence)</td>
+<td>50.9772 ns [50.8599, 51.0953] (0.95 confidence)</td>
+<td>53.7173 ns [53.5935, 53.8393] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/far&#95;point&#95;insphere</td>
-<td>768.103 ns [764.94, 771.271] (0.95 confidence)</td>
-<td>733.219 ns [731.487, 735.008] (0.95 confidence)</td>
+<td>749.122 ns [743.645, 755.32] (0.95 confidence)</td>
+<td>736.251 ns [734.968, 737.559] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/far&#95;point&#95;lifted</td>
-<td>771.873 ns [769.445, 774.309] (0.95 confidence)</td>
-<td>731.2 ns [729.389, 733.06] (0.95 confidence)</td>
+<td>753 ns [750.441, 755.613] (0.95 confidence)</td>
+<td>738.213 ns [735.498, 741.145] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/near&#95;boundary&#95;distance</td>
-<td>52.2516 ns [52.1073, 52.4024] (0.95 confidence)</td>
-<td>53.6145 ns [53.5031, 53.7232] (0.95 confidence)</td>
+<td>53.1202 ns [52.8804, 53.372] (0.95 confidence)</td>
+<td>53.8261 ns [53.7072, 53.945] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/near&#95;boundary&#95;insphere</td>
-<td>758.769 ns [755.762, 761.745] (0.95 confidence)</td>
-<td>716.731 ns [714.862, 718.651] (0.95 confidence)</td>
+<td>766.167 ns [762.646, 769.643] (0.95 confidence)</td>
+<td>738.957 ns [736.84, 741.114] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;4d/near&#95;boundary&#95;lifted</td>
-<td>753.078 ns [750.813, 755.301] (0.95 confidence)</td>
-<td>715.344 ns [713.397, 717.304] (0.95 confidence)</td>
+<td>740.171 ns [737.355, 743.093] (0.95 confidence)</td>
+<td>733.476 ns [731.047, 735.986] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/boundary&#95;point&#95;distance</td>
-<td>88.8377 ns [88.3871, 89.3443] (0.95 confidence)</td>
-<td>86.8255 ns [86.5779, 87.0725] (0.95 confidence)</td>
+<td>87.4714 ns [87.2609, 87.6868] (0.95 confidence)</td>
+<td>87.3212 ns [87.0458, 87.5977] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/boundary&#95;point&#95;insphere</td>
-<td>1.7196 ns [1.70928, 1.73176] (0.95 confidence)</td>
-<td>1.68417 ns [1.68026, 1.68923] (0.95 confidence)</td>
+<td>1.69288 ns [1.68869, 1.69786] (0.95 confidence)</td>
+<td>1.70035 ns [1.69221, 1.71066] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/boundary&#95;point&#95;lifted</td>
-<td>5957.58 ns [5939.07, 5978.05] (0.95 confidence)</td>
-<td>5812.07 ns [5801.58, 5822.99] (0.95 confidence)</td>
+<td>6047.39 ns [6008.53, 6095.32] (0.95 confidence)</td>
+<td>5867.63 ns [5857.43, 5878.07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/far&#95;point&#95;distance</td>
-<td>88.3474 ns [88.0294, 88.664] (0.95 confidence)</td>
-<td>86.9318 ns [86.6565, 87.212] (0.95 confidence)</td>
+<td>88.2959 ns [87.8611, 88.8142] (0.95 confidence)</td>
+<td>87.2551 ns [86.9283, 87.586] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/far&#95;point&#95;insphere</td>
-<td>1548.32 ns [1544.11, 1552.43] (0.95 confidence)</td>
-<td>1267.62 ns [1264.83, 1270.5] (0.95 confidence)</td>
+<td>1364.07 ns [1359.99, 1368.36] (0.95 confidence)</td>
+<td>1299.78 ns [1296.04, 1303.57] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/far&#95;point&#95;lifted</td>
-<td>1356.44 ns [1353.44, 1359.32] (0.95 confidence)</td>
-<td>1273.77 ns [1270.71, 1276.83] (0.95 confidence)</td>
+<td>1343.25 ns [1340.42, 1346.12] (0.95 confidence)</td>
+<td>1286.39 ns [1283.31, 1289.59] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/near&#95;boundary&#95;distance</td>
-<td>87.1305 ns [86.9404, 87.3264] (0.95 confidence)</td>
-<td>86.5561 ns [86.316, 86.8041] (0.95 confidence)</td>
+<td>88.5645 ns [88.23, 88.918] (0.95 confidence)</td>
+<td>87.9891 ns [87.6638, 88.3188] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/near&#95;boundary&#95;insphere</td>
-<td>1344.5 ns [1342.09, 1346.89] (0.95 confidence)</td>
-<td>1269.59 ns [1264.57, 1274.96] (0.95 confidence)</td>
+<td>1342.36 ns [1337.99, 1347.03] (0.95 confidence)</td>
+<td>1264.07 ns [1259.86, 1268.42] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>edge&#95;cases&#95;5d/near&#95;boundary&#95;lifted</td>
-<td>1346.66 ns [1343.14, 1349.99] (0.95 confidence)</td>
-<td>1243.88 ns [1240.79, 1247.21] (0.95 confidence)</td>
+<td>1343.51 ns [1339.28, 1347.75] (0.95 confidence)</td>
+<td>1276.64 ns [1271.19, 1282.32] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;2d/vertices&#95;120&#95;simplices&#95;226</td>
-<td>1.68801e+06 ns [1.65952e+06, 1.71864e+06] (0.95 confidence)</td>
-<td>1.58412e+06 ns [1.58083e+06, 1.5877e+06] (0.95 confidence)</td>
+<td>1.61314e+06 ns [1.60877e+06, 1.61763e+06] (0.95 confidence)</td>
+<td>1.58605e+06 ns [1.58205e+06, 1.59041e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;3d/vertices&#95;30&#95;simplices&#95;115</td>
-<td>1.7239e+08 ns [1.70298e+08, 1.74461e+08] (0.95 confidence)</td>
-<td>1.56937e+08 ns [1.56702e+08, 1.5724e+08] (0.95 confidence)</td>
+<td>1.59381e+08 ns [1.59147e+08, 1.59635e+08] (0.95 confidence)</td>
+<td>1.58796e+08 ns [1.58487e+08, 1.59104e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;4d/vertices&#95;16&#95;simplices&#95;68</td>
-<td>5.1033e+08 ns [4.99454e+08, 5.22043e+08] (0.95 confidence)</td>
-<td>4.74908e+08 ns [4.64602e+08, 4.85462e+08] (0.95 confidence)</td>
+<td>4.79355e+08 ns [4.79046e+08, 4.79656e+08] (0.95 confidence)</td>
+<td>4.71827e+08 ns [4.71496e+08, 4.7218e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>explicit&#95;import/import&#95;pseudomanifold&#95;5d/vertices&#95;10&#95;simplices&#95;20</td>
-<td>1.4414e+08 ns [1.42237e+08, 1.46249e+08] (0.95 confidence)</td>
-<td>1.33374e+08 ns [1.33129e+08, 1.33701e+08] (0.95 confidence)</td>
+<td>1.35104e+08 ns [1.34874e+08, 1.35354e+08] (0.95 confidence)</td>
+<td>1.3601e+08 ns [1.35542e+08, 1.36586e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;2d/10</td>
-<td>486041 ns [480133, 491754] (0.95 confidence)</td>
-<td>436031 ns [434652, 437625] (0.95 confidence)</td>
+<td>438463 ns [437691, 439250] (0.95 confidence)</td>
+<td>446524 ns [445029, 448210] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;2d&#95;adversarial/10</td>
-<td>3.1629e+06 ns [3.11415e+06, 3.20808e+06] (0.95 confidence)</td>
-<td>2.85668e+06 ns [2.85261e+06, 2.86172e+06] (0.95 confidence)</td>
+<td>2.86142e+06 ns [2.85555e+06, 2.86739e+06] (0.95 confidence)</td>
+<td>2.88115e+06 ns [2.86639e+06, 2.90276e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;3d/10</td>
-<td>2.8408e+06 ns [2.80307e+06, 2.87904e+06] (0.95 confidence)</td>
-<td>2.69187e+06 ns [2.68236e+06, 2.70429e+06] (0.95 confidence)</td>
+<td>2.81502e+06 ns [2.79423e+06, 2.83573e+06] (0.95 confidence)</td>
+<td>2.78132e+06 ns [2.76522e+06, 2.79975e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;3d&#95;adversarial/10</td>
-<td>1.41067e+07 ns [1.3918e+07, 1.43318e+07] (0.95 confidence)</td>
-<td>1.3278e+07 ns [1.32445e+07, 1.33212e+07] (0.95 confidence)</td>
+<td>1.39265e+07 ns [1.38698e+07, 1.39934e+07] (0.95 confidence)</td>
+<td>1.35294e+07 ns [1.34597e+07, 1.36191e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;4d/6</td>
-<td>2.74128e+07 ns [2.7069e+07, 2.77838e+07] (0.95 confidence)</td>
-<td>2.61869e+07 ns [2.61018e+07, 2.62781e+07] (0.95 confidence)</td>
+<td>2.65165e+07 ns [2.64711e+07, 2.65605e+07] (0.95 confidence)</td>
+<td>2.66044e+07 ns [2.64984e+07, 2.67056e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;4d&#95;adversarial/6</td>
-<td>6.65983e+07 ns [6.58803e+07, 6.74457e+07] (0.95 confidence)</td>
-<td>6.51669e+07 ns [6.50267e+07, 6.5329e+07] (0.95 confidence)</td>
+<td>6.57378e+07 ns [6.55044e+07, 6.59952e+07] (0.95 confidence)</td>
+<td>6.71733e+07 ns [6.68671e+07, 6.75122e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;5d/4</td>
-<td>5.03311e+07 ns [4.94892e+07, 5.12292e+07] (0.95 confidence)</td>
-<td>5.01032e+07 ns [4.99292e+07, 5.02935e+07] (0.95 confidence)</td>
+<td>4.79581e+07 ns [4.79015e+07, 4.80238e+07] (0.95 confidence)</td>
+<td>5.156e+07 ns [5.13765e+07, 5.17438e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>incremental&#95;insert/insert&#95;5d&#95;adversarial/4</td>
-<td>5.24763e+07 ns [5.17174e+07, 5.33731e+07] (0.95 confidence)</td>
-<td>5.44126e+07 ns [5.42807e+07, 5.45358e+07] (0.95 confidence)</td>
+<td>5.18702e+07 ns [5.16746e+07, 5.20777e+07] (0.95 confidence)</td>
+<td>5.59724e+07 ns [5.58076e+07, 5.61503e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/2d/vertices&#95;100&#95;simplices&#95;187&#95;seed&#95;dd618c77b9187836&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>7067.61 ns [7037.72, 7109.79] (0.95 confidence)</td>
-<td>7164.34 ns [7144.1, 7187.45] (0.95 confidence)</td>
+<td>7081.94 ns [7068.22, 7095.66] (0.95 confidence)</td>
+<td>7239.28 ns [7216.59, 7272.07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/2d/vertices&#95;2000&#95;simplices&#95;3978&#95;seed&#95;01acf93075e96412&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>7259.21 ns [7248.36, 7272.11] (0.95 confidence)</td>
-<td>7415.04 ns [7376.55, 7459.91] (0.95 confidence)</td>
+<td>7274.62 ns [7263.47, 7290.86] (0.95 confidence)</td>
+<td>7512.78 ns [7490.83, 7537.37] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/2d/vertices&#95;500&#95;simplices&#95;983&#95;seed&#95;1493be4e9d7a5906&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>7412.89 ns [7399.52, 7426.61] (0.95 confidence)</td>
-<td>7481.82 ns [7474.71, 7490.18] (0.95 confidence)</td>
+<td>7398.82 ns [7385.78, 7411.32] (0.95 confidence)</td>
+<td>7710.9 ns [7650.55, 7799.29] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/3d/vertices&#95;150&#95;simplices&#95;829&#95;seed&#95;a44b52b395a4b44d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>14567.3 ns [14521.5, 14621.5] (0.95 confidence)</td>
-<td>14729.9 ns [14689.9, 14787.7] (0.95 confidence)</td>
+<td>14620.8 ns [14552.5, 14700.4] (0.95 confidence)</td>
+<td>15143.6 ns [15082.8, 15206.8] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/3d/vertices&#95;500&#95;simplices&#95;3052&#95;seed&#95;1493be4f9d7a5907&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>14521.9 ns [14479, 14560.4] (0.95 confidence)</td>
-<td>14646.2 ns [14598.4, 14697.3] (0.95 confidence)</td>
+<td>14483 ns [14428.5, 14533] (0.95 confidence)</td>
+<td>15071.4 ns [15023.9, 15117.8] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/3d/vertices&#95;50&#95;simplices&#95;222&#95;seed&#95;f61fc639dc8c3c19&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>14510 ns [14464.9, 14560.6] (0.95 confidence)</td>
-<td>14743.1 ns [14700.5, 14794.9] (0.95 confidence)</td>
+<td>14566.2 ns [14526.3, 14605.3] (0.95 confidence)</td>
+<td>15218.3 ns [15163, 15277.9] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/4d/vertices&#95;100&#95;simplices&#95;1677&#95;seed&#95;dd618c71b9187830&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.98769e+06 ns [1.98548e+06, 1.98986e+06] (0.95 confidence)</td>
-<td>2.00994e+06 ns [1.99341e+06, 2.02617e+06] (0.95 confidence)</td>
+<td>1.98439e+06 ns [1.98071e+06, 1.98819e+06] (0.95 confidence)</td>
+<td>2.03576e+06 ns [2.0319e+06, 2.03999e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/4d/vertices&#95;50&#95;simplices&#95;626&#95;seed&#95;f61fc63edc8c3c1e&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.96787e+06 ns [1.95757e+06, 1.97716e+06] (0.95 confidence)</td>
-<td>1.96829e+06 ns [1.95338e+06, 1.98289e+06] (0.95 confidence)</td>
+<td>1.96e+06 ns [1.94697e+06, 1.97463e+06] (0.95 confidence)</td>
+<td>2.02676e+06 ns [2.00081e+06, 2.05853e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/5d/vertices&#95;25&#95;simplices&#95;410&#95;seed&#95;63a0e3186e461e08&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>4.69948e+06 ns [4.68479e+06, 4.71854e+06] (0.95 confidence)</td>
-<td>4.66761e+06 ns [4.65878e+06, 4.67599e+06] (0.95 confidence)</td>
+<td>4.77285e+06 ns [4.74467e+06, 4.79882e+06] (0.95 confidence)</td>
+<td>4.82906e+06 ns [4.80623e+06, 4.85173e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/exact&#95;hint/5d/vertices&#95;40&#95;simplices&#95;1208&#95;seed&#95;a86104fee3a3634d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>4.74163e+06 ns [4.73714e+06, 4.74638e+06] (0.95 confidence)</td>
-<td>4.77138e+06 ns [4.74314e+06, 4.80092e+06] (0.95 confidence)</td>
+<td>4.85416e+06 ns [4.83084e+06, 4.87952e+06] (0.95 confidence)</td>
+<td>4.87375e+06 ns [4.85958e+06, 4.88793e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/2d/vertices&#95;100&#95;simplices&#95;187&#95;seed&#95;dd618c77b9187836&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>73613.1 ns [73210.3, 74027.8] (0.95 confidence)</td>
-<td>74342.9 ns [74179.3, 74485.4] (0.95 confidence)</td>
+<td>73882.7 ns [73699.6, 74068.9] (0.95 confidence)</td>
+<td>76547.4 ns [75702, 77660.7] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/2d/vertices&#95;2000&#95;simplices&#95;3978&#95;seed&#95;01acf93075e96412&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>265273 ns [264495, 266061] (0.95 confidence)</td>
-<td>272494 ns [269898, 275492] (0.95 confidence)</td>
+<td>268491 ns [266780, 270672] (0.95 confidence)</td>
+<td>276458 ns [274145, 279685] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/2d/vertices&#95;500&#95;simplices&#95;983&#95;seed&#95;1493be4e9d7a5906&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>121980 ns [121785, 122147] (0.95 confidence)</td>
-<td>123311 ns [123143, 123454] (0.95 confidence)</td>
+<td>123961 ns [123167, 124787] (0.95 confidence)</td>
+<td>125920 ns [125494, 126310] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/3d/vertices&#95;150&#95;simplices&#95;829&#95;seed&#95;a44b52b395a4b44d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>123506 ns [123205, 123763] (0.95 confidence)</td>
-<td>126082 ns [125311, 126746] (0.95 confidence)</td>
+<td>124045 ns [123827, 124332] (0.95 confidence)</td>
+<td>129863 ns [128882, 130850] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/3d/vertices&#95;500&#95;simplices&#95;3052&#95;seed&#95;1493be4f9d7a5907&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>189739 ns [189044, 190508] (0.95 confidence)</td>
-<td>192655 ns [191065, 194239] (0.95 confidence)</td>
+<td>191201 ns [189411, 193110] (0.95 confidence)</td>
+<td>201218 ns [197993, 205126] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/3d/vertices&#95;50&#95;simplices&#95;222&#95;seed&#95;f61fc639dc8c3c19&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>65481.1 ns [65097.5, 65931.5] (0.95 confidence)</td>
-<td>65637.3 ns [65350.3, 65948.9] (0.95 confidence)</td>
+<td>64983.6 ns [64694.3, 65309.3] (0.95 confidence)</td>
+<td>69547.6 ns [68299.2, 71462.6] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/4d/vertices&#95;100&#95;simplices&#95;1677&#95;seed&#95;dd618c71b9187830&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.12567e+07 ns [1.123e+07, 1.12865e+07] (0.95 confidence)</td>
-<td>1.11329e+07 ns [1.11172e+07, 1.11487e+07] (0.95 confidence)</td>
+<td>1.12189e+07 ns [1.12025e+07, 1.12351e+07] (0.95 confidence)</td>
+<td>1.16001e+07 ns [1.1538e+07, 1.16563e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/4d/vertices&#95;50&#95;simplices&#95;626&#95;seed&#95;f61fc63edc8c3c1e&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>1.11665e+07 ns [1.11061e+07, 1.12343e+07] (0.95 confidence)</td>
-<td>1.11337e+07 ns [1.10646e+07, 1.12065e+07] (0.95 confidence)</td>
+<td>1.12709e+07 ns [1.11852e+07, 1.13586e+07] (0.95 confidence)</td>
+<td>1.14055e+07 ns [1.1377e+07, 1.14328e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/5d/vertices&#95;25&#95;simplices&#95;410&#95;seed&#95;63a0e3186e461e08&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>2.21073e+07 ns [2.19759e+07, 2.22285e+07] (0.95 confidence)</td>
-<td>2.20804e+07 ns [2.20053e+07, 2.21828e+07] (0.95 confidence)</td>
+<td>2.19654e+07 ns [2.19286e+07, 2.20029e+07] (0.95 confidence)</td>
+<td>2.26343e+07 ns [2.25583e+07, 2.27176e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>locate/no&#95;hint/5d/vertices&#95;40&#95;simplices&#95;1208&#95;seed&#95;a86104fee3a3634d&#95;input&#95;hull&#95;queries&#95;v1&#95;64</td>
-<td>3.97055e+07 ns [3.968e+07, 3.97358e+07] (0.95 confidence)</td>
-<td>3.97228e+07 ns [3.9666e+07, 3.97855e+07] (0.95 confidence)</td>
+<td>4.00702e+07 ns [3.99473e+07, 4.02048e+07] (0.95 confidence)</td>
+<td>4.13841e+07 ns [4.10856e+07, 4.17361e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;2d/simplices&#95;226</td>
-<td>126314 ns [123897, 128732] (0.95 confidence)</td>
-<td>119600 ns [118091, 121199] (0.95 confidence)</td>
+<td>115003 ns [113590, 116852] (0.95 confidence)</td>
+<td>118699 ns [118022, 119742] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;3d/simplices&#95;115</td>
-<td>159117 ns [155352, 162915] (0.95 confidence)</td>
-<td>147538 ns [146512, 148848] (0.95 confidence)</td>
+<td>141173 ns [140126, 142660] (0.95 confidence)</td>
+<td>155207 ns [153563, 156859] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;4d/simplices&#95;68</td>
-<td>1.30989e+06 ns [1.28994e+06, 1.33145e+06] (0.95 confidence)</td>
-<td>1.22981e+06 ns [1.22058e+06, 1.23871e+06] (0.95 confidence)</td>
+<td>1.20253e+06 ns [1.19344e+06, 1.21485e+06] (0.95 confidence)</td>
+<td>1.27174e+06 ns [1.26183e+06, 1.28122e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/certify&#95;pl&#95;manifold&#95;5d/simplices&#95;20</td>
-<td>520314 ns [515778, 525084] (0.95 confidence)</td>
-<td>464480 ns [460716, 468471] (0.95 confidence)</td>
+<td>455130 ns [452645, 458226] (0.95 confidence)</td>
+<td>483222 ns [480869, 486056] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;2d/simplices&#95;226</td>
-<td>1.40538e+06 ns [1.37784e+06, 1.43629e+06] (0.95 confidence)</td>
-<td>1.33846e+06 ns [1.33577e+06, 1.34118e+06] (0.95 confidence)</td>
+<td>1.32186e+06 ns [1.31451e+06, 1.3356e+06] (0.95 confidence)</td>
+<td>1.32725e+06 ns [1.32312e+06, 1.33212e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;3d/simplices&#95;115</td>
-<td>1.73465e+08 ns [1.71278e+08, 1.75972e+08] (0.95 confidence)</td>
-<td>1.56965e+08 ns [1.56711e+08, 1.57192e+08] (0.95 confidence)</td>
+<td>1.549e+08 ns [1.54525e+08, 1.55339e+08] (0.95 confidence)</td>
+<td>1.59589e+08 ns [1.592e+08, 1.59906e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;4d/simplices&#95;68</td>
-<td>5.15014e+08 ns [5.03077e+08, 5.28087e+08] (0.95 confidence)</td>
-<td>4.58556e+08 ns [4.58251e+08, 4.58872e+08] (0.95 confidence)</td>
+<td>4.6906e+08 ns [4.6741e+08, 4.71092e+08] (0.95 confidence)</td>
+<td>4.71969e+08 ns [4.71084e+08, 4.72921e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;canonicalizing&#95;5d/simplices&#95;20</td>
-<td>1.53354e+08 ns [1.52258e+08, 1.5482e+08] (0.95 confidence)</td>
-<td>1.32133e+08 ns [1.3193e+08, 1.32345e+08] (0.95 confidence)</td>
+<td>1.33311e+08 ns [1.33108e+08, 1.33521e+08] (0.95 confidence)</td>
+<td>1.38963e+08 ns [1.36488e+08, 1.4229e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;2d/simplices&#95;226</td>
-<td>1.34486e+06 ns [1.31496e+06, 1.37507e+06] (0.95 confidence)</td>
-<td>1.32524e+06 ns [1.29429e+06, 1.36145e+06] (0.95 confidence)</td>
+<td>1.23762e+06 ns [1.23506e+06, 1.24136e+06] (0.95 confidence)</td>
+<td>1.25076e+06 ns [1.24641e+06, 1.25557e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;3d/simplices&#95;115</td>
-<td>1.72485e+08 ns [1.70033e+08, 1.74893e+08] (0.95 confidence)</td>
-<td>1.57396e+08 ns [1.57121e+08, 1.57628e+08] (0.95 confidence)</td>
+<td>1.54604e+08 ns [1.54401e+08, 1.54873e+08] (0.95 confidence)</td>
+<td>1.59552e+08 ns [1.5926e+08, 1.59807e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;4d/simplices&#95;68</td>
-<td>5.05104e+08 ns [4.95945e+08, 5.15638e+08] (0.95 confidence)</td>
-<td>4.573e+08 ns [4.56928e+08, 4.57639e+08] (0.95 confidence)</td>
+<td>4.6949e+08 ns [4.68395e+08, 4.71262e+08] (0.95 confidence)</td>
+<td>4.72816e+08 ns [4.71484e+08, 4.74132e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>proof&#95;boundaries/promote&#95;pseudomanifold&#95;strict&#95;5d/simplices&#95;20</td>
-<td>1.50999e+08 ns [1.48889e+08, 1.52791e+08] (0.95 confidence)</td>
-<td>1.31641e+08 ns [1.31442e+08, 1.31818e+08] (0.95 confidence)</td>
+<td>1.32966e+08 ns [1.32768e+08, 1.33227e+08] (0.95 confidence)</td>
+<td>1.36289e+08 ns [1.3595e+08, 1.36622e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>random/insphere&#95;1000&#95;queries</td>
-<td>435437 ns [433602, 437377] (0.95 confidence)</td>
-<td>416587 ns [415229, 417976] (0.95 confidence)</td>
+<td>414983 ns [413766, 416195] (0.95 confidence)</td>
+<td>425759 ns [424725, 426748] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>random/insphere&#95;distance&#95;1000&#95;queries</td>
-<td>66411.5 ns [66288.2, 66536.9] (0.95 confidence)</td>
-<td>64162.1 ns [63988, 64339.5] (0.95 confidence)</td>
+<td>63190.2 ns [62875, 63503.8] (0.95 confidence)</td>
+<td>65623.2 ns [65453.4, 65795] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>random/insphere&#95;lifted&#95;1000&#95;queries</td>
-<td>431747 ns [430058, 433509] (0.95 confidence)</td>
-<td>414552 ns [413517, 415681] (0.95 confidence)</td>
+<td>415100 ns [413851, 416329] (0.95 confidence)</td>
+<td>421148 ns [419926, 422384] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;2d/tds&#95;new/500</td>
-<td>5.07618e+07 ns [5.034e+07, 5.11476e+07] (0.95 confidence)</td>
-<td>4.61542e+07 ns [4.55714e+07, 4.71861e+07] (0.95 confidence)</td>
+<td>4.58298e+07 ns [4.56359e+07, 4.60524e+07] (0.95 confidence)</td>
+<td>4.58099e+07 ns [4.57014e+07, 4.59412e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;2d/tds&#95;new&#95;adversarial/500</td>
-<td>5.91104e+07 ns [5.77995e+07, 6.01601e+07] (0.95 confidence)</td>
-<td>5.33118e+07 ns [5.32538e+07, 5.33879e+07] (0.95 confidence)</td>
+<td>5.36853e+07 ns [5.36105e+07, 5.37802e+07] (0.95 confidence)</td>
+<td>5.52124e+07 ns [5.45396e+07, 5.60237e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;3d/tds&#95;new/100</td>
-<td>4.13526e+07 ns [4.1008e+07, 4.17056e+07] (0.95 confidence)</td>
-<td>3.75032e+07 ns [3.72446e+07, 3.77972e+07] (0.95 confidence)</td>
+<td>3.69066e+07 ns [3.68702e+07, 3.69438e+07] (0.95 confidence)</td>
+<td>3.75031e+07 ns [3.72991e+07, 3.78407e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;3d/tds&#95;new&#95;adversarial/100</td>
-<td>9.26514e+07 ns [9.18003e+07, 9.34205e+07] (0.95 confidence)</td>
-<td>8.37331e+07 ns [8.35578e+07, 8.39064e+07] (0.95 confidence)</td>
+<td>8.36544e+07 ns [8.35455e+07, 8.37654e+07] (0.95 confidence)</td>
+<td>8.5111e+07 ns [8.49203e+07, 8.53172e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;4d/tds&#95;new/30</td>
-<td>1.04843e+08 ns [1.04138e+08, 1.05692e+08] (0.95 confidence)</td>
-<td>9.58649e+07 ns [9.53988e+07, 9.62441e+07] (0.95 confidence)</td>
+<td>9.27933e+07 ns [9.25165e+07, 9.30309e+07] (0.95 confidence)</td>
+<td>9.69391e+07 ns [9.64397e+07, 9.7463e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;4d/tds&#95;new&#95;adversarial/30</td>
-<td>9.88616e+07 ns [9.81979e+07, 9.96077e+07] (0.95 confidence)</td>
-<td>9.07478e+07 ns [9.03424e+07, 9.11959e+07] (0.95 confidence)</td>
+<td>8.76889e+07 ns [8.74524e+07, 8.79472e+07] (0.95 confidence)</td>
+<td>9.32569e+07 ns [9.26047e+07, 9.39296e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;5d/tds&#95;new/12</td>
-<td>2.28336e+07 ns [2.27616e+07, 2.28976e+07] (0.95 confidence)</td>
-<td>2.13796e+07 ns [2.13205e+07, 2.14496e+07] (0.95 confidence)</td>
+<td>2.03289e+07 ns [2.02847e+07, 2.03842e+07] (0.95 confidence)</td>
+<td>2.20169e+07 ns [2.18847e+07, 2.21549e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>tds&#95;new&#95;5d/tds&#95;new&#95;adversarial/12</td>
-<td>2.1035e+07 ns [2.08651e+07, 2.12351e+07] (0.95 confidence)</td>
-<td>1.96296e+07 ns [1.95818e+07, 1.96948e+07] (0.95 confidence)</td>
+<td>1.8768e+07 ns [1.8727e+07, 1.88139e+07] (0.95 confidence)</td>
+<td>2.0144e+07 ns [2.00767e+07, 2.02078e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;2d/500</td>
-<td>937961 ns [929713, 946867] (0.95 confidence)</td>
-<td>787728 ns [782790, 793760] (0.95 confidence)</td>
+<td>801130 ns [798392, 804216] (0.95 confidence)</td>
+<td>803256 ns [796832, 810647] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;2d&#95;adversarial/500</td>
-<td>1.27383e+06 ns [1.26082e+06, 1.28809e+06] (0.95 confidence)</td>
-<td>1.09517e+06 ns [1.08947e+06, 1.1021e+06] (0.95 confidence)</td>
+<td>1.11441e+06 ns [1.10652e+06, 1.12334e+06] (0.95 confidence)</td>
+<td>1.10062e+06 ns [1.09588e+06, 1.10648e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;3d/100</td>
-<td>1.29595e+06 ns [1.27925e+06, 1.31348e+06] (0.95 confidence)</td>
-<td>1.20706e+06 ns [1.20013e+06, 1.21811e+06] (0.95 confidence)</td>
+<td>1.09475e+06 ns [1.08545e+06, 1.10593e+06] (0.95 confidence)</td>
+<td>1.26063e+06 ns [1.24818e+06, 1.27497e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;3d&#95;adversarial/100</td>
-<td>2.35112e+06 ns [2.31796e+06, 2.38067e+06] (0.95 confidence)</td>
-<td>2.17505e+06 ns [2.16184e+06, 2.1924e+06] (0.95 confidence)</td>
+<td>2.0728e+06 ns [2.05892e+06, 2.09007e+06] (0.95 confidence)</td>
+<td>2.29704e+06 ns [2.27329e+06, 2.32178e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;4d/30</td>
-<td>4.55223e+06 ns [4.51062e+06, 4.59543e+06] (0.95 confidence)</td>
-<td>4.56482e+06 ns [4.55032e+06, 4.58077e+06] (0.95 confidence)</td>
+<td>3.91667e+06 ns [3.89426e+06, 3.94176e+06] (0.95 confidence)</td>
+<td>4.65163e+06 ns [4.62715e+06, 4.67919e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;4d&#95;adversarial/30</td>
-<td>4.41495e+06 ns [4.3715e+06, 4.45353e+06] (0.95 confidence)</td>
-<td>4.48057e+06 ns [4.43856e+06, 4.52496e+06] (0.95 confidence)</td>
+<td>3.9108e+06 ns [3.89131e+06, 3.93431e+06] (0.95 confidence)</td>
+<td>4.53008e+06 ns [4.49007e+06, 4.57261e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;5d/12</td>
-<td>1.87233e+06 ns [1.85063e+06, 1.892e+06] (0.95 confidence)</td>
-<td>2.10696e+06 ns [2.10038e+06, 2.11512e+06] (0.95 confidence)</td>
+<td>1.64355e+06 ns [1.63576e+06, 1.65299e+06] (0.95 confidence)</td>
+<td>2.22168e+06 ns [2.21012e+06, 2.23297e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/delaunay&#95;report&#95;5d&#95;adversarial/12</td>
-<td>1.66132e+06 ns [1.6444e+06, 1.67781e+06] (0.95 confidence)</td>
-<td>1.9127e+06 ns [1.90437e+06, 1.92147e+06] (0.95 confidence)</td>
+<td>1.45774e+06 ns [1.45228e+06, 1.46423e+06] (0.95 confidence)</td>
+<td>2.03222e+06 ns [2.00881e+06, 2.05906e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;2d/500</td>
-<td>933498 ns [924059, 942099] (0.95 confidence)</td>
-<td>789668 ns [784872, 794806] (0.95 confidence)</td>
+<td>811161 ns [804633, 818051] (0.95 confidence)</td>
+<td>807948 ns [805044, 810962] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;2d&#95;adversarial/500</td>
-<td>1.29168e+06 ns [1.27908e+06, 1.30509e+06] (0.95 confidence)</td>
-<td>1.09265e+06 ns [1.08506e+06, 1.10168e+06] (0.95 confidence)</td>
+<td>1.10928e+06 ns [1.10314e+06, 1.11699e+06] (0.95 confidence)</td>
+<td>1.10756e+06 ns [1.10003e+06, 1.11638e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;3d/100</td>
-<td>1.28243e+06 ns [1.27035e+06, 1.29388e+06] (0.95 confidence)</td>
-<td>1.21562e+06 ns [1.20515e+06, 1.22835e+06] (0.95 confidence)</td>
+<td>1.08753e+06 ns [1.08005e+06, 1.09706e+06] (0.95 confidence)</td>
+<td>1.26255e+06 ns [1.25076e+06, 1.27508e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;3d&#95;adversarial/100</td>
-<td>2.37079e+06 ns [2.34554e+06, 2.39358e+06] (0.95 confidence)</td>
-<td>2.21607e+06 ns [2.20143e+06, 2.23212e+06] (0.95 confidence)</td>
+<td>2.09203e+06 ns [2.08352e+06, 2.10219e+06] (0.95 confidence)</td>
+<td>2.21589e+06 ns [2.20568e+06, 2.23e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;4d/30</td>
-<td>4.52679e+06 ns [4.48462e+06, 4.56872e+06] (0.95 confidence)</td>
-<td>4.54118e+06 ns [4.50998e+06, 4.58163e+06] (0.95 confidence)</td>
+<td>3.90339e+06 ns [3.89295e+06, 3.91543e+06] (0.95 confidence)</td>
+<td>4.60834e+06 ns [4.5705e+06, 4.65022e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;4d&#95;adversarial/30</td>
-<td>4.44274e+06 ns [4.40947e+06, 4.47463e+06] (0.95 confidence)</td>
-<td>4.44593e+06 ns [4.43184e+06, 4.45981e+06] (0.95 confidence)</td>
+<td>3.88432e+06 ns [3.86614e+06, 3.90274e+06] (0.95 confidence)</td>
+<td>4.5034e+06 ns [4.47919e+06, 4.53115e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;5d/12</td>
-<td>1.89658e+06 ns [1.87033e+06, 1.9246e+06] (0.95 confidence)</td>
-<td>2.09892e+06 ns [2.0925e+06, 2.10815e+06] (0.95 confidence)</td>
+<td>1.63436e+06 ns [1.62792e+06, 1.64243e+06] (0.95 confidence)</td>
+<td>2.20013e+06 ns [2.18496e+06, 2.21644e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/is&#95;valid&#95;delaunay&#95;5d&#95;adversarial/12</td>
-<td>1.64966e+06 ns [1.62644e+06, 1.67146e+06] (0.95 confidence)</td>
-<td>1.91003e+06 ns [1.90026e+06, 1.92146e+06] (0.95 confidence)</td>
+<td>1.46203e+06 ns [1.45489e+06, 1.47004e+06] (0.95 confidence)</td>
+<td>2.05526e+06 ns [2.04179e+06, 2.06787e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;2d/500</td>
-<td>9.17943e+06 ns [9.10385e+06, 9.25028e+06] (0.95 confidence)</td>
-<td>8.23276e+06 ns [8.19904e+06, 8.2817e+06] (0.95 confidence)</td>
+<td>8.08984e+06 ns [8.0598e+06, 8.12096e+06] (0.95 confidence)</td>
+<td>8.26879e+06 ns [8.24496e+06, 8.3039e+06] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;2d&#95;adversarial/500</td>
-<td>5.99543e+07 ns [5.94671e+07, 6.03927e+07] (0.95 confidence)</td>
-<td>4.83265e+07 ns [4.82381e+07, 4.8428e+07] (0.95 confidence)</td>
+<td>5.33314e+07 ns [5.31204e+07, 5.36288e+07] (0.95 confidence)</td>
+<td>4.9046e+07 ns [4.8909e+07, 4.92022e+07] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;3d/100</td>
-<td>9.75962e+08 ns [9.74415e+08, 9.77415e+08] (0.95 confidence)</td>
-<td>8.45087e+08 ns [8.44102e+08, 8.46217e+08] (0.95 confidence)</td>
+<td>8.32432e+08 ns [8.31613e+08, 8.33192e+08] (0.95 confidence)</td>
+<td>8.53956e+08 ns [8.45629e+08, 8.64738e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;3d&#95;adversarial/100</td>
-<td>1.20818e+09 ns [1.20576e+09, 1.21065e+09] (0.95 confidence)</td>
-<td>1.02567e+09 ns [1.02453e+09, 1.02681e+09] (0.95 confidence)</td>
+<td>1.03672e+09 ns [1.03521e+09, 1.03861e+09] (0.95 confidence)</td>
+<td>1.02922e+09 ns [1.02506e+09, 1.03481e+09] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;4d/30</td>
-<td>4.43729e+09 ns [4.43249e+09, 4.44136e+09] (0.95 confidence)</td>
-<td>3.8109e+09 ns [3.80726e+09, 3.81434e+09] (0.95 confidence)</td>
+<td>3.89267e+09 ns [3.88764e+09, 3.89776e+09] (0.95 confidence)</td>
+<td>3.88936e+09 ns [3.88379e+09, 3.89558e+09] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;4d&#95;adversarial/30</td>
-<td>4.61014e+09 ns [4.60603e+09, 4.61368e+09] (0.95 confidence)</td>
-<td>3.97079e+09 ns [3.9667e+09, 3.97554e+09] (0.95 confidence)</td>
+<td>4.01795e+09 ns [4.01429e+09, 4.02161e+09] (0.95 confidence)</td>
+<td>3.95997e+09 ns [3.95652e+09, 3.96281e+09] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;5d/12</td>
-<td>9.9855e+08 ns [9.96619e+08, 1.00054e+09] (0.95 confidence)</td>
-<td>8.55873e+08 ns [8.54942e+08, 8.56853e+08] (0.95 confidence)</td>
+<td>8.68036e+08 ns [8.67052e+08, 8.6905e+08] (0.95 confidence)</td>
+<td>8.90802e+08 ns [8.88827e+08, 8.93075e+08] (0.95 confidence)</td>
 </tr>
 <tr>
 <td>validation/validate&#95;5d&#95;adversarial/12</td>
-<td>9.21654e+08 ns [9.08792e+08, 9.32536e+08] (0.95 confidence)</td>
-<td>8.01478e+08 ns [8.00785e+08, 8.02142e+08] (0.95 confidence)</td>
+<td>8.12403e+08 ns [8.10949e+08, 8.14223e+08] (0.95 confidence)</td>
+<td>8.27638e+08 ns [8.26199e+08, 8.2914e+08] (0.95 confidence)</td>
 </tr>
 </tbody>
 </table>
@@ -2787,7 +2787,7 @@ These observations belong to the measured phases. Rerendering does not recapture
 </tr>
 <tr>
 <td>Revision</td>
-<td>4d7e9d63c6225418640fa881dc5a38bbf23b1d63</td>
+<td>317a114297007b1aa47082a73ed1c638a1e52fbf</td>
 </tr>
 <tr>
 <td>Measurement mode</td>
@@ -2795,11 +2795,11 @@ These observations belong to the measured phases. Rerendering does not recapture
 </tr>
 <tr>
 <td>Original source SHA-256</td>
-<td>83d886e262cf7f1ade50393dd80fa4b3b2e6a7d3ce156ca58123b249b8e47cb4</td>
+<td>8aa79cc89006bb2327eb63d00d7d86dd16a64e2c111f3f5860ed7dd7781a7aa0</td>
 </tr>
 <tr>
 <td>Measured source SHA-256</td>
-<td>83d886e262cf7f1ade50393dd80fa4b3b2e6a7d3ce156ca58123b249b8e47cb4</td>
+<td>8aa79cc89006bb2327eb63d00d7d86dd16a64e2c111f3f5860ed7dd7781a7aa0</td>
 </tr>
 <tr>
 <td>Measured harness SHA-256</td>

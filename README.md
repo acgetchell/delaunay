@@ -376,17 +376,17 @@ bundle.
 
 <!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->
 
-Run: `bbd3170146eaa928e78d3888b7ef08643356b765b07de295baa3c94c0dd6071b`. Statistic: median. Unit: ns. Confidence level: 95%.
+Run: `09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad`. Statistic: median. Unit: ns. Confidence level: 95%.
 
 - Baseline v0.8.3: baseline phase, v0.8.3, revision 3fa8a9907101c523574a0d17991a1f652b5419dc.
-- Current v0.8.4: current phase, v0.8.4, revision 4d7e9d63c6225418640fa881dc5a38bbf23b1d63.
+- Current v0.8.4: current phase, v0.8.4, revision 317a114297007b1aa47082a73ed1c638a1e52fbf.
 
 | Case | Baseline v0.8.3 | Current v0.8.4 | Baseline / current |
 | --- | --- | --- | --- |
-| 2D construction (500 vertices) | 5.07864e+07<br>[5.02226e+07, 5.13329e+07] | 4.56466e+07<br>[4.54887e+07, 4.59654e+07] | 1.1126 |
-| 3D construction (100 vertices) | 4.13705e+07<br>[4.10921e+07, 4.15683e+07] | 3.72588e+07<br>[3.71412e+07, 3.81017e+07] | 1.11036 |
-| 4D construction (30 vertices) | 1.04583e+08<br>[1.03845e+08, 1.05634e+08] | 9.60714e+07<br>[9.53888e+07, 9.63171e+07] | 1.08859 |
-| 5D construction (12 vertices) | 2.28432e+07<br>[2.27722e+07, 2.29052e+07] | 2.13448e+07<br>[2.13053e+07, 2.14477e+07] | 1.0702 |
+| 2D construction (500 vertices) | 4.57108e+07<br>[4.56421e+07, 4.60575e+07] | 4.57306e+07<br>[4.56665e+07, 4.59635e+07] | 0.999567 |
+| 3D construction (100 vertices) | 3.6891e+07<br>[3.68746e+07, 3.69504e+07] | 3.73342e+07<br>[3.72714e+07, 3.74754e+07] | 0.988129 |
+| 4D construction (30 vertices) | 9.29788e+07<br>[9.24575e+07, 9.30817e+07] | 9.68993e+07<br>[9.63217e+07, 9.74279e+07] | 0.959541 |
+| 5D construction (12 vertices) | 2.03154e+07<br>[2.02609e+07, 2.03676e+07] | 2.20554e+07<br>[2.17983e+07, 2.21252e+07] | 0.921107 |
 
 Intervals are recorded marginal timing intervals; ratios are point estimates, with no ratio intervals or significance claims.
 Ratio is numerator time / denominator time; greater than one means less denominator time.
@@ -402,10 +402,10 @@ Selection coverage:
 - [Selected timings CSV](https://github.com/acgetchell/delaunay/blob/v0.8.4/docs/assets/bench/release-performance.csv)
 
 [rrt-performance-link-1]:
-  <https://github.com/acgetchell/delaunay/blob/v0.8.4/docs/performance-runs/runs/bbd3170146eaa928e78d3888b7ef08643356b765b07de295baa3c94c0dd6071b/run.json>
+  <https://github.com/acgetchell/delaunay/blob/v0.8.4/docs/performance-runs/runs/09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad/run.json>
 
 [rrt-performance-link-2]:
-  <https://github.com/acgetchell/delaunay/blob/v0.8.4/docs/performance-runs/runs/bbd3170146eaa928e78d3888b7ef08643356b765b07de295baa3c94c0dd6071b/evidence.json>
+  <https://github.com/acgetchell/delaunay/blob/v0.8.4/docs/performance-runs/runs/09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad/evidence.json>
 
 <!-- PERFORMANCE_RELEASE_TABLE:END -->
 

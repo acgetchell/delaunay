@@ -361,16 +361,35 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
 
     readme_command = dry_run(REPO_ROOT, "performance-readme")
     assert 'research-repo-tools performance readme tooling/performance-release.toml "$@"' in readme_command.stdout + readme_command.stderr
-    for name, operation, configuration in (
-        ("performance-prepare", "prepare", "performance-release"),
-        ("performance-release", "release", "performance-release"),
-        ("performance-doc", "promote", "performance-report"),
+    for name, operation, configuration, options in (
+        ("performance-prepare", "prepare", "performance-release", ""),
+        ("performance-release", "release", "performance-release", " --progress-cadence 300"),
+        ("performance-doc", "promote", "performance-report", ""),
     ):
         command = dry_run(REPO_ROOT, name)
-        assert f'research-repo-tools performance {operation} tooling/{configuration}.toml "$@"' in command.stdout + command.stderr
+        assert f'research-repo-tools performance {operation} tooling/{configuration}.toml{options} "$@"' in command.stdout + command.stderr
     local = dry_run(REPO_ROOT, "performance-local")
     assert "performance measure 'tooling/measurement-release-signal.toml'" in local.stdout + local.stderr
     assert "--allow-git-mutations" not in local.stdout + local.stderr
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [((), 300.0), (("--progress-cadence", "60"), 60.0), (("--progress-cadence", "600"), 600.0)],
+)
+def test_performance_release_default_cadence_allows_user_overrides(arguments: tuple[str, ...], expected: float) -> None:
+    """Parse the real recipe's arguments without starting a benchmark workload."""
+    probe = "import sys; from research_repo_tools.cli import parser; print(parser().parse_args(sys.argv[2:]).progress_cadence)"
+    managed = f"{shlex.quote(Path(sys.executable).as_posix())} -c {shlex.quote(probe)}"
+    result = run_safe_command(
+        "just",
+        ["--justfile", str(JUSTFILE), "--set", "managed", managed, "performance-release", *arguments],
+        cwd=REPO_ROOT,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(expected)
 
 
 @pytest.mark.parametrize("argument", ["two words", "quote'and\"quote", "$(printf injected); #"])
