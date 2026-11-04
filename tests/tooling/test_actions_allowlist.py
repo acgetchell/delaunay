@@ -16,7 +16,7 @@ from research_repo_tools.process import run_command
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = ROOT / ".github/settings/actions-selected.json"
 AUTH = "rust-lang/crates-io-auth-action"
-REVIEWED_COMMIT = "c6f97d42243bad5fab37ca0427f495c86d5b1a18"
+REVIEWED_COMMIT = "3268eb413133e2960fa4ae0e963ca76380c54cd9"
 SHA = "1" * 40
 
 
@@ -29,7 +29,7 @@ def test_all_checked_in_workflows_and_composites_pass() -> None:
     assert check(ROOT, ".github/workflows", ".github/actions") == 0
 
 
-@pytest.mark.parametrize("ref", [REVIEWED_COMMIT, SHA, REVIEWED_COMMIT[:7], "main", "v1.0.5"])
+@pytest.mark.parametrize("ref", [REVIEWED_COMMIT, "c6f97d42243bad5fab37ca0427f495c86d5b1a18", SHA, REVIEWED_COMMIT[:7], "main", "v1.0.6"])
 @pytest.mark.parametrize("kind", ["step", "job", "composite"])
 def test_authentication_commit_constraint(tmp_path: Path, capsys: pytest.CaptureFixture[str], ref: str, kind: str) -> None:
     templates = {
