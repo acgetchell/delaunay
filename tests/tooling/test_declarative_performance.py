@@ -606,6 +606,7 @@ def test_consumer_preparation_strict_promotion_and_readme_publication(tmp_path: 
         [
             "run",
             "--locked",
+            "--no-sync",
             "--group",
             "dev",
             "research-repo-tools",

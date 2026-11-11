@@ -372,13 +372,13 @@ def test_untrusted_main_never_repackages(cargo: CargoFixture, field: str) -> Non
 
 
 @pytest.mark.parametrize("job_index", range(len(POLICY.validation.required_steps)))
-@pytest.mark.parametrize("failure", ["missing", "failed", "partial-rerun", "skipped-step", "wrong-platform"])
+@pytest.mark.parametrize("failure", ["missing", "failure", "cancelled", "skipped", "partial-rerun", "skipped-step", "wrong-platform"])
 def test_all_declared_jobs_are_required(cargo: CargoFixture, job_index: int, failure: str) -> None:
     job = cargo.jobs[job_index]
     if failure == "missing":
         cargo.jobs.remove(job)
-    elif failure == "failed":
-        job["conclusion"] = "failure"
+    elif failure in {"failure", "cancelled", "skipped"}:
+        job["conclusion"] = failure
     elif failure == "partial-rerun":
         job["run_attempt"] = 2
     elif failure == "wrong-platform":
@@ -481,10 +481,26 @@ def test_producer_retains_both_dry_run_archive_identity(cargo: CargoFixture, mon
 
 def test_workflow_policy_covers_portable_native_and_package_gates() -> None:
     ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_bytes())
-    assert ci["jobs"]["build"]["needs"] == "portable"
+    assert ci["jobs"]["build"]["needs"] == ["portable", "prepare", "native"]
+    platforms = {"ubuntu-latest", "macos-latest", "windows-latest"}
+    stages = {"python-docs", "rust-builds", "rust-integrations", "rust-tests"}
+    expected = {"portable", "package"} | {f"prepare ({host})" for host in platforms} | {f"native-{stage} ({host})" for host in platforms for stage in stages}
+    assert {name for name, _ in POLICY.validation.required_steps} == expected
+    runner_labels = dict(POLICY.validation.runner_labels)
     for name, required_steps in POLICY.validation.required_steps:
-        job = ci["jobs"]["build" if name.startswith("build (") else name]
+        identifier = "native" if name.startswith("native-") else "prepare" if name.startswith("prepare (") else name
+        job = ci["jobs"][identifier]
         assert set(required_steps) <= {step.get("name") for step in job["steps"]}
+        if identifier in {"native", "prepare"}:
+            host = name.rsplit("(", 1)[1].removesuffix(")")
+            assert runner_labels[name] == (host,)
+            assert job["runs-on"] == "${{ matrix.os }}"
+            assert host in job["strategy"]["matrix"]["os"]
+            if identifier == "native":
+                assert set(required_steps) == {"Set up shared tooling", "Verify native Rust host", "Run native validation"}
+                assert name.removeprefix("native-").split(" ", 1)[0] in job["strategy"]["matrix"]["stage"]
+        else:
+            assert runner_labels[name] == (job["runs-on"],)
     package = ci["jobs"]["package"]
     assert package["needs"] == "build"
     assert package["permissions"] == {"contents": "read", "actions": "read"}

@@ -473,8 +473,10 @@ The insertion-without-repair owner/rollback regression retains its assertions
 with a 60-second debug override after a measured 20-second run. These overrides
 do not change unrelated test budgets or move either contract out of normal CI.
 
-The release integration profile similarly grants 60 seconds on Windows only
-to the promoted 4D property families that sit at the 10-second boundary there.
+The release integration profile similarly grants 60 seconds across platforms
+to the promoted 4D property families that can reach the 10-second boundary on
+hosted Linux and Windows runners. Coverage retains its five-minute instrumented
+budget for these properties.
 The 5D local-neighbor repair guardrail receives the same focused headroom
 across platforms because its hosted-runner runtime can cross that boundary;
 coverage retains its five-minute instrumented budget.

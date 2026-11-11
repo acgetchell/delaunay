@@ -18,18 +18,78 @@ steps = [ "Run portable checks" ]
 runner-labels = [ "ubuntu-latest" ]
 
 [[jobs]]
-name = "build (ubuntu-latest)"
-steps = [ "Verify native Rust host", "Run CI checks" ]
+name = "prepare (ubuntu-latest)"
+steps = [ "Set up shared tooling" ]
 runner-labels = [ "ubuntu-latest" ]
 
 [[jobs]]
-name = "build (macos-latest)"
-steps = [ "Verify native Rust host", "Run CI checks" ]
+name = "prepare (macos-latest)"
+steps = [ "Set up shared tooling" ]
 runner-labels = [ "macos-latest" ]
 
 [[jobs]]
-name = "build (windows-latest)"
-steps = [ "Verify native Rust host", "Run CI checks" ]
+name = "prepare (windows-latest)"
+steps = [ "Set up shared tooling" ]
+runner-labels = [ "windows-latest" ]
+
+[[jobs]]
+name = "native-python-docs (ubuntu-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "ubuntu-latest" ]
+
+[[jobs]]
+name = "native-rust-builds (ubuntu-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "ubuntu-latest" ]
+
+[[jobs]]
+name = "native-rust-integrations (ubuntu-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "ubuntu-latest" ]
+
+[[jobs]]
+name = "native-rust-tests (ubuntu-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "ubuntu-latest" ]
+
+[[jobs]]
+name = "native-python-docs (macos-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "macos-latest" ]
+
+[[jobs]]
+name = "native-rust-builds (macos-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "macos-latest" ]
+
+[[jobs]]
+name = "native-rust-integrations (macos-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "macos-latest" ]
+
+[[jobs]]
+name = "native-rust-tests (macos-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "macos-latest" ]
+
+[[jobs]]
+name = "native-python-docs (windows-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "windows-latest" ]
+
+[[jobs]]
+name = "native-rust-builds (windows-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "windows-latest" ]
+
+[[jobs]]
+name = "native-rust-integrations (windows-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
+runner-labels = [ "windows-latest" ]
+
+[[jobs]]
+name = "native-rust-tests (windows-latest)"
+steps = [ "Set up shared tooling", "Verify native Rust host", "Run native validation" ]
 runner-labels = [ "windows-latest" ]
 
 [[jobs]]

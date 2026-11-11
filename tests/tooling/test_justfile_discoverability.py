@@ -231,7 +231,7 @@ def test_example_configuration_covers_cargo_targets_and_feature_builds() -> None
     assert all(policy["expect"] for policy in configuration["examples"].values())
     rendered = dry_run(REPO_ROOT, "examples").stderr
     assert "toolchain run -- research-repo-tools validation cargo-examples tooling/examples.toml" in rendered
-    assert "examples" in {item["recipe"] for item in inspect_justfile(REPO_ROOT).recipes["ci"]["dependencies"]}
+    assert "toolchain run -- research-repo-tools validation cargo-examples tooling/examples.toml" in dry_run(REPO_ROOT, "ci").stderr
 
 
 def test_ci_directly_lints_python_fixtures_with_full_ruff_policy() -> None:
@@ -629,7 +629,7 @@ def test_ci_composes_non_mutating_canonical_validation_figure_check() -> None:
     """The local CI contract should catch stale tracked figures on canonical macOS."""
     recipes = inspect_justfile(REPO_ROOT).recipes
     ci_dependencies = [dependency["recipe"] for dependency in recipes["ci"]["dependencies"]]
-    assert ci_dependencies[:3] == ["check", "python-fixture-lint", "_validation-doc-figures-check-if-canonical"]
+    assert ci_dependencies == ["_ci-setup", "check", "python-fixture-lint", "_validation-doc-figures-check-if-canonical", "doc-package-check", "_ci-execution"]
 
     rendered_result = dry_run(REPO_ROOT, "validation-doc-figures-check")
     rendered = rendered_result.stdout + rendered_result.stderr

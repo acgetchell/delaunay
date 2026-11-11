@@ -25,6 +25,20 @@ _bench-pachner-stress samples:
     env CRIT_SAMPLE_SIZE="$samples" \
         {{ managed }} cargo bench --locked --profile perf --features bench --bench pachner_stress -- --noplot
 
+# Local CI shares one completed setup/policy phase before independent lanes start.
+[parallel]
+[private]
+_ci-execution: _ci-rust-execution test-python
+
+# Keep every operation using the checkout's Cargo outputs in one sequential lane.
+[private]
+_ci-rust-execution: test-rust bench-compile examples
+
+# Synchronize once before checks and concurrent execution borrow this environment.
+[private]
+_ci-setup: _ensure-toolchain
+    {{ managed }} uv sync --locked --managed-python --group dev --group notebooks
+
 _ensure-actionlint: _ensure-uv
     #!/usr/bin/env bash
     set -euo pipefail

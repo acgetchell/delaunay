@@ -538,9 +538,12 @@ def test_packaging_stops_on_failure_and_completes_on_success(tmp_path: Path, fai
     """Reach each packaging stage and preserve its failure without running later work."""
     expected_calls = [
         "run --locked --no-sync --no-python-downloads research-repo-tools toolchain check",
-        "run --locked --group dev research-repo-tools toolchain run -- research-repo-tools validation cargo-metadata --package delaunay",
-        "run --locked --group dev research-repo-tools toolchain run -- cargo publish --locked --package delaunay --registry crates-io --dry-run",
-        "run --locked --group dev research-repo-tools toolchain run -- cargo publish --locked --package delaunay --registry crates-io --dry-run --all-features",
+        "run --locked --no-sync --group dev research-repo-tools toolchain run -- research-repo-tools validation cargo-metadata --package delaunay",
+        "run --locked --no-sync --group dev research-repo-tools toolchain run -- cargo publish --locked --package delaunay --registry crates-io --dry-run",
+        (
+            "run --locked --no-sync --group dev research-repo-tools toolchain run -- "
+            "cargo publish --locked --package delaunay --registry crates-io --dry-run --all-features"
+        ),
     ]
     failing_call = "" if failure_index is None else expected_calls[failure_index]
     calls = tmp_path / "calls"

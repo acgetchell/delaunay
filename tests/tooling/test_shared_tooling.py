@@ -100,7 +100,7 @@ def invoke_recipe(root: Path, recipe: str, *args: str) -> tuple[subprocess.Compl
 def test_packaged_rustdoc_selects_features_and_propagates_failure(recording_recipes: Path, monkeypatch: pytest.MonkeyPatch, failure: int) -> None:
     monkeypatch.setenv("FAIL_STEP", str(failure))
     result, calls = invoke_recipe(recording_recipes, "doc-package-check")
-    managed = ["run", "--locked", "--group", "dev", "research-repo-tools", "toolchain", "run", "--"]
+    managed = ["run", "--locked", "--no-sync", "--group", "dev", "research-repo-tools", "toolchain", "run", "--"]
     default = [*managed, "research-repo-tools", "validation", "cargo-docs", "delaunay"]
     assert calls == [default, [*default, "--all-features"]][: failure or None]
     assert result.returncode == (23 if failure else 0), result.stderr
@@ -115,7 +115,7 @@ def test_release_preparation_fetches_the_declared_cargo_graphs(recording_recipes
 
     result, calls = invoke_recipe(recording_recipes, "release-dependency-builds")
     assert result.returncode == 0, result.stderr
-    managed = ["run", "--locked", "--group", "dev", "research-repo-tools", "toolchain", "run", "--"]
+    managed = ["run", "--locked", "--no-sync", "--group", "dev", "research-repo-tools", "toolchain", "run", "--"]
     assert calls == [
         ["sync", "--locked", "--group", "dev"],
         [*managed, "cargo", "fetch", "--locked"],
@@ -241,7 +241,8 @@ def test_update_failure_stops_later_steps(recording_recipes: Path, monkeypatch: 
 def test_public_recipe_arguments(recording_recipes: Path, recipe: str, arguments: list[str], command: list[str]) -> None:
     result, calls = invoke_recipe(recording_recipes, recipe, *arguments)
     assert result.returncode == 0, result.stderr
-    assert calls == [["run", "--locked", "--group", "dev", "research-repo-tools", *command]]
+    synchronization = ["--no-sync"] if command[0] == "toolchain" else []
+    assert calls == [["run", "--locked", *synchronization, "--group", "dev", "research-repo-tools", *command]]
     assert not (recording_recipes / "SHOULD_NOT_EXIST").exists()
 
 

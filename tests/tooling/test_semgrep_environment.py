@@ -61,7 +61,20 @@ def test_real_fixture_checker_keeps_positive_negative_gates(tmp_path: Path, monk
     # directory before Semgrep's launcher resolves its pysemgrep helper.
     result = run_command(
         "uv",
-        ["run", "--locked", "--group", "dev", "research-repo-tools", "--config", str(configuration), "--root", str(tmp_path), "semgrep", "check-fixtures"],
+        [
+            "run",
+            "--locked",
+            "--no-sync",
+            "--group",
+            "dev",
+            "research-repo-tools",
+            "--config",
+            str(configuration),
+            "--root",
+            str(tmp_path),
+            "semgrep",
+            "check-fixtures",
+        ],
         cwd=ROOT,
         env=dict(os.environ),
         timeout=120,

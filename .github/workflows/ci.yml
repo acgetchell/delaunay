@@ -35,32 +35,19 @@ jobs:
       - name: Run portable checks
         run: just ci-portable
 
-  build:
+  prepare:
     needs: portable
-    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
-      fail-fast: false # Continue other jobs if one fails
+      fail-fast: false
       matrix:
         os:
           - ubuntu-latest
           - macos-latest
           - windows-latest
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
 
     steps:
-      - name: Require portable checks
-        shell: bash
-        env:
-          PORTABLE_RESULT: ${{ needs.portable.result }}
-        run: test "$PORTABLE_RESULT" = success
-
       - name: Disable Git autocrlf on Windows
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -73,8 +60,52 @@ jobs:
           persist-credentials: false
 
       - name: Set up shared tooling
-        id: setup_just
         uses: $/.github/actions/setup-just
+        with:
+          # Save only managed tool compilation before native stages fan out.
+          consumer-cache: "false"
+
+  native:
+    name: native-${{ matrix.stage }} (${{ matrix.os }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        stage:
+          - python-docs
+          - rust-builds
+          - rust-integrations
+          - rust-tests
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Disable Git autocrlf on Windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up shared tooling
+        uses: $/.github/actions/setup-just
+        with:
+          cache-scope: ${{ matrix.stage }}
 
       - name: Verify native Rust host
         id: rust-host
@@ -91,8 +122,35 @@ jobs:
             exit 1
           fi
 
-      - name: Run CI checks
-        run: just ci-native
+      - name: Run native validation
+        shell: bash
+        env:
+          CI_STAGE: ${{ matrix.stage }}
+        run: just "ci-$CI_STAGE"
+
+  build:
+    # Preserve required check names; these Linux gates are not native evidence.
+    needs: [portable, prepare, native]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Require complete native validation
+        env:
+          PORTABLE_RESULT: ${{ needs.portable.result }}
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          test "$PORTABLE_RESULT" = success
+          test "$PREPARE_RESULT" = success
+          test "$NATIVE_RESULT" = success
 
   package:
     needs: build

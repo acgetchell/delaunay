@@ -11,7 +11,8 @@ perf_delaunay_binary := "target/perf/delaunay" + binary_extension
 
 # Invoke the locked shared CLI; managed execution verifies declared tools first.
 rrt := "uv run --locked --group dev research-repo-tools"
-managed := rrt + " toolchain run --"
+# Cargo execution must not resynchronize Python while the local CI lanes overlap.
+managed := "uv run --locked --no-sync --group dev research-repo-tools toolchain run --"
 
 # Semgrep misreads Python 3.15's positive RLIM_INFINITY on Linux. Keep its
 # inherited stack finite until https://github.com/semgrep/semgrep/issues/11979 is fixed.
@@ -210,16 +211,32 @@ check-fast:
 
 # CI simulation: comprehensive validation.
 [group('workflows')]
-ci: check python-fixture-lint _validation-doc-figures-check-if-canonical doc-package-check test bench-compile examples
+ci: _ci-setup check python-fixture-lint _validation-doc-figures-check-if-canonical doc-package-check _ci-execution
     @echo "🎯 CI checks complete!"
 
-# Run platform-sensitive checks on each native hosted runner.
+# Run every native stage sequentially in one checkout.
 [group('workflows')]
-ci-native: cargo-lock-check python-check notebook-check python-fixture-lint unused-deps clippy doc-check _validation-doc-figures-check-if-canonical doc-package-check test bench-compile examples
+ci-native: ci-python-docs ci-rust-builds ci-rust-tests ci-rust-integrations
 
 # Run portable repository checks once; the SARIF workflow owns the production scan.
 [group('workflows')]
 ci-portable: justfile-fmt-check json-check toml-check yaml-check citation-check github-actions-check check-docs shell-check fmt-check semgrep-test
+
+# Check Python, notebook hygiene, packaged public docs and canonical figures.
+[group('workflows')]
+ci-python-docs: python-check notebook-check python-fixture-lint _validation-doc-figures-check-if-canonical doc-package-check test-python
+
+# Check native Cargo policy, Clippy/Rustdoc, benchmark compilation and examples.
+[group('workflows')]
+ci-rust-builds: cargo-lock-check unused-deps clippy doc-check bench-compile examples
+
+# Run the complete native release integration suite.
+[group('workflows')]
+ci-rust-integrations: test-integration
+
+# Run native unit, CLI, doctest, optional-feature and allocation test buckets.
+[group('workflows')]
+ci-rust-tests: test-unit test-cli test-doc test-features
 
 # CI plus the explicit slow correctness bucket.
 [group('workflows')]
@@ -1010,7 +1027,7 @@ test-integration-fast: _ensure-nextest
 # Run Python support-script tests with pytest.
 [group('tests and coverage')]
 test-python: _ensure-uv
-    {{ semgrep_stack_limit }} uv run --locked pytest
+    {{ semgrep_stack_limit }} uv run --locked --no-sync pytest
 
 # Run default Rust target classes and feature-only coverage once.
 [group('tests and coverage')]

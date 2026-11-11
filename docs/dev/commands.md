@@ -229,7 +229,10 @@ no TeX tools; manuscript production belongs to
 Managed Rust, Cargo tools, and release binaries live in the shared package's versioned cache.
 Recipes select them with `toolchain run`, which verifies versions and fails when
 an installation is incomplete; an ambient executable cannot satisfy a managed
-pin. `just tools-check` inspects without syncing or downloading Python.
+pin. Managed execution borrows the prepared Python environment with `--no-sync`;
+run `just setup-tools` after changing its dependencies. `just ci` synchronizes
+the locked dev/notebook environment once before any checks or parallel lanes.
+`just tools-check` inspects without syncing or downloading Python.
 `just tools-export` exports verified paths to GitHub Actions.
 
 `just tools-python-check` checks inherited Ruff, ty and pytest pins explicitly.
@@ -362,7 +365,7 @@ just doc-package-check
 
 RRT builds public library docs from the Cargo archive with default and all
 features on the exact stable toolchain declared in `rust-toolchain.toml`.
-`just ci` and each hosted `just ci-native` job run this check. The docs.rs
+`just ci` and each hosted `just ci-python-docs` job run this check. The docs.rs
 service uses its own compiler, targets, and configuration.
 
 Release-facing version references are checked separately:
@@ -396,6 +399,13 @@ pushed. Also run it for release validation or an explicit maintainer request:
 ```bash
 just ci
 ```
+
+Setup, policy checks, canonical figure generation and packaged public docs
+finish before the complete Python suite overlaps the remaining Rust work.
+All operations sharing the checkout's Cargo outputs stay in one sequential
+lane. Use `just --jobs 1 ci` for the same complete graph without overlap.
+Hosted CI uses independent workspaces for its four native stages; see
+[`ci_validation.md`](ci_validation.md) for their owners and cache boundaries.
 
 This runs:
 
@@ -432,8 +442,10 @@ measured workflow maintains its triangulation, predicate, topology, and
 diagnostic invariants.
 
 `just ci` is the comprehensive error-catching validation path used by GitHub
-Actions. It composes `just check`, `just python-fixture-lint`, `just doc-package-check`,
-`just test`, `just bench-compile`, and `just examples`. `rust-core-check` covers
+Actions. It composes environment setup, `just check`, `just python-fixture-lint`,
+the canonical figure check, and `just doc-package-check`, then overlaps
+`just test-python` with a sequential `just test-rust`, `just bench-compile`,
+and `just examples` lane. `rust-core-check` covers
 formatting, all-targets Clippy, rustdoc, and Semgrep; `unused-deps` checks direct
 Cargo dependency hygiene; `test-rust` composes unit, integration, CLI, doctest,
 and feature-only buckets; `notebook-check` validates notebooks without executing them.
@@ -484,9 +496,10 @@ SoS expansion checks, including the D=6 adaptive-kernel checks that repeat the
 complete expansion, also have a focused 60-second override because their
 irreducible cold-path work can cross the default boundary on hosted runners.
 `test-integration` runs a focused release-profile nextest bucket. Selected 4D
-property families retain that default coverage with a Windows-only 60-second
-override because their release runtimes sit at the 10-second boundary on
-Windows runners. The 5D local-neighbor repair guardrail has a focused
+property families retain that default coverage with a cross-platform 60-second
+override because their release runtimes can reach the 10-second boundary on
+hosted Linux and Windows runners. Coverage retains its five-minute instrumented
+budget for these properties. The 5D local-neighbor repair guardrail has a focused
 platform-neutral 60-second override. The cospherical 3D `OnSuspicion` sequence property has
 a focused cross-platform 60-second override for the same hosted-runner boundary.
 The isolated downstream checkpoint fixture has a focused 120-second override
@@ -508,8 +521,8 @@ tests requires checking nextest discovery with and without these features and
 updating `_feature_unit_filter` to cover the difference. Likewise, update the
 doctest filters when adding feature-only examples. The allocation lane executes
 the public `allocation_api` integration target with `count-allocations`.
-The native CI matrix reaches all three lanes once through
-`just ci` → `just test` → `just test-rust`.
+The hosted `ci-rust-tests` stage reaches all three feature lanes once through
+`test-features`; local `just ci` reaches them through `test-rust`.
 
 The LLVM-instrumented coverage profile retains its 300-second default watchdog.
 The exact 20-point 4D exterior-insertion regression has a 900-second override
@@ -1101,7 +1114,7 @@ JSON/SARIF reports from `target/security/` for seven days, including on findings
 | Update Cargo declarations and Cargo/Python dependency locks | `just update-dependencies` |
 | Update release metadata with the current UTC date | `just update-version vX.Y.Z` |
 | Validate crates.io metadata and dry-run the package | `just publish-check` |
-| Run full GitHub-equivalent CI | `just ci` |
+| Run full GitHub-equivalent CI | `just ci` (or `just --jobs 1 ci` for serial execution) |
 | Run perf-profile benchmarks | `just bench` |
 | Summarize retained Cobertura coverage by file | `just coverage-report [ARGS...]` |
 | Inspect notebook cells without execution | `just notebook-inspect PATH [ARGS...]` |
@@ -1129,18 +1142,22 @@ CI enforces:
 - examples
 
 Local `just ci` remains the comprehensive contract. Hosted CI runs
-`just ci-portable` once on Linux, then `just ci-native` on Linux, macOS and
-Windows. All three hosts run native Rust and Python checks, packaged public
-Rustdoc, notebook lint, all correctness and feature test buckets, examples, and
-benchmark compilation. macOS also runs the canonical figure comparison.
+`just ci-portable` once on Linux, then prepares managed compilation caches on
+Linux, macOS and Windows. Each platform runs independent `ci-python-docs`,
+`ci-rust-builds`, `ci-rust-integrations` and `ci-rust-tests` jobs. Together they
+retain native Rust and Python checks, packaged public Rustdoc, notebook lint,
+all correctness and feature test buckets, examples and benchmark compilation.
+macOS also runs the canonical figure comparison in `ci-python-docs`.
 Portable configuration, Markdown,
 spelling, shell/Rust formatting and Semgrep fixtures run once. The separately
 required repository-rule SARIF workflow owns the production Semgrep scan.
 Clippy remains native on all hosts; its Linux SARIF job retains report production.
 The exact ownership and timing inventory is in
 [`ci_validation.md`](ci_validation.md). Consumer tests require the remote union
-to equal the complete local validator set. Build check names remain stable and
-depend on portable success, so existing protected-PR requirements still block.
+to equal the complete local validator set. Build check names remain stable as
+aggregate gates requiring portable, preparation and every native stage to
+succeed, including after a failed, skipped or cancelled prerequisite. Release
+evidence requires the actual native job/step/runner identities independently.
 
 The native targets are `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
 `x86_64-pc-windows-msvc`, respectively. CI checks the compiler host against the
@@ -1150,8 +1167,11 @@ Cargo built or tested it. Intel macOS is not a separate native CI cell.
 The composite `.github/actions/setup-just` installs uv from the consumer TOML
 pin, installs the locked PyPI package, provisions native libraries, synchronizes
 managed tools, and exports verified paths. Tool caches are keyed by host and
-consumer declarations, and restored versions are rechecked. Rust workflow caches
-keep `cache-bin: false` to avoid restoring stale Cargo shims.
+consumer declarations, and fresh installations verify every executable. Native
+stages own separate consumer compilation caches keyed by stage, platform,
+toolchain, locks and source commit. Preparation saves only managed-tool
+compilation; clean release-package jobs disable both caches. Installed tool
+directories and Cargo shims are not cache payloads.
 
 `.codacy.yml` owns Codacy engine and path policy. Keep Codacy feedback aligned
 with repository validators rather than establishing an independent style or
