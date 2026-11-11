@@ -82,10 +82,11 @@ pub struct TopologyCheckResult {
 }
 
 impl TopologyCheckResult {
-    /// Returns `true` if χ matches expectation.
+    /// Returns `true` when no Euler-characteristic mismatch is established.
     ///
-    /// If expected is None (unknown classification), returns `true`
-    /// since we cannot determine if it's valid.
+    /// If `expected` is `None` (unknown classification), this returns `true`
+    /// without certifying a topology. A matching Euler characteristic alone
+    /// does not prove manifoldness, realization, or Delaunay validity.
     ///
     /// # Examples
     ///
@@ -168,6 +169,8 @@ impl TopologyCheckResult {
 /// cannot be built. Returns [`TopologyError::BoundaryClassification`] if the
 /// declared [`GlobalTopology`] is incompatible with the observed facet
 /// incidences, such as an open one-sided facet in a closed topology.
+/// Returns [`TopologyError::EulerCharacteristicOutOfRange`] if the exact Euler
+/// characteristic cannot be represented by `isize`.
 pub fn validate_triangulation_euler<U, V, const D: usize>(
     tds: &Tds<U, V, D>,
     global_topology: GlobalTopology<D>,
@@ -210,7 +213,7 @@ pub(crate) fn validate_euler_from_facets_with_evidence<U, V, const D: usize>(
 ) -> Result<TopologyCheckResult, TopologyError> {
     let tds = facet_to_simplices.tds();
     let counts = count_simplices_with_facet_to_simplices_map(tds, facet_to_simplices.as_map());
-    let chi = euler_characteristic(&counts);
+    let chi = euler_characteristic(&counts)?;
 
     let num_simplices = tds.number_of_simplices();
     let has_boundary = num_simplices != 0

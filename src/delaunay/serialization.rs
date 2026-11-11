@@ -2279,7 +2279,11 @@ where
         count_simplices(tds).map_err(|source| DelaunayCheckpointError::TopologyComputation {
             source: Box::new(source),
         })?;
-    let euler = durable_euler(euler_characteristic(&counts))?;
+    let euler = durable_euler(euler_characteristic(&counts).map_err(|source| {
+        DelaunayCheckpointError::TopologyComputation {
+            source: Box::new(source),
+        }
+    })?)?;
     let f_vector = durable_f_vector(&counts.by_dim)?;
     let digest = digest_prepared_tds(
         prepared,
@@ -2489,7 +2493,11 @@ where
     verify_manifest_topology_metrics(
         checked_manifest,
         durable_f_vector(&counts.by_dim)?,
-        durable_euler(euler_characteristic(&counts))?,
+        durable_euler(euler_characteristic(&counts).map_err(|source| {
+            DelaunayCheckpointError::TopologyComputation {
+                source: Box::new(source),
+            }
+        })?)?,
     )
 }
 

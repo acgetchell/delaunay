@@ -2103,7 +2103,7 @@ fn bare_link_simplices(link_simplices: &LinkSimplexBuffer) -> SmallBuffer<Vertex
         .collect()
 }
 
-fn triangulated_surface_euler_characteristic_for_link(link_simplices: &LinkSimplexBuffer) -> isize {
+fn triangulated_surface_euler_characteristic_for_link(link_simplices: &LinkSimplexBuffer) -> i128 {
     let mut vertices: FastHashSet<LiftedVertexId> =
         fast_hash_set_with_capacity(link_simplices.len().saturating_mul(3).max(1));
     let mut edges: FastHashSet<(LiftedVertexId, LiftedVertexId)> =
@@ -2120,7 +2120,7 @@ fn triangulated_surface_euler_characteristic_for_link(link_simplices: &LinkSimpl
         }
     }
 
-    vertices.len().cast_signed() - edges.len().cast_signed() + link_simplices.len().cast_signed()
+    vertices.len() as i128 - edges.len() as i128 + link_simplices.len() as i128
 }
 
 fn triangulated_surface_boundary_component_count_for_link(

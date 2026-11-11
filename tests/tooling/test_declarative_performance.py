@@ -54,7 +54,7 @@ from pathlib import Path
 MARKER = {marker!r}
 CASES = {cases!r}
 mode = sys.argv[1]
-with Path(os.environ["EVENTS"]).open("a") as output:
+with Path(os.environ["EVENTS"]).open("a", encoding="utf-8", newline="\\n") as output:
     output.write(MARKER + ":" + mode + "\\n")
 if mode == "list":
     for case in CASES:

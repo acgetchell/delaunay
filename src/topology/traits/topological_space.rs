@@ -34,6 +34,16 @@ pub use crate::geometry::periodic::{ToroidalDomain, ToroidalDomainError};
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum TopologyError {
+    /// The exact Euler characteristic cannot be represented by `isize`.
+    #[error("Euler characteristic {value} is outside the supported isize range")]
+    EulerCharacteristicOutOfRange {
+        /// Exact alternating sum of the face counts.
+        ///
+        /// Boxed so this rare failure does not increase the alignment of every
+        /// enclosing construction and validation error.
+        value: Box<i128>,
+    },
+
     /// Failed to build the facet-to-simplices incidence map.
     #[error("Failed to build facet incidence map during topology analysis: {source}")]
     FacetMapBuild {
@@ -346,8 +356,9 @@ impl<const D: usize> GlobalTopology<D> {
 /// points on `S^D` live in ambient `R^(D+1)`.
 ///
 /// The dimension is specified via the associated constant `DIM`, which must
-/// match the dimension of the associated `Tds<U, V, D>`. This ensures
-/// type safety and prevents dimension mismatches.
+/// match the dimension of any `Tds<U, V, D>` used with the helper. This trait
+/// does not encode that relationship in its type signature; callers must check
+/// it when combining independently selected spaces and triangulations.
 ///
 /// # Examples
 ///

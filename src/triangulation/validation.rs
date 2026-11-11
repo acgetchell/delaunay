@@ -316,6 +316,15 @@ pub enum TriangulationValidationError {
         simplex2_facet_index: usize,
     },
 
+    /// The exact Euler characteristic cannot be represented by `isize`.
+    #[error("Euler characteristic {value} is outside the supported isize range")]
+    EulerCharacteristicOutOfRange {
+        /// Exact alternating sum of the face counts.
+        ///
+        /// Boxed to keep enclosing construction and validation errors compact.
+        value: Box<i128>,
+    },
+
     /// Euler characteristic does not match the expected value for the classified topology.
     #[error(
         "Euler characteristic mismatch: computed χ={computed}, expected χ={expected} for {classification:?}"
@@ -582,6 +591,8 @@ pub enum TriangulationValidationErrorKind {
     HighDimensionalVertexLinkUnproven,
     /// The intrinsic simplex-orientation constraints are contradictory.
     NonOrientable,
+    /// Euler characteristic could not be represented by `isize`.
+    EulerCharacteristicOutOfRange,
     /// Euler characteristic did not match the expected classification.
     EulerCharacteristicMismatch,
     /// A vertex was not incident to any simplex.
@@ -616,6 +627,9 @@ impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
                 Self::HighDimensionalVertexLinkUnproven
             }
             TriangulationValidationError::NonOrientable { .. } => Self::NonOrientable,
+            TriangulationValidationError::EulerCharacteristicOutOfRange { .. } => {
+                Self::EulerCharacteristicOutOfRange
+            }
             TriangulationValidationError::EulerCharacteristicMismatch { .. } => {
                 Self::EulerCharacteristicMismatch
             }
@@ -634,8 +648,12 @@ impl From<&TriangulationValidationError> for TriangulationValidationErrorKind {
 /// and Level 3 failures as [`InvariantError::Triangulation`]. Euler helpers
 /// return [`TopologyError`], so this adapter maps support-data failures back to
 /// TDS errors and semantic boundary failures back through [`ManifoldError`].
-fn invariant_error_from_topology_error(err: TopologyError) -> InvariantError {
+/// Unrepresentable Euler values remain typed Level 3 failures.
+pub fn invariant_error_from_topology_error(err: TopologyError) -> InvariantError {
     match err {
+        TopologyError::EulerCharacteristicOutOfRange { value } => InvariantError::Triangulation {
+            source: TriangulationValidationError::EulerCharacteristicOutOfRange { value },
+        },
         TopologyError::FacetMapBuild { source }
         | TopologyError::BoundaryFacetEnumeration { source }
         | TopologyError::BoundaryFacetCount { source } => InvariantError::Tds { source },
@@ -3082,6 +3100,18 @@ mod tests {
 
     #[test]
     fn topology_error_adapter_preserves_validation_layering() {
+        let value = isize::MAX as i128 + 1;
+        assert_eq!(
+            invariant_error_from_topology_error(TopologyError::EulerCharacteristicOutOfRange {
+                value: Box::new(value),
+            }),
+            InvariantError::Triangulation {
+                source: TriangulationValidationError::EulerCharacteristicOutOfRange {
+                    value: Box::new(value),
+                },
+            }
+        );
+
         let facet_map_err = TdsError::InconsistentDataStructure {
             message: "facet map".to_string(),
         };
@@ -5019,6 +5049,12 @@ mod summary_tests {
                     classification: TopologyClassification::Ball(3),
                 },
                 TriangulationValidationErrorKind::EulerCharacteristicMismatch,
+            ),
+            (
+                TriangulationValidationError::EulerCharacteristicOutOfRange {
+                    value: Box::new(isize::MAX as i128 + 1),
+                },
+                TriangulationValidationErrorKind::EulerCharacteristicOutOfRange,
             ),
             (
                 TriangulationValidationError::IsolatedVertex {
