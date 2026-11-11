@@ -3,6 +3,7 @@ document = "README.md"
 archive = "docs/performance-runs"
 measurement = "tooling/measurement-release-signal.toml"
 release = true
+trial = 1
 repository = "acgetchell/delaunay"
 tag-policy = "prepare"
 begin = "<!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->"
@@ -18,14 +19,14 @@ rows = [
     { key = "5d", label = "5D construction (12 vertices)" },
 ]
 series = [
-    { name = "baseline", label = "Baseline", label-version = "release", rows = { "2d" = "tds_new_2d/tds_new/500", "3d" = "tds_new_3d/tds_new/100", "4d" = "tds_new_4d/tds_new/30", "5d" = "tds_new_5d/tds_new/12" } },
-    { name = "current", label = "Current", label-version = "release", rows = { "2d" = "tds_new_2d/tds_new/500", "3d" = "tds_new_3d/tds_new/100", "4d" = "tds_new_4d/tds_new/30", "5d" = "tds_new_5d/tds_new/12" } },
+    { name = "release-signal/baseline", label = "Baseline", label-version = "release", rows = { "2d" = "tds_new_2d/tds_new/500", "3d" = "tds_new_3d/tds_new/100", "4d" = "tds_new_4d/tds_new/30", "5d" = "tds_new_5d/tds_new/12" } },
+    { name = "release-signal/current", label = "Current", label-version = "release", rows = { "2d" = "tds_new_2d/tds_new/500", "3d" = "tds_new_3d/tds_new/100", "4d" = "tds_new_4d/tds_new/30", "5d" = "tds_new_5d/tds_new/12" } },
 ]
-comparisons = [ { numerator = "baseline", denominator = "current" } ]
+comparisons = [ { numerator = "release-signal/baseline", denominator = "release-signal/current" } ]
 references = [
     { path = "Cargo.toml", pattern = '^version = "(?P<value>[^"]+)"\r?$', source = "version" },
-    { path = "docs/performance_current.md", pattern = '^- current: measured in \*\*current\*\* phase \((?P<value>[^)]+)\), revision', source = "tag" },
-    { path = "docs/performance_current.md", pattern = '^- baseline: measured in \*\*baseline\*\* phase \((?P<value>[^)]+)\), revision', source = "previous-tag" },
+    { path = "docs/performance_current.md", pattern = '^- current: available .*; release (?P<value>[^;]+); revision', source = "tag" },
+    { path = "docs/performance_current.md", pattern = '^- baseline: available .*; release (?P<value>[^;]+); revision', source = "previous-tag" },
 ]
 
 [table]

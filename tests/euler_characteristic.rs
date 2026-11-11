@@ -41,7 +41,7 @@ fn test_empty_triangulation_euler() {
     assert_eq!(counts.count(0), 0); // No vertices
     assert_eq!(counts.count(3), 0); // No simplices
 
-    let chi = euler::euler_characteristic(&counts);
+    let chi = euler::euler_characteristic(&counts).unwrap();
     assert_eq!(chi, 0, "Empty triangulation should have χ = 0");
 
     let classification = euler::classify_triangulation(&tds, GlobalTopology::Euclidean).unwrap();
@@ -470,7 +470,7 @@ macro_rules! test_complex_with_interior {
             // - 5D: boundary is S⁴ → χ = 2
             // Generally: χ(S^k) = 1 + (-1)^k
             let boundary_counts = dt.boundary_simplex_counts().unwrap();
-            let boundary_chi = euler::euler_characteristic(&boundary_counts);
+            let boundary_chi = euler::euler_characteristic(&boundary_counts).unwrap();
 
             let expected_boundary_chi = $expected_boundary_chi;
             assert_eq!(

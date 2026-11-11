@@ -1,0 +1,15 @@
+schema = 1
+repository = "acgetchell/delaunay"
+workflow = ".github/workflows/prepare-release.yml"
+workflow-name = "Prepare GitHub release"
+artifact-prefix = "draft-receipt"
+
+[[jobs]]
+name = "verify"
+steps = [ "Require protected main and native and SARIF checks", "Verify tagged source and freeze native evidence and notes", "Retain inert verified handoff" ]
+runner-labels = [ "ubuntu-latest" ]
+
+[[jobs]]
+name = "prepare"
+steps = [ "Authenticate handoff and prepare the unpublished draft", "Retain journal even after an unconfirmed creation" ]
+runner-labels = [ "ubuntu-latest" ]

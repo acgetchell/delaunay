@@ -1,9 +1,6 @@
 name: Release Benchmarks
 
-# Archive perf-profile Criterion benchmark baselines as durable GitHub Release
-# assets used by the performance-regression workflow for current-vs-latest
-# released-version comparisons.
-
+# Attach the single local acquisition; no job collects benchmark timings.
 permissions:
   contents: read
 
@@ -11,149 +8,236 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing stable vX.Y.Z tag with a mutable draft release
+        description: Stable tag matching the workflow ref and mutable draft
+        required: true
+        type: string
+      candidate:
+        description: Independent owner transfer.json from just release-benchmarks
         required: true
         type: string
 
 concurrency:
-  group: release-benchmarks-${{ inputs.tag }}
+  group: release-draft-${{ github.repository }}-${{ inputs.tag }}
   cancel-in-progress: false
 
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
-
 jobs:
-  release-baseline:
+  fetch:
+    if: >-
+      github.repository == 'acgetchell/delaunay' &&
+      github.actor == 'acgetchell' && github.triggering_actor == 'acgetchell'
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 15
     permissions:
+      # Draft visibility requires push access. Execute no checkout code.
       contents: write
-
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      validated-attempt: ${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install trusted package runner
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: main
+          version: "0.13.7"
+          enable-cache: false
+          cache-python: false
 
-      - name: Validate tag dispatch context
+      - name: Retrieve exact independently selected draft assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_TRANSFER: ${{ inputs.candidate }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          test "$GITHUB_EVENT_NAME" = workflow_dispatch
-          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
-          test "$(git --no-pager rev-parse "$GITHUB_REF^{commit}")" = "$GITHUB_SHA"
-          git --no-pager merge-base --is-ancestor "$GITHUB_SHA" HEAD
-          test "$(gh api repos/acgetchell/delaunay --jq .default_branch)" = main
-          test "$(gh api repos/acgetchell/delaunay/branches/main --jq .protected)" = true
+          uvx --python 3.15 \
+            --from 'research-repo-tools==0.2.8' \
+            python -I - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          from research_repo_tools.release_assets import (
+              download_release_asset, parse_release_target, publish_release_asset,
+              revalidate_release_target,
+          )
+          root = Path(os.environ["RUNNER_TEMP"])
+          data = json.loads(os.environ["CANDIDATE_TRANSFER"])
+          target = parse_release_target(json.dumps(data["target"]).encode("utf-8"))
+          if (target.repository, target.tag, target.commit, target.expected_title) != (
+              "acgetchell/delaunay", os.environ["RELEASE_TAG"], os.environ["GITHUB_SHA"], os.environ["RELEASE_TAG"],
+          ) or os.environ["GITHUB_REF"] != "refs/tags/" + target.tag:
+              raise ValueError("dispatch differs from independent release target")
+          if set(data["assets"]) != {"policy", "publication", "acceptance", "archive"}:
+              raise ValueError("attachment requires the original four-asset transfer")
+          def check():
+              release = revalidate_release_target(root, target)
+              for selected in data["assets"].values():
+                  entries = [item for item in release.assets if item[0] == selected["name"]]
+                  if len(entries) != 1 or type(selected["id"]) is not int or entries[0][1] != selected["id"]:
+                      raise ValueError("original candidate asset ID changed")
+                  if entries[0][3] is not None and entries[0][3] != selected["sha256"]:
+                      raise ValueError("original candidate asset digest changed")
+          check()
+          directory = root / "incoming-candidate"
+          directory.mkdir()
+          for role, selected in data["assets"].items():
+              destination = directory / ("archive.tar.gz" if role == "archive" else role + ".json")
+              download_release_asset(
+                  root, target.repository, target.tag, selected["name"], destination,
+                  expected_sha256=selected["sha256"], allow_draft=True,
+              )
+          check()
+          PY
 
-      - name: Set up trusted publication tooling
-        uses: $/.github/actions/setup-just
-
-      - name: Preserve publication runtime across release checkout
-        run: |
-          mkdir -p "$RUNNER_TEMP/release-tools"
-          cp pyproject.toml uv.lock .python-version "$RUNNER_TEMP/release-tools/"
-          cp tooling/python/release_benchmarks.py "$RUNNER_TEMP/release-tools/"
-          uv sync --locked --only-group tooling --no-install-project --project "$RUNNER_TEMP/release-tools"
-
-      - name: Validate draft release target
-        id: target
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          "$RUNNER_TEMP/release-tools/.venv/bin/python" \
-            "$RUNNER_TEMP/release-tools/release_benchmarks.py" \
-            preflight "$RUNNER_TEMP/release-target.json"
-
-      - name: Check out exact release commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ steps.target.outputs.commit }}
-
-      - name: Set up shared tooling
-        id: setup_just
-        uses: $/.github/actions/setup-just
-
-      - name: Verify uv installation
-        run: uv --version
-
-      - name: Generate release benchmark summary
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-
-          # Keep generated staging out of the clean-source snapshot used by metadata.
-          mkdir -p target/release-benchmark-artifacts
-          just bench-latest 3600
-          uv run --locked benchmark-utils generate-summary \
-            --strict \
-            --output target/release-benchmark-artifacts/PERFORMANCE_RESULTS.md
-
-      - name: Package release Criterion baseline
-        id: package-baseline
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-
-          if [[ ! -d target/criterion ]]; then
-            echo "❌ target/criterion was not generated by the release benchmark run" >&2
-            exit 1
-          fi
-
-          cp -r target/criterion target/release-benchmark-artifacts/criterion
-          uv run --locked benchmark-utils create-release-benchmark-metadata \
-            --tag "$RELEASE_TAG" \
-            --criterion-dir target/release-benchmark-artifacts/criterion \
-            --output target/release-benchmark-artifacts/metadata.json
-
-          asset="delaunay-${RELEASE_TAG}-criterion-baseline.tar.gz"
-          tar -czf "$asset" -C target/release-benchmark-artifacts .
-          echo "asset=$asset" >> "$GITHUB_OUTPUT"
-
-      - name: Upload temporary release benchmark artifact
+      - name: Upload inert candidate input
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-benchmark-baseline-${{ inputs.tag }}
-          path: ${{ steps.package-baseline.outputs.asset }}
+          name: candidate-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/incoming-candidate/
           retention-days: 30
           if-no-files-found: error
 
-      - name: Attach and verify baseline on the draft
+  verify:
+    needs: fetch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: read
+      actions: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      validated-attempt: ${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up declared tools without caches
+        uses: $/.github/actions/setup-just
+        with:
+          cache: "false"
+
+      - name: Prepare dependency provenance before inspection
+        run: just release-dependency-builds
+
+      - name: Require this retrieval attempt
+        env:
+          VALIDATED_ATTEMPT: ${{ needs.fetch.outputs.validated-attempt }}
+          ARTIFACT_ID: ${{ needs.fetch.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ needs.fetch.outputs.artifact-digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$VALIDATED_ATTEMPT" == "$GITHUB_RUN_ATTEMPT" ]] || exit 1
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
+          [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" \
+            | jq -e --arg digest "sha256:$ARTIFACT_DIGEST" --arg run "$GITHUB_RUN_ID" \
+              '.expired == false and .digest == $digest and (.workflow_run.id | tostring) == $run' >/dev/null
+
+      - name: Download exact candidate input
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.fetch.outputs.artifact-id }}
+          path: ${{ runner.temp }}/incoming-candidate
+          merge-multiple: true
+
+      - name: Verify original acquisition and full frozen acceptance
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
+          CANDIDATE_TRANSFER: ${{ inputs.candidate }}
+        run: just release-receive "$RUNNER_TEMP/accepted-candidate" --incoming "$RUNNER_TEMP/incoming-candidate"
 
-          "$RUNNER_TEMP/release-tools/.venv/bin/python" \
-            "$RUNNER_TEMP/release-tools/release_benchmarks.py" \
-            publish "$RUNNER_TEMP/release-target.json"
+      - name: Upload verified inert archive
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: accepted-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/accepted-candidate/
+          retention-days: 30
+          if-no-files-found: error
 
-      - name: Release benchmark summary
+  attach:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      # No checkout or repository code runs with attachment credentials.
+      - name: Install trusted package runner
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.7"
+          enable-cache: false
+          cache-python: false
+
+      - name: Require this exact verification attempt and artifact
         env:
-          RELEASE_ASSET: ${{ steps.package-baseline.outputs.asset }}
+          VALIDATED_ATTEMPT: ${{ needs.verify.outputs.validated-attempt }}
+          ARTIFACT_ID: ${{ needs.verify.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ needs.verify.outputs.artifact-digest }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          [[ "$VALIDATED_ATTEMPT" == "$GITHUB_RUN_ATTEMPT" ]] || exit 1
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
+          [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" \
+            | jq -e --arg digest "sha256:$ARTIFACT_DIGEST" --arg run "$GITHUB_RUN_ID" \
+              '.expired == false and .digest == $digest and (.workflow_run.id | tostring) == $run' >/dev/null
 
-          {
-            echo "### Release Benchmark Baseline"
-            echo ""
-            echo "Uploaded release asset: \`$RELEASE_ASSET\`"
-            echo "The release remains a draft. Review it, then run just release-publish with a human GitHub CLI session."
-            echo ""
-            echo "The archive contains:"
-            echo ""
-            echo "- \`PERFORMANCE_RESULTS.md\`"
-            echo "- raw release-signal Criterion data under \`criterion/\`"
-            echo "- \`metadata.json\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Download the exact verified artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact-id }}
+          path: ${{ runner.temp }}/accepted-candidate
+          merge-multiple: true
+
+      - name: Attach the original accepted archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_TRANSFER: ${{ inputs.candidate }}
+        run: |
+          set -euo pipefail
+          uvx --python 3.15 \
+            --from 'research-repo-tools==0.2.8' \
+            python -I - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          from research_repo_tools.release_assets import (
+              download_release_asset, parse_release_target, publish_release_asset,
+              revalidate_release_target,
+          )
+          root = Path(os.environ["RUNNER_TEMP"])
+          data = json.loads(os.environ["CANDIDATE_TRANSFER"])
+          target = parse_release_target(json.dumps(data["target"]).encode("utf-8"))
+          if (target.repository, target.tag, target.commit, target.expected_title) != (
+              "acgetchell/delaunay", os.environ["RELEASE_TAG"], os.environ["GITHUB_SHA"], os.environ["RELEASE_TAG"],
+          ) or os.environ["GITHUB_REF"] != "refs/tags/" + target.tag:
+              raise ValueError("dispatch differs from independent release target")
+          if set(data["assets"]) != {"policy", "publication", "acceptance", "archive"}:
+              raise ValueError("attachment requires the original four-asset transfer")
+          def check():
+              release = revalidate_release_target(root, target)
+              for selected in data["assets"].values():
+                  entries = [item for item in release.assets if item[0] == selected["name"]]
+                  if len(entries) != 1 or type(selected["id"]) is not int or entries[0][1] != selected["id"]:
+                      raise ValueError("original candidate asset ID changed")
+                  if entries[0][3] is not None and entries[0][3] != selected["sha256"]:
+                      raise ValueError("original candidate asset digest changed")
+          check()
+          directory = root / "accepted-candidate"
+          artifact = directory / f"delaunay-{target.tag}-criterion-baseline.tar.gz"
+          for role, path in (("acceptance", directory / "acceptance.json"), ("archive", artifact)):
+              if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != data["assets"][role]["sha256"]:
+                  raise ValueError("verified artifact differs from independent dispatch assertion")
+          publish_release_asset(root, target.repository, target.tag, artifact, target=target)
+          check()
+          PY

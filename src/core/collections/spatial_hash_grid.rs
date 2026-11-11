@@ -120,6 +120,8 @@ impl<const D: usize, K> HashGridIndex<D, K> {
     }
 
     /// Remove every indexed bucket without changing the configured cell size.
+    ///
+    /// A disabled index stays disabled; construct a new index to enable it again.
     pub fn clear(&mut self) {
         self.cells.clear();
     }
@@ -247,6 +249,9 @@ impl<const D: usize, K> HashGridIndex<D, K> {
     ///
     /// Returns `true` if the index was used for the query (even if it yielded zero
     /// candidates). Returns `false` if the index was unusable for this query.
+    /// The callback returns `true` to continue visiting or `false` to stop early.
+    /// Stopping early still returns `true` from this method: the return value
+    /// reports whether the index was usable, not whether traversal completed.
     pub fn for_each_candidate_vertex_key<F>(&self, coords: &[f64; D], mut f: F) -> bool
     where
         K: Copy,

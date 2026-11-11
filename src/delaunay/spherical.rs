@@ -59,6 +59,7 @@ use crate::topology::spaces::spherical::{
     SphericalMetric, SphericalPoint, SphericalPointError, ambient_array_from_slice,
 };
 use crate::topology::traits::topological_space::{GlobalTopology, TopologyError};
+use crate::triangulation::validation::invariant_error_from_topology_error;
 use crate::validation_report::InvariantError;
 use crate::{TopologyGuarantee, Triangulation, TriangulationValidationError, vertex};
 
@@ -1488,16 +1489,7 @@ fn intrinsic_topology_error(
 
 /// Converts topology-support helper failures into the shared invariant tree.
 fn intrinsic_topology_support_error(source: TopologyError) -> SphericalDelaunayValidationError {
-    let invariant = match source {
-        TopologyError::FacetMapBuild { source }
-        | TopologyError::BoundaryFacetEnumeration { source }
-        | TopologyError::BoundaryFacetCount { source } => InvariantError::Tds { source },
-        TopologyError::BoundaryFacetSimplexAccess { source } => InvariantError::Tds {
-            source: source.into(),
-        },
-        TopologyError::BoundaryClassification { source } => InvariantError::from(*source),
-    };
-    intrinsic_error(invariant)
+    intrinsic_error(invariant_error_from_topology_error(source))
 }
 
 /// Boxes the shared invariant tree so spherical validation errors stay compact.

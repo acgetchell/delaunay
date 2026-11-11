@@ -5,6 +5,12 @@ inputs:
   cache:
     description: Restore and save managed-tool and consumer-build caches.
     default: "true"
+  consumer-cache:
+    description: Restore and save checkout compilation output; preparation disables this.
+    default: "true"
+  cache-scope:
+    description: Consumer stage owning this compilation cache.
+    default: shared
 
 runs:
   using: composite
@@ -24,13 +30,15 @@ runs:
         uv run --locked --managed-python --only-group tooling research-repo-tools ci export RESEARCH_REPO_TOOLS_HOME
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    - name: Cache managed tools
+    - name: Cache managed Cargo compilation
       if: inputs.cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ runner.os == 'Windows' && 'C:/rrt' || '~/.cache/research-repo-tools' }}
-        key: managed-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pyproject.toml', 'rust-toolchain.toml', '.python-version') }}
-        restore-keys: managed-tools-${{ runner.os }}-${{ runner.arch }}-
+        path: ${{ runner.os == 'Windows' && 'C:/rrt-build' || format('{0}/rrt-cargo-build', runner.temp) }}
+        key: >-
+          cargo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{
+            hashFiles('pyproject.toml', 'rust-toolchain.toml', 'uv.lock', 'Cargo.lock', '.python-version')
+          }}
 
     - name: Install the locked tooling package
       shell: bash
@@ -45,6 +53,8 @@ runs:
 
     - name: Install declared tools from the locked package
       shell: bash
+      env:
+        RESEARCH_REPO_TOOLS_CARGO_BUILD_HOME: ${{ runner.os == 'Windows' && 'C:/rrt-build' || format('{0}/rrt-cargo-build', runner.temp) }}
       run: |
         set -euo pipefail
         uv run --locked --managed-python --only-group tooling research-repo-tools toolchain sync
@@ -54,12 +64,18 @@ runs:
         uv run --locked --no-sync --no-python-downloads research-repo-tools --version
 
     - name: Cache consumer Rust builds
-      if: inputs.cache == 'true'
+      if: inputs.cache == 'true' && inputs.consumer-cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           target/debug
           target/release
           target/perf
-        key: rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: rust-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-
+        key: >-
+          rust-build-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{
+            hashFiles('rust-toolchain.toml', '**/Cargo.lock')
+          }}-${{ github.sha }}
+        restore-keys: >-
+          rust-build-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{
+            hashFiles('rust-toolchain.toml', '**/Cargo.lock')
+          }}-

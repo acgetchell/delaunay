@@ -2380,6 +2380,7 @@ impl InsertionError {
             | TriangulationValidationError::HighDimensionalVertexLinkUnproven { .. }
             | TriangulationValidationError::NonOrientable { .. }
             | TriangulationValidationError::EulerCharacteristicMismatch { .. }
+            | TriangulationValidationError::EulerCharacteristicOutOfRange { .. }
             | TriangulationValidationError::Disconnected { .. } => false,
         }
     }

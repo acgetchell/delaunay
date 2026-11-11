@@ -1,13 +1,25 @@
 name: Publish to crates.io
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable tag matching the workflow ref
+        required: true
+        type: string
+      candidate:
+        description: Independent publication-transfer.json with the canonical attached asset
+        required: true
+        type: string
+      acceptance:
+        description: SHA-256 of the full acceptance independently reviewed with just release-evidence
+        required: true
+        type: string
 
 permissions:
   contents: read
 
-# Serialize every version and rerun for this crate without cancelling an upload.
+# Serialize all uploads for this crate, including reruns. Never cancel an upload.
 concurrency:
   group: publish-crates-delaunay
   cancel-in-progress: false
@@ -20,16 +32,17 @@ jobs:
   verify:
     if: >-
       github.repository == 'acgetchell/delaunay' &&
-      github.event_name == 'release' && github.event.action == 'published' &&
-      !github.event.release.draft && !github.event.release.prerelease
+      github.actor == 'acgetchell' && github.triggering_actor == 'acgetchell'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     permissions:
       contents: read
       checks: read
       actions: read
     outputs:
-      selection: ${{ steps.promotion.outputs.selection }}
+      artifact-id: ${{ steps.approval.outputs.artifact-id }}
+      artifact-digest: ${{ steps.approval.outputs.artifact-digest }}
+      validated-attempt: ${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,22 +55,33 @@ jobs:
         with:
           cache: "false"
 
-      - name: Require reviewed release evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: just release-gate "$RELEASE_TAG"
+      - name: Prepare dependency provenance before inspection
+        run: just release-dependency-builds
 
-      - name: Verify main Cargo artifact without rebuilding
-        id: promotion
+      - name: Verify the independently reviewed acceptance
         env:
           GH_TOKEN: ${{ github.token }}
-        run: just release-artifact verify
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_TRANSFER: ${{ inputs.candidate }}
+          CANDIDATE_ACCEPTANCE: ${{ inputs.acceptance }}
+        run: |
+          set -euo pipefail
+          just release-receive "$RUNNER_TEMP/accepted-candidate" --published
+          just --set rrt 'uv run --locked --no-sync research-repo-tools' _release-notes-check "$RELEASE_TAG"
+
+      - name: Freeze the full acceptance before approval
+        id: approval
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publication-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/accepted-candidate/acceptance.json
+          retention-days: 30
+          if-no-files-found: error
 
   publish:
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     environment: crates-io
     permissions:
       contents: read
@@ -90,27 +114,57 @@ jobs:
           rustup toolchain install "$toolchain" --profile minimal --no-self-update
           printf 'RUSTUP_TOOLCHAIN=%s\n' "$toolchain" >> "$GITHUB_ENV"
 
+      - name: Prepare native dependency provenance
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
+          uv run --locked --no-sync research-repo-tools release dependency-builds
+
+      - name: Require this exact approval receipt
+        env:
+          VALIDATED_ATTEMPT: ${{ needs.verify.outputs.validated-attempt }}
+          ARTIFACT_ID: ${{ needs.verify.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ needs.verify.outputs.artifact-digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$VALIDATED_ATTEMPT" == "$GITHUB_RUN_ATTEMPT" ]] || exit 1
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
+          [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" \
+            | jq -e --arg digest "sha256:$ARTIFACT_DIGEST" --arg run "$GITHUB_RUN_ID" \
+              '.expired == false and .digest == $digest and (.workflow_run.id | tostring) == $run' >/dev/null
+
+      - name: Download the frozen approval receipt
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact-id }}
+          path: ${{ runner.temp }}/approved-acceptance
+          merge-multiple: true
+
       - name: Recheck evidence and registry absence after deployment approval
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_TRANSFER: ${{ inputs.candidate }}
+          CANDIDATE_ACCEPTANCE: ${{ inputs.acceptance }}
         run: |
           set -euo pipefail
-          just --set rrt 'uv run --locked --no-sync research-repo-tools' release-gate "$RELEASE_TAG"
+          just release-receive "$RUNNER_TEMP/accepted-candidate" --published --expected "$RUNNER_TEMP/approved-acceptance/acceptance.json"
+          just --set rrt 'uv run --locked --no-sync research-repo-tools' _release-notes-check "$RELEASE_TAG"
           uv run --locked --no-sync research-repo-tools release registry "$RELEASE_TAG" --expect absent
 
-      - name: Revalidate the frozen Cargo promotion after approval
+      - name: Reproduce the accepted Cargo bytes without credentials
         env:
           GH_TOKEN: ${{ github.token }}
-          PROMOTION_SELECTION: ${{ needs.verify.outputs.selection }}
-        run: uv run --locked --no-sync python tooling/python/cargo_release.py verify
+        run: just release-artifact verify --candidate "$RUNNER_TEMP/accepted-candidate"
 
       - name: Obtain a short-lived crates.io token
         id: auth
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
-      # Cargo repackages the clean source whose archive matched main byte-for-byte.
-      # Default/all-feature package builds ran in main CI without credentials.
+      # Original main CI built default/all-feature packages without upload credentials.
+      # Repackage the source whose bytes matched that retained Cargo archive.
       - name: Package and upload verified source without building
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
@@ -120,5 +174,5 @@ jobs:
         if: ${{ !cancelled() && steps.auth.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: just --set rrt 'uv run --locked --no-sync research-repo-tools' release-verify "$RELEASE_TAG"

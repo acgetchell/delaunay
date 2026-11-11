@@ -499,20 +499,17 @@ def test_release_signal_owns_public_api_workloads_without_internal_diagnostics()
 
 
 def test_release_measurement_plan_matches_workflow_and_just_recipe() -> None:
-    """Workflow and Just should delegate execution to the immutable Python plan."""
+    """Local recipes retain the immutable scientific plan; release attachment never measures."""
     project_root = Path(__file__).resolve().parents[2]
     workflow = (project_root / ".github" / "workflows" / "release-benchmarks.yml").read_text(encoding=UTF8)
-    workflow_step = workflow.split("- name: Generate release benchmark summary", maxsplit=1)[1].split(
-        "- name: Package release Criterion baseline",
-        maxsplit=1,
-    )[0]
     justfile = (project_root / "justfile").read_text(encoding=UTF8)
     just_recipe_match = re.search(r"^bench-latest\b.*?(?=^# )", justfile, flags=re.MULTILINE | re.DOTALL)
     assert just_recipe_match is not None
     just_recipe = just_recipe_match.group()
 
-    assert "just bench-latest" in workflow_step
-    assert "cargo bench --profile perf --bench" not in workflow_step
+    assert "just release-receive" in workflow
+    assert "just bench-latest" not in workflow
+    assert "cargo bench" not in workflow
     assert "benchmark-utils run-release-signal" in just_recipe
     assert "cargo bench --profile perf --bench" not in just_recipe
     assert tuple(measurement.command for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN) == benchmark_utils.RELEASE_ASSET_MEASUREMENT_COMMANDS
@@ -526,7 +523,7 @@ def test_release_measurement_plan_matches_workflow_and_just_recipe() -> None:
     assert all(measurement.required_group_prefixes for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
     assert all(measurement.sampling_mode == "full" for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
     assert all(not measurement.criterion_arguments for measurement in benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN)
-    assert "--run-benchmarks" not in workflow_step
+    assert "--run-benchmarks" not in workflow
     summary_recipe = re.search(r"^bench-perf-summary\b.*?(?=^# )", justfile, flags=re.MULTILINE | re.DOTALL)
     assert summary_recipe is not None
     assert "generate-summary --strict" in summary_recipe.group()
@@ -970,6 +967,10 @@ def test_historical_asset_cli_publishes_once_under_legacy_encoding(
     (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
     bundle = retained_performance_bundle()
     payload, provenance = performance_artifacts.serialize_bundle(bundle)
+    archive = tmp_path / "legacy.tar.gz"
+    with tarfile.open(archive, "w:gz"):
+        pass  # This CLI presentation fixture substitutes legacy bundle interpretation below.
+    downloaded = benchmark_utils.DownloadedReleaseAsset(archive=archive, command=("fixture",))
     output = tmp_path / "report-Ω.md"
     args = create_argument_parser().parse_args(["performance-github-assets", *(["v0.8.0", "v0.7.8"] if explicit_pair else []), "--output", str(output)])
     monkeypatch.setattr(
@@ -985,6 +986,7 @@ def test_historical_asset_cli_publishes_once_under_legacy_encoding(
     err = io.TextIOWrapper(stderr, encoding=encoding, errors="strict")
     with (
         monkeypatch.context() as streams,
+        patch("benchmark_utils._download_release_baseline", return_value=downloaded),
         patch("benchmark_utils._build_historical_asset_bundle", return_value=bundle) as build,
         patch("benchmark_utils.replace_many", wraps=benchmark_utils.replace_many) as publish,
     ):
@@ -995,7 +997,7 @@ def test_historical_asset_cli_publishes_once_under_legacy_encoding(
     out.flush()
     err.flush()
     assert result.value.code == 0, stderr.getvalue().decode(encoding)
-    build.assert_called_once_with(config=ReleaseReportConfig(tmp_path, "v0.8.0", "v0.7.8"))
+    build.assert_called_once_with(config=ReleaseReportConfig(tmp_path, "v0.8.0", "v0.7.8"), current_download=downloaded)
     publish.assert_called_once()
     assert output.with_suffix(".comparison.json").read_bytes() == payload
     assert output.with_suffix(".evidence.json").read_bytes() == provenance

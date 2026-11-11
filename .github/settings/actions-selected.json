@@ -4,6 +4,7 @@
   "patterns_allowed": [
     "acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml@*",
     "actions-rust-lang/setup-rust-toolchain@*",
+    "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
     "actions/cache@*",
     "actions/checkout@*",
     "actions/download-artifact@*",

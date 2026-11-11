@@ -147,6 +147,7 @@ impl FVector {
 /// - `SingleSimplex(D)`: One D-simplex (χ = 1)
 /// - `Ball(D)`: D-ball with boundary (χ = 1)
 /// - `ClosedSphere(D)`: Closed D-sphere without boundary (χ = 1 + (-1)^D)
+/// - `ClosedToroid(D)`: Closed D-torus (χ = 0 for D ≥ 1; χ = 1 for D = 0)
 /// - `Unknown`: Cannot determine topology
 ///
 /// # Examples
@@ -175,15 +176,15 @@ pub enum TopologyClassification {
 
     /// Closed D-sphere (no boundary).
     ///
-    /// Rare for finite triangulations; requires special construction
-    /// (e.g., periodic boundary conditions).
+    /// Requires spherical construction, such as the boundary of a simplex.
     /// The value represents the dimension D.
     ClosedSphere(usize),
 
     /// Closed D-torus (no boundary).
     ///
     /// A toroidal mesh constructed with periodic boundary identification.
-    /// The Euler characteristic of the D-torus T^D is always 0.
+    /// The Euler characteristic of `T^D` is 0 for D ≥ 1. The empty product
+    /// `T^0` is a point and has Euler characteristic 1.
     /// The value represents the dimension D.
     ClosedToroid(usize),
 
@@ -499,7 +500,7 @@ fn insert_simplices_of_size(
 /// let dt = DelaunayTriangulationBuilder::new(&vertices).build()?;
 ///
 /// let boundary_counts = dt.boundary_simplex_counts()?;
-/// let boundary_chi = euler::euler_characteristic(&boundary_counts);
+/// let boundary_chi = euler::euler_characteristic(&boundary_counts)?;
 /// assert_eq!(boundary_chi, 2);  // S² has χ = 2
 /// # Ok(())
 /// # }
@@ -595,6 +596,10 @@ pub fn count_boundary_simplices<U, V, const D: usize>(
 ///
 /// Uses the alternating sum formula: χ = Σ(-1)^k · `f_k`
 ///
+/// Counts are accumulated exactly before checking the result's range, so large
+/// terms that cancel do not cause a spurious overflow. This accepts arbitrary
+/// [`FVector`] counts; it does not certify that they describe a simplicial complex.
+///
 /// # Formula
 ///
 /// ```text
@@ -602,43 +607,58 @@ pub fn count_boundary_simplices<U, V, const D: usize>(
 ///   = Σ(k=0 to D) (-1)^k · f_k
 /// ```
 ///
+/// # Errors
+///
+/// Returns [`TopologyError::EulerCharacteristicOutOfRange`] if the exact sum
+/// does not fit in `isize`. Its `value` field preserves the exact result.
+///
 /// # Examples
 ///
 /// ```rust
 /// use delaunay::prelude::topology::validation::{FVector, euler_characteristic};
+/// # fn main() -> Result<(), delaunay::topology::TopologyError> {
 ///
 /// // 2D triangle: V=3, E=3, F=1 → χ = 3-3+1 = 1
 /// let counts = FVector {
 ///     by_dim: vec![3, 3, 1],
 /// };
-/// assert_eq!(euler_characteristic(&counts), 1);
+/// assert_eq!(euler_characteristic(&counts)?, 1);
 ///
 /// // 3D tetrahedron: V=4, E=6, F=4, C=1 → χ = 4-6+4-1 = 1
 /// let counts_3d = FVector {
 ///     by_dim: vec![4, 6, 4, 1],
 /// };
-/// assert_eq!(euler_characteristic(&counts_3d), 1);
+/// assert_eq!(euler_characteristic(&counts_3d)?, 1);
+/// # Ok(())
+/// # }
 /// ```
-#[must_use]
-#[expect(
-    clippy::cast_possible_wrap,
-    reason = "Simplex counts won't exceed isize::MAX in practice"
-)]
-pub fn euler_characteristic(counts: &FVector) -> isize {
+pub fn euler_characteristic(counts: &FVector) -> Result<isize, TopologyError> {
+    let value = euler_characteristic_wide(counts);
+    isize::try_from(value).map_err(|_| TopologyError::EulerCharacteristicOutOfRange {
+        value: Box::new(value),
+    })
+}
+
+/// Accumulates arbitrary face counts without losing cancellation.
+///
+/// On Rust's 16-, 32-, and 64-bit targets, each term has at most 64 bits and an
+/// allocated `Vec<usize>` has fewer than 2^63 entries. Even the sum of their
+/// absolute values therefore fits in `i128`.
+fn euler_characteristic_wide(counts: &FVector) -> i128 {
     counts
         .by_dim
         .iter()
         .enumerate()
         .map(|(k, &f_k)| {
             let sign = if k % 2 == 0 { 1 } else { -1 };
-            sign * (f_k as isize)
+            sign * (f_k as i128)
         })
         .sum()
 }
 
 pub(crate) fn triangulated_surface_euler_characteristic(
     triangles: &SmallBuffer<VertexKeyBuffer, 8>,
-) -> isize {
+) -> i128 {
     // For a triangulated 2D complex: χ = V - E + F.
     let mut vertices: FastHashSet<VertexKey> =
         fast_hash_set_with_capacity(triangles.len().saturating_mul(3).max(1));
@@ -672,7 +692,7 @@ pub(crate) fn triangulated_surface_euler_characteristic(
         by_dim: vec![vertices.len(), edges.len(), face_count],
     };
 
-    euler_characteristic(&counts)
+    euler_characteristic_wide(&counts)
 }
 
 pub(crate) fn triangulated_surface_boundary_component_count(
@@ -842,6 +862,7 @@ pub fn classify_triangulation<U, V, const D: usize>(
 /// - `SingleSimplex(_)`: χ = 1
 /// - `Ball(_)`: χ = 1
 /// - `ClosedSphere(d)`: χ = 1 + (-1)^d
+/// - `ClosedToroid(d)`: χ = 0 for d ≥ 1; χ = 1 for d = 0
 /// - `Unknown`: None
 ///
 /// # Examples
@@ -853,6 +874,8 @@ pub fn classify_triangulation<U, V, const D: usize>(
 /// assert_eq!(expected_chi_for(&TopologyClassification::Ball(3)), Some(1));
 /// assert_eq!(expected_chi_for(&TopologyClassification::ClosedSphere(2)), Some(2));
 /// assert_eq!(expected_chi_for(&TopologyClassification::ClosedSphere(3)), Some(0));
+/// assert_eq!(expected_chi_for(&TopologyClassification::ClosedToroid(0)), Some(1));
+/// assert_eq!(expected_chi_for(&TopologyClassification::ClosedToroid(2)), Some(0));
 /// assert_eq!(expected_chi_for(&TopologyClassification::Unknown), None);
 /// ```
 #[must_use]
@@ -864,10 +887,7 @@ pub fn expected_chi_for(classification: &TopologyClassification) -> Option<isize
             // χ(S^d) = 1 + (-1)^d
             Some(1 + if d % 2 == 0 { 1 } else { -1 })
         }
-        TopologyClassification::ClosedToroid(_) => {
-            // χ(T^d) = 0 for all d ≥ 1
-            Some(0)
-        }
+        TopologyClassification::ClosedToroid(d) => Some(isize::from(*d == 0)),
         TopologyClassification::Unknown => None,
     }
 }
@@ -878,6 +898,7 @@ mod tests {
     use crate::core::tds::TdsBuilder;
     use crate::core::test_support::single_simplex_tds;
     use crate::vertex;
+    use std::assert_matches;
 
     use crate::core::simplex::Simplex;
     use slotmap::{KeyData, SlotMap};
@@ -900,7 +921,7 @@ mod tests {
         let restored: Tds<(), (), 3> = serde_json::from_str(&encoded).unwrap();
         let counts = count_simplices(&restored).unwrap();
         assert_eq!(counts.by_dim, vec![5, 9, 7, 2]);
-        assert_eq!(euler_characteristic(&counts), 1);
+        assert_eq!(euler_characteristic(&counts).unwrap(), 1);
     }
 
     #[test]
@@ -943,7 +964,7 @@ mod tests {
         let counts = count_simplices(&tds).unwrap();
 
         assert_eq!(counts.by_dim, vec![3, 1]);
-        assert_eq!(euler_characteristic(&counts), 2);
+        assert_eq!(euler_characteristic(&counts).unwrap(), 2);
     }
 
     macro_rules! single_simplex_f_vector_test {
@@ -954,7 +975,7 @@ mod tests {
                 let counts = count_simplices(&tds).unwrap();
 
                 assert_eq!(counts.by_dim, $expected);
-                assert_eq!(euler_characteristic(&counts), 1);
+                assert_eq!(euler_characteristic(&counts).unwrap(), 1);
             }
         };
     }
@@ -1071,7 +1092,38 @@ mod tests {
         let counts = FVector {
             by_dim: vec![3, 3, 1],
         };
-        assert_eq!(euler_characteristic(&counts), 1);
+        assert_eq!(euler_characteristic(&counts).unwrap(), 1);
+    }
+
+    #[test]
+    fn euler_characteristic_preserves_large_count_cancellation() {
+        let max = isize::MAX.cast_unsigned();
+        for (by_dim, expected) in [
+            (vec![], 0),
+            (vec![usize::MAX, usize::MAX], 0),
+            (vec![usize::MAX, 0, 1, usize::MAX], 1),
+            (vec![max, 0, max, max], isize::MAX),
+            (vec![max + 1, 1], isize::MAX),
+            (vec![0, max + 1], isize::MIN),
+        ] {
+            assert_eq!(euler_characteristic(&FVector { by_dim }).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn euler_characteristic_reports_exact_out_of_range_value() {
+        let max = isize::MAX.cast_unsigned();
+        for (by_dim, expected) in [
+            (vec![max, 0, 1], isize::MAX as i128 + 1),
+            (vec![usize::MAX], usize::MAX as i128),
+            (vec![0, usize::MAX], -(usize::MAX as i128)),
+            (vec![0, max + 1, 0, 1], isize::MIN as i128 - 1),
+        ] {
+            assert_matches!(
+                euler_characteristic(&FVector { by_dim }),
+                Err(TopologyError::EulerCharacteristicOutOfRange { value }) if *value == expected
+            );
+        }
     }
 
     #[test]
@@ -1080,7 +1132,7 @@ mod tests {
         let counts = FVector {
             by_dim: vec![4, 6, 4, 1],
         };
-        assert_eq!(euler_characteristic(&counts), 1);
+        assert_eq!(euler_characteristic(&counts).unwrap(), 1);
     }
 
     fn tri(a: VertexKey, b: VertexKey, c: VertexKey) -> VertexKeyBuffer {
@@ -1220,6 +1272,10 @@ mod tests {
         );
         assert_eq!(expected_chi_for(&TopologyClassification::Unknown), None);
         assert_eq!(
+            expected_chi_for(&TopologyClassification::ClosedToroid(0)),
+            Some(1)
+        );
+        assert_eq!(
             expected_chi_for(&TopologyClassification::ClosedToroid(2)),
             Some(0)
         );
@@ -1280,7 +1336,7 @@ mod tests {
 
         let counts = count_simplices(&tds).unwrap();
         assert_eq!(counts.by_dim, vec![4, 6, 4]);
-        assert_eq!(euler_characteristic(&counts), 2);
+        assert_eq!(euler_characteristic(&counts).unwrap(), 2);
     }
 
     #[test]
@@ -1289,6 +1345,6 @@ mod tests {
 
         let boundary_counts = count_boundary_simplices(&tds, GlobalTopology::Euclidean).unwrap();
         assert_eq!(boundary_counts.by_dim, vec![0, 0]);
-        assert_eq!(euler_characteristic(&boundary_counts), 0);
+        assert_eq!(euler_characteristic(&boundary_counts).unwrap(), 0);
     }
 }

@@ -267,7 +267,7 @@ where
             "{D}d cone f_{k}"
         );
     }
-    assert_eq!(euler_characteristic(&counts), 1);
+    assert_eq!(euler_characteristic(&counts).or_abort(), 1);
     assert_eq!(dt.number_of_simplices(), 1 << D);
     let ridge_count = tri.ridges().map(OrAbort::or_abort).count();
     assert_eq!(ridge_count, counts.count(D - 2));
@@ -286,7 +286,7 @@ where
     group.bench_function(BenchmarkId::new("euler_with_face_count", &size), |b| {
         b.iter(|| {
             let counts = count_simplices(black_box(tds)).or_abort();
-            black_box(euler_characteristic(&counts))
+            black_box(euler_characteristic(&counts).or_abort())
         });
     });
     group.bench_function(BenchmarkId::new("ridges", &size), |b| {

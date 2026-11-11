@@ -77,9 +77,15 @@ During development, use `just check` alongside targeted tests for changed behavi
 | `just ci` | Run comprehensive final validation for core Rust/Cargo, substantial Python, or public-behavior changes. |
 
 Use `just fix` to apply formatters and safe automatic fixes, then rerun the
-relevant checks. `just ci` includes `just check` and `just test`; earlier runs
+relevant checks. `just ci` includes `just check` and every `just test` bucket; earlier runs
 provide feedback while you work. Run `just security` separately: security scans
 require network access and a checkout with full Git history.
+
+After setup and policy/documentation checks, `just ci` overlaps Python tests
+with a sequential Rust lane. Use `just --jobs 1 ci` for the complete serial
+fallback. Hosted CI splits native work into four jobs on each supported OS;
+the [CI ownership guide](docs/dev/ci_validation.md) records their coverage and
+cache/evidence boundaries.
 
 Run `just check` on the final working tree before every push. Before submitting
 core Rust/Cargo, substantial Python, or public-behavior changes, complete `just ci`;

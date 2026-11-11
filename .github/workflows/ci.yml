@@ -35,32 +35,19 @@ jobs:
       - name: Run portable checks
         run: just ci-portable
 
-  build:
+  prepare:
     needs: portable
-    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
-      fail-fast: false # Continue other jobs if one fails
+      fail-fast: false
       matrix:
         os:
           - ubuntu-latest
           - macos-latest
           - windows-latest
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
 
     steps:
-      - name: Require portable checks
-        shell: bash
-        env:
-          PORTABLE_RESULT: ${{ needs.portable.result }}
-        run: test "$PORTABLE_RESULT" = success
-
       - name: Disable Git autocrlf on Windows
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -73,8 +60,52 @@ jobs:
           persist-credentials: false
 
       - name: Set up shared tooling
-        id: setup_just
         uses: $/.github/actions/setup-just
+        with:
+          # Save only managed tool compilation before native stages fan out.
+          consumer-cache: "false"
+
+  native:
+    name: native-${{ matrix.stage }} (${{ matrix.os }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        stage:
+          - python-docs
+          - rust-builds
+          - rust-integrations
+          - rust-tests
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Disable Git autocrlf on Windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up shared tooling
+        uses: $/.github/actions/setup-just
+        with:
+          cache-scope: ${{ matrix.stage }}
 
       - name: Verify native Rust host
         id: rust-host
@@ -91,8 +122,35 @@ jobs:
             exit 1
           fi
 
-      - name: Run CI checks
-        run: just ci-native
+      - name: Run native validation
+        shell: bash
+        env:
+          CI_STAGE: ${{ matrix.stage }}
+        run: just "ci-$CI_STAGE"
+
+  build:
+    # Preserve required check names; these Linux gates are not native evidence.
+    needs: [portable, prepare, native]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Require complete native validation
+        env:
+          PORTABLE_RESULT: ${{ needs.portable.result }}
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          test "$PORTABLE_RESULT" = success
+          test "$PREPARE_RESULT" = success
+          test "$NATIVE_RESULT" = success
 
   package:
     needs: build
@@ -101,6 +159,11 @@ jobs:
       github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      artifact-id: ${{ steps.handoff.outputs.artifact-id }}
+      artifact-digest: ${{ steps.handoff.outputs.artifact-digest }}
+      package: ${{ steps.package.outputs.package }}
+      validated-attempt: ${{ github.run_attempt }}
     permissions:
       contents: read
       actions: read # The installed evidence creator observes this exact run.
@@ -116,16 +179,102 @@ jobs:
         with:
           cache: "false"
 
+      - name: Prepare native dependency provenance
+        run: just release-dependency-builds
+
       - name: Verify clean default and all-feature Cargo packages
         run: just release-package
 
       - name: Retain verified Cargo package
+        id: package
         env:
           GH_TOKEN: ${{ github.token }}
           PROMOTION_DIRECTORY: ${{ runner.temp }}/cargo-promotion
         run: just release-artifact create "$PROMOTION_DIRECTORY"
 
       - name: Upload verified Cargo package
+        id: handoff
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cargo-producer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cargo-promotion/*
+          retention-days: 30
+          if-no-files-found: error
+
+  sign-package:
+    needs: package
+    if: >-
+      github.repository == 'acgetchell/delaunay' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      # No checkout, project environment, or producer code runs with signing rights.
+      - name: Install trusted package runner
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.7"
+          enable-cache: false
+          cache-python: false
+
+      - name: Authenticate the original package handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.package.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ needs.package.outputs.artifact-digest }}
+          PACKAGE_NAME: ${{ needs.package.outputs.package }}
+          VALIDATED_ATTEMPT: ${{ needs.package.outputs.validated-attempt }}
+        working-directory: ${{ runner.temp }}
+        shell: uvx --no-config --isolated --python 3.15 --from research-repo-tools==0.2.8 python -I "{0}"
+        run: |
+          import os, re
+          from pathlib import Path
+          from research_repo_tools.release_validation import api, download_artifact
+          repository = "acgetchell/delaunay"
+          run, attempt = int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"])
+          if os.environ["VALIDATED_ATTEMPT"] != str(attempt):
+              raise ValueError("package producer belongs to a different attempt")
+          name = os.environ["PACKAGE_NAME"]
+          if not re.fullmatch(r"delaunay-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.crate", name):
+              raise ValueError("unexpected Cargo package name")
+          identifier = int(os.environ["ARTIFACT_ID"])
+          artifact = api(f"actions/artifacts/{identifier}", repository=repository)
+          producer = artifact.get("workflow_run", {})
+          if not (
+              type(artifact.get("id")) is int and artifact["id"] == identifier
+              and artifact.get("expired") is False
+              and artifact.get("name") == f"cargo-producer-{run}-{attempt}"
+              and artifact.get("digest") == "sha256:" + os.environ["ARTIFACT_DIGEST"]
+              and type(producer.get("id")) is int and producer["id"] == run
+              and producer.get("head_sha") == os.environ["GITHUB_SHA"]
+          ):
+              raise ValueError("original package handoff identity changed")
+          current = api(f"actions/runs/{run}", repository=repository)
+          if (current.get("run_attempt") != attempt or current.get("event") != "push"
+              or current.get("head_branch") != "main" or current.get("head_sha") != os.environ["GITHUB_SHA"]):
+              raise ValueError("package producer run changed")
+          download_artifact(repository, artifact, Path("cargo-promotion"), ("validation.json", name))
+          if api(f"actions/runs/{run}", repository=repository).get("run_attempt") != attempt:
+              raise ValueError("package producer attempt changed during retrieval")
+
+      - name: Sign the original Cargo manifest
+        id: validation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/cargo-promotion/validation.json
+          create-storage-record: false
+
+      - name: Retain the original signature
+        env:
+          VALIDATION_BUNDLE: ${{ steps.validation.outputs.bundle-path }}
+        run: cp "$VALIDATION_BUNDLE" "$RUNNER_TEMP/cargo-promotion/validation.sigstore.json"
+
+      - name: Upload signed Cargo evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cargo-package-${{ github.run_id }}-${{ github.run_attempt }}

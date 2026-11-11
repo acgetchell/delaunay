@@ -231,7 +231,7 @@ def test_example_configuration_covers_cargo_targets_and_feature_builds() -> None
     assert all(policy["expect"] for policy in configuration["examples"].values())
     rendered = dry_run(REPO_ROOT, "examples").stderr
     assert "toolchain run -- research-repo-tools validation cargo-examples tooling/examples.toml" in rendered
-    assert "examples" in {item["recipe"] for item in inspect_justfile(REPO_ROOT).recipes["ci"]["dependencies"]}
+    assert "toolchain run -- research-repo-tools validation cargo-examples tooling/examples.toml" in dry_run(REPO_ROOT, "ci").stderr
 
 
 def test_ci_directly_lints_python_fixtures_with_full_ruff_policy() -> None:
@@ -363,11 +363,14 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
     assert 'research-repo-tools performance readme tooling/performance-release.toml "$@"' in readme_command.stdout + readme_command.stderr
     for name, operation, configuration, options in (
         ("performance-prepare", "prepare", "performance-release", ""),
-        ("performance-release", "release", "performance-release", " --progress-cadence 300"),
         ("performance-doc", "promote", "performance-report", ""),
     ):
         command = dry_run(REPO_ROOT, name)
         assert f'research-repo-tools performance {operation} tooling/{configuration}.toml{options} "$@"' in command.stdout + command.stderr
+    acquisition = dry_run(REPO_ROOT, "performance-release")
+    assert 'python tooling/python/release_candidate.py acquire --checkpoint target/bench-reports/release-checkpoint --progress-cadence 300 "$@"' in (
+        acquisition.stdout + acquisition.stderr
+    )
     local = dry_run(REPO_ROOT, "performance-local")
     assert "performance measure 'tooling/measurement-release-signal.toml'" in local.stdout + local.stderr
     assert "--allow-git-mutations" not in local.stdout + local.stderr
@@ -379,7 +382,10 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
 )
 def test_performance_release_default_cadence_allows_user_overrides(arguments: tuple[str, ...], expected: float) -> None:
     """Parse the real recipe's arguments without starting a benchmark workload."""
-    probe = "import sys; from research_repo_tools.cli import parser; print(parser().parse_args(sys.argv[2:]).progress_cadence)"
+    probe = (
+        "import sys; sys.path.insert(0, 'tooling/python'); from release_candidate import argument_parser; "
+        "print(argument_parser().parse_args(sys.argv[3:]).progress_cadence)"
+    )
     managed = f"{shlex.quote(Path(sys.executable).as_posix())} -c {shlex.quote(probe)}"
     result = run_safe_command(
         "just",
@@ -623,7 +629,7 @@ def test_ci_composes_non_mutating_canonical_validation_figure_check() -> None:
     """The local CI contract should catch stale tracked figures on canonical macOS."""
     recipes = inspect_justfile(REPO_ROOT).recipes
     ci_dependencies = [dependency["recipe"] for dependency in recipes["ci"]["dependencies"]]
-    assert ci_dependencies[:3] == ["check", "python-fixture-lint", "_validation-doc-figures-check-if-canonical"]
+    assert ci_dependencies == ["_ci-setup", "check", "python-fixture-lint", "_validation-doc-figures-check-if-canonical", "doc-package-check", "_ci-execution"]
 
     rendered_result = dry_run(REPO_ROOT, "validation-doc-figures-check")
     rendered = rendered_result.stdout + rendered_result.stderr

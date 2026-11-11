@@ -15,7 +15,7 @@ uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
 The installed package and tooling/notebook groups pin
-`research-repo-tools==0.2.5`. Shared CLI commands and documented Python APIs own
+`research-repo-tools==0.2.8`. Shared CLI commands and documented Python APIs own
 setup, maintenance, source inventory, subprocesses, archive extraction, worktree
 lifecycle, Criterion parsing, file transactions and notebook infrastructure.
 Retained adapters own Delaunay science and policy. The
@@ -49,29 +49,32 @@ just tag vX.Y.Z
 uv run --locked --group dev research-repo-tools --help
 ```
 
-Cargo promotion uses `just release-artifact create OUTPUT` in trusted main CI
-after the default/all-feature package builds. `just release-artifact verify`
-checks exact-commit native evidence and byte-identical repackaging during release
-verification and after deployment approval. These commands never upload a crate;
-see [release gates and recovery](../../docs/RELEASING.md).
-`just release-evidence` inspects the retained package before publication without
-Cargo or a release event. `release-publish` requires that inspection, while
-workflow verification retains its stricter event and reproduction gates.
+Cargo promotion retains default/all-feature package evidence from trusted main,
+with a separate signer that executes no checkout code. `cargo_release.py` owns
+Cargo dry-run locations and credential-free byte reproduction; installed RRT
+owns native run/attempt, signature and archive verification.
 
-`cargo_release.py` retains only Cargo dry-run locations, source observation,
-the published-event boundary and credential-free reproduction. Installed
-v0.2.4 evidence APIs own archive/source metadata inspection, exact run/attempt
-selection and frozen handoffs, using `tooling/release-evidence.toml`.
-`release-evidence` and `release-assets` use isolated published runtimes and the
-same arguments as la-stack. Evidence can be saved with `--output PATH` and
-revalidated with `--expected PATH`; `--github-output PATH` writes directly to
-an existing Actions command file. No evidence travels through Just stdout.
+`release_candidate.py` owns the local acquisition record and explicit maintainer
+dispatch. `performance-release` freezes original schema-6 acquisition assertions
+and a publication receipt outside the checkout before report promotion.
+`release-evidence [OWNER] [--selection NAME]` verifies the whole-tree binding
+and signed final-main evidence, freezing canonical acceptance and native
+selection without acquisition, preflight or builds. Missing or changed records
+stop promotion.
 
-The citation-date adapter is deleted: `changelog-release` and tagged previews
-call the installed generator with `changelog.date-source = "citation"`.
-`prepare_release.py` creates or validates a stable draft after exact-main
-evidence and required checks. Tag pushes invoke it automatically; benchmark
-dispatch remains explicit through `just release-benchmarks TAG`.
+Tag pushes prepare drafts through isolated shared APIs and retain the original
+receipt. `release-benchmarks TAG` authenticates that receipt and dispatches
+attachment of the accepted archive without measuring. `release-publish TAG`
+revalidates the original records before GitHub publication.
+`release-upload TAG` explicitly dispatches registry publication with the full
+reviewed acceptance digest. After environment approval, the same acceptance
+must pass again, followed by byte-identical Cargo reproduction before token
+acquisition. See [release gates and recovery](../../docs/RELEASING.md).
+
+The legacy `prepare_release.py` and `release_benchmarks.py` interfaces are no
+longer the canonical workflow entry points. `release-assets` remains the public
+isolated shared CLI. The citation-date adapter is deleted:
+`changelog-release` and tagged previews use `changelog.date-source = "citation"`.
 
 Changelog generation normalizes history and retains Unreleased and the latest
 minor series in the root, with older series under `docs/archives/changelog/`.
@@ -130,7 +133,7 @@ just performance-doc
 just performance-github-assets
 ```
 
-Fresh paired workflows call the installed `research-repo-tools` schema-4 engine
+Fresh release-signal workflows call the installed `research-repo-tools` schema-6 scheduler
 through `tooling/measurement-release-signal.toml`. Read-only exports preserve
 each revision's own native harness. Discovery, gates, exact per-case counts,
 saved-copy verification and full raw retention precede publication of

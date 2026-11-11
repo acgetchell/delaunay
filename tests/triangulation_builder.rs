@@ -308,7 +308,7 @@ fn test_builder_toroidal_chi_zero_t2() {
         "structural validity should pass for periodic triangulation"
     );
     let counts = dt.simplex_counts().unwrap();
-    let chi = euler_characteristic(&counts);
+    let chi = euler_characteristic(&counts).unwrap();
     assert_eq!(
         chi, 0,
         "Euler characteristic of a periodic T^2 triangulation must be 0"

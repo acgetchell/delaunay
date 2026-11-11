@@ -115,6 +115,19 @@ def test_successful_preparation_and_safe_retry(tmp_path: Path, provider: dict[st
     assert provider["evidence"][1] == {"expected": b'{"frozen":true}\n'}
 
 
+def test_unverified_dependencies_prevent_draft_creation(tmp_path: Path, provider: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    def reject(root: Path, *, packages: tuple[str, ...]) -> None:
+        assert root == tmp_path
+        assert packages == ()
+        msg = "unverified dependency provenance"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(prepare_release, "check_release_dependencies", reject)
+    with pytest.raises(ValueError, match="unverified dependency provenance"):
+        prepare_release.prepare(tmp_path, TAG)
+    assert not provider["writes"]
+
+
 def test_declared_asset_cli_captures_the_draft_identity(tmp_path: Path, provider: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     """Exercise the installed CLI and real consumer asset declaration without uploads."""
     provider["releases"] = [draft()]
@@ -182,18 +195,29 @@ def test_tag_context_is_required(tmp_path: Path, provider: dict[str, Any], monke
 
 
 def test_preparation_workflow_has_no_registry_or_publication_authority() -> None:
+    """Draft creation receives inert, authenticated native evidence without checkout code."""
     workflow = yaml.safe_load((ROOT / ".github/workflows/prepare-release.yml").read_bytes())
     assert workflow[True] == {"push": {"tags": ["v*"]}}
     assert workflow["concurrency"]["cancel-in-progress"] is False
+    verify = workflow["jobs"]["verify"]
+    assert "merge-base --is-ancestor" in yaml.safe_dump(verify)
+    assert "release evidence verify" in yaml.safe_dump(verify)
+    guard = next(step["run"] for step in verify["steps"] if step.get("name") == "Require protected main and native and SARIF checks")
+    assert "require_checks(checks, commit, settings.publishing.required_checks)" in guard
+    assert 'branch.get("protected") is not True' in guard
     job = workflow["jobs"]["prepare"]
-    assert job["timeout-minutes"] == 30
-    assert job["permissions"] == {"contents": "write", "actions": "read", "checks": "read"}
+    assert job["needs"] == "verify"
+    assert job["permissions"] == {"contents": "write", "actions": "read"}
     assert "environment" not in job
-    steps = job["steps"]
-    assert "Require protected main" in steps[1]["name"]
-    assert "merge-base --is-ancestor" in steps[1]["run"]
-    assert "prepare_release.py" in steps[-1]["run"]
-    bootstrap = next(step for step in steps if step.get("name") == "Install locked draft tooling")
-    assert "--no-install-project" in bootstrap["run"]
-    assert "GH_TOKEN" not in bootstrap.get("env", {})
-    assert "uv sync" not in steps[-1]["run"]
+    assert not any(step.get("uses", "").startswith("actions/checkout@") for step in job["steps"])
+    writer = job["steps"][1]
+    assert "research-repo-tools==0.2.8" in writer["shell"]
+    assert "python -I" in writer["shell"]
+    assert "prepare_release_draft(" in writer["run"]
+    assert "attempt != 1" in writer["run"]
+    assert "same_tag != [run]" in writer["run"]
+    assert job["steps"][-1]["if"] == "always()"
+    assert "draft-receipt.json" in job["steps"][-1]["with"]["path"]
+    assert "cargo build" not in yaml.safe_dump(workflow)
+    assert "cargo package" not in yaml.safe_dump(workflow)
+    assert "id-token" not in yaml.safe_dump(workflow)

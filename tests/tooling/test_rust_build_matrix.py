@@ -19,14 +19,15 @@ NATIVE_TARGETS = {
 def host_check_script() -> str:
     """Check matrix wiring and return the actual production host guard."""
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    job = workflow["jobs"]["build"]
+    job = workflow["jobs"]["native"]
     matrix = job["strategy"]["matrix"]
     assert set(matrix["os"]) == set(NATIVE_TARGETS)
     assert {entry["os"]: entry["target"] for entry in matrix["include"]} == NATIVE_TARGETS
     steps = job["steps"]
     guard_index = next(index for index, step in enumerate(steps) if step.get("id") == "rust-host")
-    ci_index = next(index for index, step in enumerate(steps) if step.get("run") == "just ci-native")
+    ci_index = next(index for index, step in enumerate(steps) if step.get("name") == "Run native validation")
     assert guard_index < ci_index
+    assert job["runs-on"] == "${{ matrix.os }}"
     guard = steps[guard_index]
     assert guard["shell"] == "bash"
     assert guard["env"]["EXPECTED_RUST_HOST"] == "${{ matrix.target }}"

@@ -153,7 +153,7 @@ def test_successful_process_is_insufficient_measurement_evidence(
     prior.parent.mkdir(parents=True)
     prior.write_bytes(b"retain on failure\r\n")
 
-    def damaged(command: str, args: tuple[str, ...], *, cwd: Path, timeout: int) -> subprocess.CompletedProcess[bytes]:
+    def damaged(command: str, args: tuple[str, ...], *, cwd: Path, timeout: int) -> subprocess.CompletedProcess[None]:
         result = original(command, args, cwd=cwd, timeout=timeout)
         criterion = Path(args[args.index("--criterion-dir") + 1])
         directory = criterion / "validation_validate_3d_750"

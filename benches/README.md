@@ -24,7 +24,8 @@ just performance-local
 just performance-local topology
 ```
 
-These commands call the installed shared schema-4 acquisition engine. Read-only
+The release-signal plan uses the shared schema-6 schedule (one sequential trial);
+the topology plan retains schema 4. Read-only
 source exports retain each revision's original source provenance. The default
 release-signal plan overlays the current harness onto both library versions;
 the topology plan preserves native harnesses, including baseline-only files.
@@ -714,8 +715,10 @@ The 5D 1,000-point allocation case can take hours even in development mode.
 `BENCH_SAMPLE_SIZE`, `BENCH_WARMUP_SECS` and `BENCH_MEASUREMENT_TIME` configure
 manual timing. `BENCH_PERCENTILE` selects the allocation summary percentile.
 
-RSS uses the current process, `sysinfo` and KiB units. Process startup, allocator
-retention and host activity affect its deltas; they are not allocation counts.
+The RSS diagnostic samples the current process in KiB with `memory-stats`. It
+reads `/proc/self/statm` on Linux, Mach task resident size on macOS, and the
+working set on Windows. Process startup, allocator retention and host activity
+affect its deltas. Allocation counts come from the separate allocator diagnostic.
 The optional allocator reports operation counts and bytes separately from
 instrumented timing. Keep these observations distinct from API latency and
 from general memory-scaling guarantees.
