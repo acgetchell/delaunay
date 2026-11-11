@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from research_repo_tools.complete_runs import CompletePolicy, parse_policy, serialize_policy
-from research_repo_tools.criterion import COMPARISON_SCHEMA, SAMPLE_SCHEMA, Estimate, Sample, parse_comparison, serialize_sample
+from research_repo_tools.criterion import COMPARISON_SCHEMA, SAMPLE_SCHEMA, ConfidenceInterval, Estimate, Sample, parse_comparison, serialize_sample
 from research_repo_tools.criterion_inventory import CriterionInventory, parse_inventory, serialize_inventory
 from research_repo_tools.evidence import Evidence, Provenance, parse_evidence, serialize_evidence, sha256
 from research_repo_tools.host_metadata import HostMetadata, serialize_host
@@ -162,7 +162,8 @@ def retain_measurements(original: PerformanceBundle, inventory: CriterionInvento
         for row in original.rows:
             timing = row.current if side == "current" else row.baseline
             if timing is not None:
-                estimates.append((row.benchmark_id, Estimate(timing.median_ns, timing.ci_lower_ns, timing.ci_upper_ns, timing.confidence_level)))
+                interval = ConfidenceInterval(timing.ci_lower_ns, timing.ci_upper_ns, timing.confidence_level)
+                estimates.append((row.benchmark_id, Estimate(timing.median_ns, interval)))
         evidence = Evidence(
             serialize_sample(Sample(tuple(estimates))),
             SAMPLE_SCHEMA,

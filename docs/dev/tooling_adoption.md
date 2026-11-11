@@ -1,7 +1,7 @@
 # Shared tooling adoption
 
 The repository now pins the published
-[research-repo-tools v0.2.5](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.5)
+[research-repo-tools v0.2.8](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.8)
 PyPI distribution in runtime dependencies, the tooling/dev groups, and the
 notebook extra/group. `uv.lock` records exact registry artifacts and hashes.
 Python follows the shared package's 3.15 floor. Ruff, ty and pytest inherit exact
@@ -45,6 +45,81 @@ verification remains required. The performance and Rustdoc integrations are
 documented below. The [release-tooling adoption](#v024-release-tooling-adoption)
 implements [#653](https://github.com/acgetchell/delaunay/issues/653) using the
 same published package.
+
+## v0.2.8 provenance and runtime adoption
+
+The published adopter reconciles runtime, optional, and group requirements
+alongside the lock and environment. Criterion estimates use the shared
+`ConfidenceInterval` value when an interval is present. Scanner setup derives
+its version from the lock.
+
+`dependency-sources.toml` declares the Python project, root Cargo workspace,
+and standalone checkpoint fixture. The fixture uses `cargo-owner` to identify
+the enclosing Delaunay crate and keeps a separately verified lock. The larger
+archive budget accommodates the published winapi crates. Run
+`just release-dependency-builds` before `just release-dependencies` on each
+native release machine. The build group owns the locked builders. Source receipts
+authenticate native actionlint, PyYAML, and ruamel.yaml.clib outputs.
+
+The memory footprint benchmark now uses `memory-stats` for current-process
+RSS. This replaces `sysinfo` and removes `windows 0.62.2` from the root lock.
+That crate's 114,212,919-byte expanded archive exceeded the v0.2.8 verifier's
+64 MiB limit. Release provenance still verifies the full locked graph,
+including benchmark dependencies.
+
+`release-assets` and `release-evidence` use the shared isolated release runtime
+from a pinned PyPI installation. It selects tools outside the observed checkout
+while the recipes supply the checkout, commit, tag or version, and output paths.
+
+CI caches managed Cargo compilation separately from exact tool installations,
+keyed by OS, architecture, toolchain, manifests, and locks. The package producer
+and crates.io jobs disable cache restoration. Native Linux and Windows evidence
+remains owned by CI.
+
+Draft and OIDC publication jobs retain their minimal locked tooling environment,
+without installing the local project or development group. They prepare Cargo's
+registry inputs with the declared minimal Rust toolchain and authenticate native
+source builds before release checks. Release-provider tests supply inert
+dependency identities; the separate provenance command exercises the actual
+locked registry graphs and installed bytes.
+
+## v0.2.8 candidate reuse adoption (#690)
+
+The release-signal declaration now schedules one sequential schema-6 trial,
+preserving all 173 cases, native discovery, sample counts and common harness.
+One local acquisition supplies reports, README and the candidate archive.
+The local owner freezes the policy, acquisition digest and publication receipt
+before promotion, outside candidate-controlled files.
+
+The final-main package guarantee remains `cargo-archive`. A separate signer
+authenticates the original producer artifact and signs its manifest without
+checkout code. Pre-tag `release-evidence` only inspects: canonical acceptance
+and matching native selection are frozen outside the checkout. The original
+tag-push journal binds draft creation and later attachment.
+
+The canonical workflow supersedes the v0.2.4 recipe details recorded below:
+`release_candidate` owns local record selection and maintainer dispatch;
+shared public APIs own verification. `release-benchmarks` attaches accepted
+bytes without hosted measurement. `release-upload` explicitly carries the
+reviewed acceptance digest across environment approval. Credential-free Cargo
+reproduction and producer-tool equality still precede token acquisition.
+
+The candidate adapter serializes local owner-record writes around the shared
+failure-atomic file publisher. GitHub publication retains the shared release
+gates and checks all original asset identities, then sends only the lifecycle
+request to the captured release ID and verifies the published result. RRT 0.2.8's
+general publication command selects a fresh draft by tag, while its asset
+publisher can recreate a missing attachment; neither is used for this final
+sealed-candidate transition.
+
+The version-aware historical reader preserves original measured provenance and
+all existing v0.8.4 evidence.
+
+Synthetic fixtures exercise acquisition, publication, whole-tree binding,
+immutable transfers and Cargo reproduction. They do not establish native
+adoption or a real retained-evidence handoff. Those gates, publication/checksum
+verification and the published la-stack v0.5.3 parity review belong to
+[v0.8.5 tracker #696](https://github.com/acgetchell/delaunay/issues/696).
 
 ## v0.2.5 scanner and generator adoption
 
@@ -337,14 +412,14 @@ all-feature Cargo package builds before retaining an archive. Release jobs requi
 the exact archive to reproduce without builds, rechecking the frozen selection
 after deployment approval. Cargo remains the native uploader and repackages the
 verified clean source; it does not directly upload the downloaded archive.
-The local `release-evidence` recipe verifies the same retained archive without
-Cargo or a release event on any host. `release-publish` requires this check
-before making the reviewed draft immutable; the workflow separately enforces
+The local `release-evidence` recipe verifies the same retained archive before
+tagging, with dependency verification described above. `release-publish` requires
+this check before making the reviewed draft immutable. The workflow also enforces
 the published event, producer-tool equality and byte-identical repackaging.
 
 The release recipes follow la-stack's operator contract. `release-evidence`
 uses the isolated published runtime and accepts `--output`, `--expected` and
-`--github-output` paths; it requires neither a tag nor Cargo. `release-assets`
+`--github-output` paths. `release-assets`
 uses the shared CLI and declarative tag-as-title policy. `release_benchmarks`
 remains explicitly local because Delaunay rejects an existing baseline asset
 even when its bytes match, while the shared asset command supports identical-byte
@@ -699,8 +774,8 @@ These follow-up results are native aarch64 macOS evidence.
 ## Dependabot automation
 
 The Dependabot caller pins the reviewed reusable workflow revision
-`7282cbd90cf5cd0ca8a1c8a01d3fed520f04eb2f` from
-`acgetchell/research-repo-tools`. This workflow pin is independent of the PyPI
+`b082da0b0fbd99436a418a3cc232434020558658` from
+`acgetchell/research-repo-tools` v0.2.8. This workflow pin is independent of the PyPI
 package pin. Its reviewed `pull_request_target` job runs from trusted base
 definitions without checking out or executing PR code and receives no repository
 secrets. The local policy lists exact Cargo, uv, workflow, and composite-action

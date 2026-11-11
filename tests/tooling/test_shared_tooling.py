@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from research_repo_tools.cli import main
+from research_repo_tools.dependency_policy import load_policy
 from research_repo_tools.process import run_command as run_safe_command
 
 import notebook_validation_rendering as validation_rendering
@@ -41,13 +42,15 @@ def write_stub(directory: Path, name: str, source: str) -> None:
 
 def test_published_pin_configuration_and_inventory() -> None:
     groups = MANIFEST["dependency-groups"]
-    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.2.5"]
+    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.2.8"]
     assert {"include-group": "tooling"} in groups["dev"]
-    assert version("research-repo-tools") == "0.2.5"
+    assert version("research-repo-tools") == "0.2.8"
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     package = next(item for item in lock["package"] if item["name"] == "research-repo-tools")
-    assert package["version"] == "0.2.5"
+    assert package["version"] == "0.2.8"
     assert package["source"] == {"registry": "https://pypi.org/simple"}
+    policy = tomllib.loads((ROOT / "dependency-sources.toml").read_text(encoding="utf-8"))
+    assert policy["sources"]["tooling"]["version"] == package["version"]
     assert MANIFEST["tool"]["uv"]["required-version"].startswith("==")
     tools = MANIFEST["tool"]["research-repo-tools"]["toolchain"]["cargo"]
     assert all(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", pin) for pin in tools.values())
@@ -91,6 +94,34 @@ def invoke_recipe(root: Path, recipe: str, *args: str) -> tuple[subprocess.Compl
     log = root / "calls.jsonl"
     calls: list[list[str]] = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
     return result, calls
+
+
+@pytest.mark.parametrize("failure", [0, 1, 2])
+def test_packaged_rustdoc_selects_features_and_propagates_failure(recording_recipes: Path, monkeypatch: pytest.MonkeyPatch, failure: int) -> None:
+    monkeypatch.setenv("FAIL_STEP", str(failure))
+    result, calls = invoke_recipe(recording_recipes, "doc-package-check")
+    managed = ["run", "--locked", "--group", "dev", "research-repo-tools", "toolchain", "run", "--"]
+    default = [*managed, "research-repo-tools", "validation", "cargo-docs", "delaunay"]
+    assert calls == [default, [*default, "--all-features"]][: failure or None]
+    assert result.returncode == (23 if failure else 0), result.stderr
+
+
+def test_release_preparation_fetches_the_declared_cargo_graphs(recording_recipes: Path) -> None:
+    policy = load_policy(ROOT)
+    assert policy is not None
+    fixture = next(project for project in policy.projects if project.directory == Path(FIXTURE_MANIFEST).parent.as_posix())
+    assert fixture.cargo_owner is not None
+    assert fixture.cargo_owner.directory == "."
+
+    result, calls = invoke_recipe(recording_recipes, "release-dependency-builds")
+    assert result.returncode == 0, result.stderr
+    managed = ["run", "--locked", "--group", "dev", "research-repo-tools", "toolchain", "run", "--"]
+    assert calls == [
+        ["sync", "--locked", "--group", "dev"],
+        [*managed, "cargo", "fetch", "--locked"],
+        [*managed, "cargo", "fetch", "--locked", "--manifest-path", FIXTURE_MANIFEST],
+        [*managed, "research-repo-tools", "release", "dependency-builds"],
+    ]
 
 
 @pytest.mark.parametrize("stale", [False, True])

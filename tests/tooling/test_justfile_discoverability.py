@@ -363,11 +363,14 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
     assert 'research-repo-tools performance readme tooling/performance-release.toml "$@"' in readme_command.stdout + readme_command.stderr
     for name, operation, configuration, options in (
         ("performance-prepare", "prepare", "performance-release", ""),
-        ("performance-release", "release", "performance-release", " --progress-cadence 300"),
         ("performance-doc", "promote", "performance-report", ""),
     ):
         command = dry_run(REPO_ROOT, name)
         assert f'research-repo-tools performance {operation} tooling/{configuration}.toml{options} "$@"' in command.stdout + command.stderr
+    acquisition = dry_run(REPO_ROOT, "performance-release")
+    assert 'python tooling/python/release_candidate.py acquire --checkpoint target/bench-reports/release-checkpoint --progress-cadence 300 "$@"' in (
+        acquisition.stdout + acquisition.stderr
+    )
     local = dry_run(REPO_ROOT, "performance-local")
     assert "performance measure 'tooling/measurement-release-signal.toml'" in local.stdout + local.stderr
     assert "--allow-git-mutations" not in local.stdout + local.stderr
@@ -379,7 +382,10 @@ def test_canonical_performance_recipes_share_the_cross_repository_contract() -> 
 )
 def test_performance_release_default_cadence_allows_user_overrides(arguments: tuple[str, ...], expected: float) -> None:
     """Parse the real recipe's arguments without starting a benchmark workload."""
-    probe = "import sys; from research_repo_tools.cli import parser; print(parser().parse_args(sys.argv[2:]).progress_cadence)"
+    probe = (
+        "import sys; sys.path.insert(0, 'tooling/python'); from release_candidate import argument_parser; "
+        "print(argument_parser().parse_args(sys.argv[3:]).progress_cadence)"
+    )
     managed = f"{shlex.quote(Path(sys.executable).as_posix())} -c {shlex.quote(probe)}"
     result = run_safe_command(
         "just",

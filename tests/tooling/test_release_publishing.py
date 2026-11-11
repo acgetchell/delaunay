@@ -1,20 +1,24 @@
 """Exercise the consumer's release integration without credentials or uploads."""
 
+import hashlib
 import json
 import os
 import shlex
 import subprocess
 import sys
 import tomllib
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
-from research_repo_tools import changelog, config, release_publishing
+from research_repo_tools import changelog, config, dependency_provenance, release_assets, release_publishing
 from research_repo_tools.cli import main
 from research_repo_tools.just_inspect import dry_run, inspect_justfile
 from research_repo_tools.process import run_command
+
+import release_candidate
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -26,6 +30,63 @@ VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["pack
 TAG = f"v{VERSION}"
 SHA = "a" * 40
 CHECKS = ("portable", "build (ubuntu-latest)", "build (macos-latest)", "build (windows-latest)", "Clippy SARIF Analysis", "Repository Rule SARIF Analysis")
+
+
+def _checkout_git(executable: str | Path, args: list[str], *, cwd: Path, timeout: int, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+    """Supply clean read-only Git observations to the installed checkout verifier."""
+    options = ("--no-pager", "--no-optional-locks", "--no-replace-objects", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false")
+    assert cwd.samefile(ROOT)
+    assert timeout == 30
+    assert Path(executable).is_absolute()
+    assert tuple(args[: len(options)]) == options
+    responses = {
+        ("rev-parse", "HEAD"): f"{SHA}\n".encode("ascii"),
+        ("ls-files", "-v", "-z"): b"H Cargo.toml\0",
+        ("submodule", "foreach", "--quiet", "--recursive", shlex.join((Path(executable).as_posix(), *options, "ls-files", "-v", "-z"))): b"",
+        ("status", "--porcelain", "-z", "--untracked-files=all", "--ignore-submodules=none"): b"",
+    }
+    return subprocess.CompletedProcess(args, 0, stdout=responses[tuple(args[len(options) :])], stderr=b"")
+
+
+@pytest.mark.parametrize("recipe_name", ["release-assets", "_release-candidate"])
+def test_release_bootstrap_excludes_noncanonical_checkout_paths(
+    recipe_name: str, tmp_path: Path, native_console_scripts: Callable[[Path, str, dict[str, str]], Path]
+) -> None:
+    """Probe managed tools outside the observed checkout in both recipes."""
+    recipe = inspect_justfile(ROOT).recipes[recipe_name]
+    script = "\n".join("".join(line) for line in recipe["body"])
+    checkout = tmp_path / "checkout"
+    (checkout / "tests").mkdir(parents=True)
+    uv_pin = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["uv"]["required-version"]
+    (checkout / "pyproject.toml").write_text(
+        f'[project]\nname = "release-fixture"\nversion = "{VERSION}"\nrequires-python = ">=3.15"\n[tool.uv]\nrequired-version = "{uv_pin}"\n',
+        encoding="utf-8",
+    )
+    (checkout / "tooling/python").mkdir(parents=True)
+    (checkout / "tooling/python/release_candidate.py").write_bytes((ROOT / "tooling/python/release_candidate.py").read_bytes())
+    (checkout / ".python-version").write_bytes((ROOT / ".python-version").read_bytes())
+    outside = native_console_scripts(
+        tmp_path / "trusted tools",
+        "import json, os\nfrom pathlib import Path\n"
+        f"def git_main():\n    print({SHA!r})\n"
+        "def uv_main():\n"
+        '    Path(os.environ["UV_PROBE_LOG"]).write_text(json.dumps(os.get_exec_path()), encoding="utf-8")\n'
+        f"    print('uv {uv_pin.removeprefix('==')}')\n"
+        "def gh_main():\n    raise AssertionError('unexpected GitHub access')\n",
+        {"git": "git_main", "uv": "uv_main", "gh": "gh_main"},
+    )
+    # Exercise a directory alias without requiring Windows symlink privileges.
+    alias = checkout / "tests" / ".."
+    search_path = os.pathsep.join((str(checkout / ".venv" / "bin"), str(alias / "bin"), ".", "", str(outside), os.environ["PATH"]))
+    args = ["preflight", TAG] if recipe_name == "release-assets" else ["verify"]
+    probe = tmp_path / "uv-path.json"
+    environment = os.environ | {"PATH": search_path, "UV_PROBE_LOG": str(probe)}
+    result = run_command(sys.executable, ["-I", "-c", script, *args, "--help"], cwd=checkout, env=environment, check=False)
+    assert result.returncode == 0, result.stderr
+    assert ("--commit COMMIT" if recipe_name == "release-assets" else "--selection SELECTION") in result.stdout
+    paths = [Path(entry) for entry in json.loads(probe.read_bytes())]
+    assert outside.resolve() in paths
+    assert all(path.is_absolute() and not path.resolve().is_relative_to(checkout.resolve()) for path in paths)
 
 
 def test_policy_binds_native_checks_assets_and_declared_dates() -> None:
@@ -71,6 +132,7 @@ def release_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
         f"commits/{SHA}/check-runs?filter=latest&per_page=100": [{"total_count": len(checks), "check_runs": checks}],
     }
     monkeypatch.setattr(release_publishing, "run_git_command", git)
+    monkeypatch.setattr(release_assets, "run_command_bytes", _checkout_git)
     monkeypatch.setattr(release_publishing, "_api", lambda _root, _repo, endpoint, **_kwargs: responses[endpoint])
     monkeypatch.setattr(release_publishing, "_remote_commit", lambda *_args: SHA)
     release = release_publishing.GitHubRelease(
@@ -83,6 +145,13 @@ def release_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
         assets=((f"delaunay-{TAG}-criterion-baseline.tar.gz", 7, 100, "digest"),),
     )
     monkeypatch.setattr(release_publishing, "lookup_release", lambda *_args: release)
+
+    def published(root: Path, *, packages: tuple[str, ...] | None = None) -> tuple[dependency_provenance.DependencyIdentity, ...]:
+        assert root == ROOT
+        assert packages == ()
+        return (dependency_provenance.DependencyIdentity("research-repo-tools", "0.2.8", "https://pypi.org/simple"),)
+
+    monkeypatch.setattr(dependency_provenance, "check_release_dependencies", published)
     return {"event": event, "path": event_file, "checks": checks}
 
 
@@ -164,66 +233,135 @@ def test_notes_precheck_uses_generated_body_and_title(tmp_path: Path, mismatch: 
     assert (result.returncode == 0) == (mismatch == "none"), result.stderr
 
 
-def test_publish_recipe_reaches_installed_explicit_approval_parser(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace only irreversible publication while exercising the real parser."""
-    requested: list[str] = []
+@dataclass
+class PublicationProvider:
+    """Provider state and retained owner bytes for the final publication boundary."""
 
-    def publish(settings: config.Config, tag: str, *, reuse_evidence: bytes | None) -> None:
-        assert settings.root == ROOT
-        assert reuse_evidence is None
-        requested.append(tag)
-
-    monkeypatch.setattr(release_publishing, "publish_reviewed_release", publish)
-    command = shlex.split(dry_run(ROOT, "release-publish", [TAG]).stderr.splitlines()[-1])
-    assert command[:6] == ["uv", "run", "--locked", "--group", "dev", "research-repo-tools"]
-    assert main(["--root", str(ROOT), *command[6:]]) == 0
-    assert requested == [TAG]
+    accepted: Path
+    release: release_assets.GitHubRelease
+    calls: list[str]
+    failure: str = "none"
 
 
-@pytest.mark.parametrize("failure", [False, True])
-def test_real_publish_recipe_requires_retained_evidence_before_publication(
-    tmp_path: Path, native_console_scripts: Callable[[Path, str, dict[str, str]], Path], *, failure: bool
-) -> None:
-    """A missing main artifact must leave the GitHub draft unpublished."""
-    (tmp_path / "justfile").write_text(f"import '{(ROOT / 'justfile').as_posix()}'\n", encoding="utf-8")
-    calls = tmp_path / "calls"
-    provider = json.dumps({"tagName": TAG, "name": TAG, "body": "generated notes"})
-    executables = native_console_scripts(
-        tmp_path,
-        "import os\nfrom pathlib import Path\n"
-        "def uvx_main():\n"
-        '    with Path(os.environ["EVIDENCE_CALLS"]).open("a", encoding="utf-8") as calls:\n'
-        '        calls.write("evidence\\n")\n'
-        f"    return {17 if failure else 0}\n",
-        {"uvx": "uvx_main"},
+@pytest.fixture
+def sealed_publication(release_event: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> PublicationProvider:
+    """Retain original assertions and model only owner inspection and provider transport."""
+    accepted = tmp_path / "acceptance.json"
+    accepted.write_bytes(b"reviewed full acceptance")
+    payloads = {role: role.encode() for role in release_candidate.ROLES}
+    payloads["acceptance"] = accepted.read_bytes()
+    assets = [
+        release_candidate.AssetAssertion(f"candidate-{role}.json", index, hashlib.sha256(payloads[role]).hexdigest())
+        for index, role in enumerate(release_candidate.ROLES, 1)
+    ]
+    target = release_assets.ReleaseTarget("acgetchell/delaunay", TAG, 42, SHA, TAG)
+    original = release_candidate.DraftTransfer(target, "a" * 64, "b" * 64, release_candidate.OriginalAssets(*assets))
+    attached = release_candidate.AssetAssertion(release_candidate.archive_name(TAG), 5, original.assets.archive.sha256)
+    transfer = release_candidate.PublicationTransfer(original, attached)
+    sealed = tmp_path / "publication-transfer.json"
+    sealed.write_bytes(release_candidate.serialize_transfer(transfer))
+    index = release_candidate.AssetAssertion(f"delaunay-{TAG}-candidate.json", 6, hashlib.sha256(sealed.read_bytes()).hexdigest())
+    (tmp_path / "index-assertion.json").write_text(json.dumps({"name": index.name, "id": index.identifier, "sha256": index.sha256}), encoding="utf-8")
+    release = release_assets.GitHubRelease(
+        repository=target.repository,
+        tag=TAG,
+        identifier=42,
+        draft=True,
+        immutable=False,
+        prerelease=False,
+        title=TAG,
+        assets=(*tuple((asset.name, asset.identifier, 100, asset.sha256) for _, asset in transfer.role_assertions()), (index.name, 6, 100, index.sha256)),
     )
-    runner = (
-        "uv() {\n"
-        '  case "$*" in\n'
-        '    *"changelog notes "*) printf "%s\\n" "generated notes" ;;\n'
-        '    *"release publish "*)\n'
-        f'      printf "%s\\n" publish >> {shlex.quote(calls.as_posix())} ;;\n'
-        "    *) return 0 ;;\n"
-        "  esac\n"
-        "}\n"
-        f"gh() {{ printf '%s\\n' {shlex.quote(provider)}; }}\n"
-        "export -f uv gh\n"
-    )
-    result = run_command(
-        "bash",
-        ["--noprofile", "--norc", "-euc", runner + f"just release-publish {shlex.quote(TAG)}"],
-        cwd=tmp_path,
-        env=os.environ | {"PATH": f"{executables}{os.pathsep}{os.environ['PATH']}", "EVIDENCE_CALLS": str(calls)},
-        check=False,
-    )
-    assert (result.returncode == 0) is not failure, result.stderr
-    assert calls.read_text(encoding="utf-8").splitlines() == (["evidence"] if failure else ["evidence", "publish"])
+    state = PublicationProvider(accepted, release, [])
+    monkeypatch.setattr(release_publishing, "lookup_release", lambda *_args: state.release)
+
+    def gate(name: str, result: Path, *_args: object) -> Path:
+        state.calls.append(name)
+        if state.failure == name:
+            message = "original evidence unavailable"
+            raise ValueError(message)
+        return result
+
+    monkeypatch.setattr(release_candidate, "verify_existing", lambda *args: gate("acceptance", accepted, *args))
+    monkeypatch.setattr(release_candidate, "preparation_target", lambda *args: gate("receipt", sealed, *args))
+    monkeypatch.setattr(release_candidate, "seal", lambda *args: gate("assets", sealed, *args))
+    monkeypatch.setattr(release_candidate, "shared_main", lambda *_args: pytest.fail("publication must not select a fresh draft by tag"))
+    monkeypatch.setattr(release_candidate, "publish_release_asset", lambda *_args, **_kwargs: pytest.fail("publication must never repair attachments"))
+
+    def publish(executable: str, arguments: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+        assert cwd == ROOT
+        assert executable == "gh"
+        assert arguments == ["api", "--method", "PATCH", "repos/acgetchell/delaunay/releases/42", "--field", "draft=false"]
+        state.calls.append("publish")
+        if state.failure in {"late-draft", "uncertain"}:
+            if state.failure == "late-draft":
+                state.release = replace(state.release, identifier=43)
+            raise subprocess.CalledProcessError(1, [executable, *arguments], stderr="original release unavailable")
+        state.release = replace(state.release, draft=False, immutable=True)
+        if state.failure == "after-asset":
+            state.release = replace(
+                state.release, assets=tuple((name, identifier + 10, size, digest) for name, identifier, size, digest in state.release.assets)
+            )
+        return subprocess.CompletedProcess([executable, *arguments], 0, "{}", "")
+
+    monkeypatch.setattr(release_candidate, "run_command", publish)
+    return state
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "none",
+        "acceptance",
+        "receipt",
+        "assets",
+        "draft",
+        "asset",
+        "missing-asset",
+        "missing-index",
+        "index-id",
+        "acceptance-digest",
+        "late-draft",
+        "uncertain",
+        "after-asset",
+    ],
+)
+def test_publish_requires_original_acceptance_receipt_and_assets(sealed_publication: PublicationProvider, tmp_path: Path, failure: str) -> None:
+    """Exercise shared final gates and the original-ID mutation without reselection or repair."""
+    state = sealed_publication
+    state.failure = failure
+    if failure == "draft":
+        state.release = replace(state.release, identifier=43)
+    elif failure == "asset":
+        state.release = replace(state.release, assets=tuple((name, identifier + 10, size, digest) for name, identifier, size, digest in state.release.assets))
+    elif failure == "missing-asset":
+        state.release = replace(state.release, assets=())
+    elif failure == "missing-index":
+        state.release = replace(state.release, assets=state.release.assets[:-1])
+    elif failure == "index-id":
+        name, identifier, size, digest = state.release.assets[-1]
+        state.release = replace(state.release, assets=(*state.release.assets[:-1], (name, identifier + 1, size, digest)))
+    elif failure == "acceptance-digest":
+        state.accepted.write_bytes(b"different acceptance")
+    if failure == "none":
+        release_candidate.publish_draft(ROOT, tmp_path / "owner", "reviewed", TAG)
+        assert state.calls == ["acceptance", "receipt", "assets", "acceptance", "publish"]
+        assert state.release.immutable
+        assert not state.release.draft
+    elif failure in {"late-draft", "uncertain", "after-asset"}:
+        with pytest.raises(release_assets.ReleasePublicationUnknownError, match=r"publication outcome unknown.*release 42"):
+            release_candidate.publish_draft(ROOT, tmp_path / "owner", "reviewed", TAG)
+        assert state.calls.count("publish") == 1
+    else:
+        with pytest.raises(ValueError, match=r"original evidence|reviewed release|asset identity|reviewed acceptance|required release asset"):
+            release_candidate.publish_draft(ROOT, tmp_path / "owner", "reviewed", TAG)
+        assert "publish" not in state.calls
 
 
 def test_workflow_limits_credentials_and_verifies_clean_packages() -> None:
     """Credential-free builds precede approval, revalidation and a serialized upload."""
     workflow = yaml.safe_load(WORKFLOW.read_bytes())
-    assert workflow[True] == {"release": {"types": ["published"]}}
+    assert set(workflow[True]["workflow_dispatch"]["inputs"]) == {"tag", "candidate", "acceptance"}
     assert workflow["concurrency"] == {"group": "publish-crates-delaunay", "cancel-in-progress": False}
     jobs = workflow["jobs"]
     assert jobs["publish"]["needs"] == "verify"
@@ -231,7 +369,7 @@ def test_workflow_limits_credentials_and_verifies_clean_packages() -> None:
     assert jobs["verify"]["permissions"] == {"contents": "read", "checks": "read", "actions": "read"}
     assert jobs["publish"]["permissions"] == {"contents": "read", "checks": "read", "actions": "read", "id-token": "write"}
     assert "github.repository == 'acgetchell/delaunay'" in jobs["verify"]["if"]
-    assert jobs["verify"]["steps"][-1]["run"] == "just release-artifact verify"
+    assert jobs["verify"]["steps"][-1]["id"] == "approval"
     assert "CARGO_REGISTRY_TOKEN" not in yaml.safe_dump({"env": workflow["env"], "verify": jobs["verify"]})
     for job in jobs.values():
         assert job["steps"][0]["with"] == {"ref": "${{ github.sha }}", "fetch-depth": 0, "persist-credentials": False}
@@ -242,7 +380,7 @@ def test_workflow_limits_credentials_and_verifies_clean_packages() -> None:
     upload = next(step for step in steps if "CARGO_REGISTRY_TOKEN" in step.get("env", {}))
     visibility = steps[-1]
     assert steps.index(gate) < steps.index(auth) < steps.index(upload) < steps.index(visibility)
-    assert 'release-gate "$RELEASE_TAG"' in gate["run"]
+    assert 'release-receive "$RUNNER_TEMP/accepted-candidate" --published --expected' in gate["run"]
     assert 'release registry "$RELEASE_TAG" --expect absent' in gate["run"]
     assert upload["run"] == "cargo publish --locked --package delaunay --registry crates-io --no-verify"
     assert [step for step in steps if "CARGO_REGISTRY_TOKEN" in step.get("env", {})] == [upload]
@@ -273,7 +411,7 @@ def test_oidc_job_installs_only_minimal_locked_publication_tools() -> None:
     bootstrap = next(step for step in steps if step.get("name") == "Install locked publication tooling")
     assert "uv sync --locked --managed-python --only-group tooling --no-install-project" in bootstrap["run"]
     manifest = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert manifest["dependency-groups"]["tooling"] == ["research-repo-tools[python-tools]==0.2.5"]
+    assert manifest["dependency-groups"]["tooling"] == ["research-repo-tools[python-tools]==0.2.8"]
 
 
 def test_oidc_rust_setup_exports_the_declared_minimal_toolchain(tmp_path: Path) -> None:
@@ -294,7 +432,7 @@ def test_oidc_rust_setup_exports_the_declared_minimal_toolchain(tmp_path: Path) 
     assert output.read_text(encoding="utf-8") == f"RUSTUP_TOOLCHAIN={channel}\n"
 
 
-@pytest.mark.parametrize("recipe", ["release-gate", "release-verify"])
+@pytest.mark.parametrize("recipe", ["_release-notes-check", "release-verify"])
 def test_oidc_release_commands_cannot_resynchronize_dev(recipe: str) -> None:
     """Real Just expansion must retain the minimal environment after setup."""
     workflow = yaml.safe_load(WORKFLOW.read_bytes())
@@ -305,7 +443,7 @@ def test_oidc_release_commands_cannot_resynchronize_dev(recipe: str) -> None:
     command.insert(1, "--dry-run")
     result = run_command(command[0], command[1:], cwd=ROOT)
     rendered = result.stdout + result.stderr
-    assert f"research-repo-tools release {'gate' if recipe == 'release-gate' else 'verify'}" in rendered
+    assert ("changelog notes" if recipe == "_release-notes-check" else "release verify") in rendered
     assert "--group dev" not in rendered
     assert "uv sync" not in rendered
 
@@ -331,56 +469,40 @@ def test_account_payloads_match_workflow_identity_and_require_tag_review() -> No
     assert '".github/workflows/publish-crates.yml"' not in auto_merge
 
 
-@pytest.mark.parametrize("mode", ["normal", "quiet", "failed"])
-def test_promotion_output_survives_real_just_and_reaches_approval(tmp_path: Path, mode: str) -> None:
-    """Exercise workflow shells and Just without using stdout as evidence."""
+@pytest.mark.parametrize("mismatch", ["none", "attempt", "digest", "run", "expired"])
+def test_approval_transport_requires_original_attempt_and_digest(tmp_path: Path, mismatch: str) -> None:
+    """Execute the workflow's real artifact metadata check before downloading approval."""
     workflow = yaml.safe_load(WORKFLOW.read_bytes())
-    verify = workflow["jobs"]["verify"]["steps"][-1]
-    approval = next(step for step in workflow["jobs"]["publish"]["steps"] if "PROMOTION_SELECTION" in step.get("env", {}))
-    root = tmp_path / "consumer with spaces"
-    root.mkdir()
-    (root / "justfile").write_text(f"import '{(ROOT / 'justfile').as_posix()}'\n", encoding="utf-8")
-    output = root / "github output"
-    frozen = json.dumps({"run_id": 123, "run_attempt": 1, "artifact": {"id": 456, "digest": "sha256:" + "a" * 64}}, sort_keys=True)
-    # Only the producer is substituted. The CLI round-trip tests independently
-    # exercise validation and file emission using the installed shared helpers.
-    producer = (
-        "uv() {\n"
-        '  [[ "$*" == "run --locked --no-sync python tooling/python/cargo_release.py verify" ]] || return 90\n'
-        '  if [[ "$FIXTURE_EXIT" != 0 ]]; then return "$FIXTURE_EXIT"; fi\n'
-        '  printf "selection=%s\\n" "$FIXTURE_SELECTION" >> "$GITHUB_OUTPUT"\n'
-        '  printf "%s\\n" "human-readable confirmation"\n'
-        "}\n"
-        "export -f uv\n"
-    )
-    script = verify["run"]
-    if mode == "quiet":
-        script = "just --quiet " + script.removeprefix("just ")
-    environment = {
-        **{
-            key: value
-            for key, value in os.environ.items()
-            if key not in {"BASH_ENV", "SHELLOPTS", "BASHOPTS", "JUST_QUIET", "JUST_DRY_RUN", "PROMOTION_SELECTION"}
-        },
-        "GITHUB_OUTPUT": str(output),
-        "FIXTURE_SELECTION": frozen,
-        "FIXTURE_EXIT": "17" if mode == "failed" else "0",
+    gate = next(step for step in workflow["jobs"]["publish"]["steps"] if step.get("name") == "Require this exact approval receipt")
+    artifact = {
+        "expired": mismatch == "expired",
+        "digest": "sha256:" + ("b" if mismatch == "digest" else "a") * 64,
+        "workflow_run": {"id": 999 if mismatch == "run" else 123},
     }
-    result = run_command("bash", ["--noprofile", "--norc", "-euc", producer + script], cwd=root, env=environment, check=False)
-    assert result.returncode == (17 if mode == "failed" else 0), result.stderr
-    if mode == "failed":
-        assert not output.exists()
-        return
-    assert output.read_text(encoding="utf-8").splitlines() == ["selection=" + frozen]
-    environment["PROMOTION_SELECTION"] = output.read_text(encoding="utf-8").split("=", 1)[1].rstrip("\n")
-    consumer = (
-        "uv() {\n"
-        '  [[ "$*" == "run --locked --no-sync python tooling/python/cargo_release.py verify" ]] || return 90\n'
-        '  [[ "$PROMOTION_SELECTION" == "$FIXTURE_SELECTION" ]]\n'
-        "}\n"
+    runner = f"gh() {{ printf '%s' {shlex.quote(json.dumps(artifact))}; }}\n"
+    result = run_command(
+        "bash",
+        ["--noprofile", "--norc", "-euc", runner + gate["run"]],
+        cwd=tmp_path,
+        env=os.environ
+        | {
+            "VALIDATED_ATTEMPT": "2" if mismatch == "attempt" else "1",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_REPOSITORY": "acgetchell/delaunay",
+            "ARTIFACT_ID": "456",
+            "ARTIFACT_DIGEST": "a" * 64,
+        },
+        check=False,
     )
-    approved = run_command("bash", ["--noprofile", "--norc", "-euc", consumer + approval["run"]], cwd=root, env=environment, check=False)
-    assert approved.returncode == 0, approved.stderr
+    assert (result.returncode == 0) is (mismatch == "none"), result.stderr
+    verify = workflow["jobs"]["verify"]
+    artifact_step = verify["steps"][-1]
+    assert artifact_step["with"]["path"] == "${{ runner.temp }}/accepted-candidate/acceptance.json"
+    assert verify["outputs"]["artifact-id"] == "${{ steps.approval.outputs.artifact-id }}"
+    approval = next(step for step in workflow["jobs"]["publish"]["steps"] if step.get("name", "").startswith("Recheck evidence"))
+    assert '--expected "$RUNNER_TEMP/approved-acceptance/acceptance.json"' in approval["run"]
+    assert approval["env"]["CANDIDATE_ACCEPTANCE"] == "${{ inputs.acceptance }}"
 
 
 @pytest.mark.parametrize(("failure", "expected_exit"), [("none", 0), ("evidence", 1), ("present", 1), ("unavailable", 2)])
@@ -395,7 +517,7 @@ def test_preupload_shell_requires_evidence_and_proven_absence(tmp_path: Path, fa
     result = run_command(
         "bash",
         ["--noprofile", "--norc", "-euc", runner + script + f"\ntouch {shlex.quote(marker.as_posix())}"],
-        env={**os.environ, "RELEASE_TAG": TAG},
+        env={**os.environ, "RELEASE_TAG": TAG, "RUNNER_TEMP": str(tmp_path)},
         check=False,
     )
     assert result.returncode == expected_exit, result.stderr

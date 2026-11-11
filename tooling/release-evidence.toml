@@ -8,6 +8,10 @@ artifact-prefix = "cargo-package"
 guarantee = "cargo-archive"
 path-in-vcs = ""
 
+[signing-job]
+name = "sign-package"
+steps = [ "Authenticate the original package handoff", "Sign the original Cargo manifest", "Retain the original signature", "Upload signed Cargo evidence" ]
+
 [[jobs]]
 name = "portable"
 steps = [ "Run portable checks" ]

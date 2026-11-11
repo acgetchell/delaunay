@@ -205,7 +205,7 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool declarations live in their authoritative consumer files: exact uv and Cargo
 tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
-in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.5` from PyPI
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.8` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
@@ -260,10 +260,15 @@ preserve included tooling constraints and intentional ranges, refresh the entire
 `tool.research-repo-tools.deps.python-projects`; none are currently needed here.
 `update-tools` preserves dependency requirements and
 locks. Python updates preserve configured source/constraint policy, reject retained
-package downgrades, and restore selected Python projects on failure. Change the
-shared package version explicitly through uv, refresh the lock,
-review its release notes, and rerun setup. `deps update-tools` is the separate
+package downgrades, and restore selected Python projects on failure. Use the
+[shared Python adopter][rrt-dependency-updates] to advance the published package
+across runtime, optional, and group requirements. Reconcile the source policy,
+isolated recipe pins, and reusable workflow with the selected release. The same
+guide covers attested promotion of a temporary exact Git pin back to PyPI.
+`deps update-tools` is the separate
 legacy interface for user-installed tools; this repository uses managed TOML pins.
+
+[rrt-dependency-updates]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.8/docs/UPDATING_DEPENDENCIES.md
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
@@ -348,19 +353,17 @@ the same warning classes that would become GitHub code-scanning annotations.
 
 ## Documentation Validation
 
-Documentation must build successfully.
-
-Verify with:
-
-```bash
-just doc-check
-```
-
-or
+`just doc-check` builds in-tree workspace documentation with private items and
+warnings denied. Run the packaged public documentation check with RRT.
 
 ```bash
-cargo doc
+just doc-package-check
 ```
+
+RRT builds public library docs from the Cargo archive with default and all
+features on the exact stable toolchain declared in `rust-toolchain.toml`.
+`just ci` and each hosted `just ci-native` job run this check. The docs.rs
+service uses its own compiler, targets, and configuration.
 
 Release-facing version references are checked separately:
 
@@ -409,6 +412,7 @@ This runs:
 - canonical validation-figure currentness on macOS
 - shell script formatting and lint checks
 - Rust core lint, documentation, and Semgrep checks
+- packaged public Rustdoc with default and all features
 - benchmark harness compile checks
 - Rust lib unit tests
 - Rust doctests
@@ -428,8 +432,8 @@ measured workflow maintains its triangulation, predicate, topology, and
 diagnostic invariants.
 
 `just ci` is the comprehensive error-catching validation path used by GitHub
-Actions. It composes `just check`, `just python-fixture-lint`, `just test`,
-`just bench-compile`, and `just examples`. The target classes remain orthogonal: `rust-core-check` covers
+Actions. It composes `just check`, `just python-fixture-lint`, `just doc-package-check`,
+`just test`, `just bench-compile`, and `just examples`. `rust-core-check` covers
 formatting, all-targets Clippy, rustdoc, and Semgrep; `unused-deps` checks direct
 Cargo dependency hygiene; `test-rust` composes unit, integration, CLI, doctest,
 and feature-only buckets; `notebook-check` validates notebooks without executing them.
@@ -642,10 +646,10 @@ first target. Fatal benchmark errors always print to stderr without requiring
 `bench-logging` or an enabled tracing subscriber.
 
 The GitHub release baseline workflow is dispatched explicitly with a stable
-tag after creating its mutable draft release. It validates the target before
-benchmarking, uploads and verifies the archive, then leaves the draft for
-maintainer review and `just release-publish TAG`. It refuses
-existing baseline assets and published releases; see the recovery sequence in
+tag after creating its mutable draft release. It authenticates the original
+local acquisition and frozen acceptance, verifies and attaches the derived
+archive, then leaves the draft for maintainer review and `just release-publish TAG`.
+Identical attachment retries preserve the original asset and draft identity; see
 [`../RELEASING.md`](../RELEASING.md).
 
 Manual `just bench-latest` runs use a 30-minute timeout for each target unless
@@ -655,10 +659,9 @@ preflight precede sampling, and saved baselines are checked against the fresh
 raw files before evidence is retained. Paired `performance-release` discovery
 has a 30-minute ceiling per target; each phase gate and native timing command
 has a six-hour ceiling. Both gates complete before either phase is timed.
-The hosted draft workflow has a 150-minute job ceiling and a
-one-hour sampling ceiling per target. A target timeout invalidates the measurement; rerun
-the complete release workflow rather than treating partial Criterion output as
-release evidence.
+The hosted attachment workflow performs no sampling. A local acquisition timeout
+invalidates that phase; use the original checkpoint recovery procedure rather
+than treating partial Criterion output as release evidence.
 
 ```bash
 # In the baseline checkout, usually the previous release:
@@ -679,15 +682,19 @@ already present under `target/criterion/`.
 Use `just performance-local [release-signal|topology]` for paired acquisition
 with read-only source exports. The default release-signal plan overlays the current
 harness onto both library revisions; the topology plan preserves each native
-harness. The installed schema-4 engine retains original source provenance,
-independent discovery/gates/counts and exact raw samples. It retains
-complete-run/v3 evidence at `target/bench-reports/performance.run.json`, its
+harness. The release-signal schema-6 schedule declares one sequential trial
+and retains complete-run/v5 evidence; topology remains schema 4. Both retain
+original source provenance, independent discovery/gates/counts and exact raw samples.
+The payload at `target/bench-reports/performance.run.json`, its
 `.evidence.json` envelope and a Markdown report. Incompatible identities retain
 absolute/one-sided results and suppress ratios.
 
 For release documentation, run `just performance-prepare` before
 `just performance-release`. Preparation captures independent release/ref
-assertions; release acquisition and strict report promotion consume them.
+assertions; release acquisition freezes the independent owner, acquisition digest
+and publication receipt outside the checkout before strict report promotion.
+`performance-resume` resumes the original checkpoint. `performance-capture`
+and `performance-promote` retry retention/rendering without collecting timings.
 `just performance-readme --preview` previews the separately published README
 selection; `just performance-readme` commits it. `just performance-doc`
 rerenders the retained current complete run without timing. Explicit new scratch
@@ -1123,9 +1130,10 @@ CI enforces:
 
 Local `just ci` remains the comprehensive contract. Hosted CI runs
 `just ci-portable` once on Linux, then `just ci-native` on Linux, macOS and
-Windows. Native Rust and Python checks, notebook lint, all correctness/feature
-test buckets, examples and benchmark compilation retain all three hosts;
-canonical figure comparison remains on macOS. Portable configuration, Markdown,
+Windows. All three hosts run native Rust and Python checks, packaged public
+Rustdoc, notebook lint, all correctness and feature test buckets, examples, and
+benchmark compilation. macOS also runs the canonical figure comparison.
+Portable configuration, Markdown,
 spelling, shell/Rust formatting and Semgrep fixtures run once. The separately
 required repository-rule SARIF workflow owns the production Semgrep scan.
 Clippy remains native on all hosts; its Linux SARIF job retains report production.
@@ -1207,14 +1215,19 @@ just tag vX.Y.Z
 Trusted main-push CI uses `just release-package` to verify clean default and
 all-feature Cargo packages without upload credentials, then `just release-artifact
 create OUTPUT` retains the archive and source/run/tool manifest for 30 days.
-`just release-evidence [ARGS...]` validates the retained archive for the clean
-checkout without Cargo, a tag or a published release event. `--output PATH`
-retains a selection; `--expected PATH` requires it unchanged. `release-publish` requires this evidence before
-making the GitHub release immutable.
-The release workflow uses `just release-artifact verify` to retrieve the exact
-main artifact and require byte-identical repackaging without rebuilding. After
-deployment approval, it revalidates the same frozen selection before requesting
-an upload token. `just publish-check`
+Run `just release-dependency-builds` to authenticate the Python source builds
+and fetch both locked Cargo workspaces. `just release-dependencies` checks the
+prepared dependencies on the current host. `just release-evidence [ARGS...]`
+also checks the original acquisition, exact generated publication and signed
+native evidence against clean final main. It freezes acceptance and native
+selection outside the checkout, without builds or package reproduction.
+`--selection NAME` explicitly selects a new immutable review record.
+`release-publish` requires the original acceptance, draft receipt and attached
+archive before making the GitHub release immutable. `release-upload TAG`
+explicitly dispatches registry publication with the full reviewed acceptance digest.
+After deployment approval, `release-artifact verify --candidate DIRECTORY`
+rechecks that selection and requires byte-identical Cargo repackaging with
+matching producer tools before requesting a token. `just publish-check`
 remains the local metadata/package preview that permits uncommitted edits.
 `just release-gate TAG` requires the immutable published event, reviewed commit,
 native CI checks and benchmark asset; `just release-publish TAG` approves a
@@ -1223,11 +1236,13 @@ checks the release and exact registry version with bounded visibility polling.
 Follow [Releasing](../RELEASING.md) for account setup, sequence, and recovery.
 
 After evidence inspection, tag creation and push, `Prepare GitHub release`
-creates a stable draft or validates an identical retry without changing assets.
+passes signed native evidence and notes to an isolated writer, retaining the
+original draft receipt and release ID. Ambiguous tag pushes or attempts stop.
 `just release-benchmarks TAG` then dispatches `release-benchmarks.yml` with
-both `--ref TAG` and `-f tag=TAG`, returning immediately. The workflow rejects
-another dispatch ref/source SHA and captures the mutable draft identity before
-measurement. It preserves the main runtime and refuses existing baseline assets.
+both `--ref TAG` and `-f tag=TAG`, plus the independently retained transfer.
+The workflow rejects another dispatch actor/ref/source SHA and authenticates
+the original asset IDs, digests and full acceptance. Writers execute only
+published RRT; no checkout code runs with attachment permissions.
 `just release-assets OPERATION TAG [ARGS...]` exposes the shared declarative
 preflight/verify/upload contract; upload requires its explicit approval flag and
 uses identical-byte retries. It is separate from the stricter benchmark adapter.

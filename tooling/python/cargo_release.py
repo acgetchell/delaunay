@@ -13,15 +13,16 @@ import tempfile
 from functools import partial
 from pathlib import Path
 
+from research_repo_tools.config import load as load_config
 from research_repo_tools.evidence import deterministic_json
 from research_repo_tools.files import replace_many
 from research_repo_tools.measurement import resolve_revision
 from research_repo_tools.process import ExecutableNotFoundError, format_exception_diagnostics, run_command
-from research_repo_tools.release_assets import require_release_checkout
+from research_repo_tools.release_assets import parse_release_target, require_release_checkout
 from research_repo_tools.release_evidence import create_evidence_manifest, verify_release_evidence
 from research_repo_tools.release_interfaces import load_evidence_policy, write_release_outputs
 from research_repo_tools.release_metadata import read_package_info
-from research_repo_tools.release_publishing import validate_event
+from research_repo_tools.release_publishing import ReviewedRelease, check_reviewed_release, validate_event
 from research_repo_tools.release_validation import api, parse_release_json, redact_release_diagnostic
 
 REPOSITORY = "acgetchell/delaunay"
@@ -90,13 +91,42 @@ def create(root: Path, output: Path) -> None:
     replace_many({output / name: archive, output / MANIFEST: manifest})
 
 
-def verify(root: Path, *, expected: bytes | None = None) -> bytes:
+def verify(root: Path, *, expected: bytes | None = None, candidate: Path | None = None) -> bytes:
     """Require a published release event and reproduce its frozen Cargo evidence."""
     commit, version = identity(root)
-    if (os.environ.get("GITHUB_REPOSITORY"), os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_SHA")) != (REPOSITORY, "release", commit):
-        msg = "Cargo promotion requires the matching published release event"
-        raise ValueError(msg)
-    event = validate_event(parse_release_json(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes()), REPOSITORY, commit, os.environ["GITHUB_REF"])
+    if candidate is None:
+        if (os.environ.get("GITHUB_REPOSITORY"), os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_SHA")) != (REPOSITORY, "release", commit):
+            msg = "Cargo promotion requires the matching published release event"
+            raise ValueError(msg)
+        event = validate_event(parse_release_json(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes()), REPOSITORY, commit, os.environ["GITHUB_REF"])
+    else:
+        target = parse_release_target((candidate / "target.json").read_bytes())
+        environment = {
+            "GITHUB_REPOSITORY": REPOSITORY,
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_REF": f"refs/tags/v{version}",
+            "GITHUB_SHA": commit,
+            "GITHUB_ACTOR": "acgetchell",
+            "GITHUB_TRIGGERING_ACTOR": "acgetchell",
+            "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/.github/workflows/publish-crates.yml@refs/tags/v{version}",
+        }
+        if any(os.environ.get(key) != value for key, value in environment.items()) or (target.repository, target.tag, target.commit) != (
+            REPOSITORY,
+            f"v{version}",
+            commit,
+        ):
+            msg = "Cargo promotion requires the maintainer's accepted exact-tag dispatch"
+            raise ValueError(msg)
+        event = ReviewedRelease(target.tag, target.commit, target.release_id)
+        release = check_reviewed_release(load_config(root=root), target.tag, event=event)
+        if not release.immutable:
+            msg = "Cargo promotion requires the original immutable published release"
+            raise ValueError(msg)
+        native = deterministic_json(parse_release_json((candidate / "acceptance.json").read_bytes())["native"])
+        if expected is not None and expected != native:
+            msg = "Cargo selection differs from the accepted benchmark candidate"
+            raise ValueError(msg)
+        expected = native
     if event.tag != f"v{version}":
         msg = "Cargo release event differs from package version"
         raise ValueError(msg)
@@ -134,15 +164,20 @@ def main() -> int:
     commands = parser.add_subparsers(dest="mode", required=True)
     producer = commands.add_parser("create")
     producer.add_argument("output", type=Path)
-    commands.add_parser("verify")
+    verifier = commands.add_parser("verify")
+    verifier.add_argument("--candidate", type=Path, help="authenticated receive output revalidated after approval")
     args = parser.parse_args()
     try:
         root = Path.cwd()
         if args.mode == "create":
             create(root, args.output)
+            output = os.environ.get("GITHUB_OUTPUT")
+            if output:
+                with Path(output).open("a", encoding="utf-8", newline="\n") as stream:
+                    stream.write(f"package=delaunay-{read_package_info(root).version}.crate\n")
         else:
             frozen = os.environ.get("PROMOTION_SELECTION")
-            selected = verify(root, expected=None if frozen is None else frozen.encode("utf-8"))
+            selected = verify(root, expected=None if frozen is None else frozen.encode("utf-8"), candidate=args.candidate)
             with tempfile.TemporaryDirectory(prefix="delaunay-cargo-selection-") as temporary:
                 write_release_outputs(
                     Path(temporary).resolve() / "selection.json",

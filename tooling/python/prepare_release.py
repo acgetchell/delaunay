@@ -14,6 +14,7 @@ from functools import partial
 from pathlib import Path
 
 from research_repo_tools import changelog, config
+from research_repo_tools.dependency_provenance import check_release_dependencies
 from research_repo_tools.measurement import resolve_revision
 from research_repo_tools.process import ExecutableNotFoundError, format_exception_diagnostics, run_command
 from research_repo_tools.release_assets import preflight_release_target, require_release_checkout, revalidate_release_target
@@ -78,6 +79,8 @@ def prepare(root: Path, tag: str) -> int:
     if len(matches) > 1:
         msg = "ambiguous release identity"
         raise ValueError(msg)
+    if not matches:
+        check_release_dependencies(root, packages=settings.release.published_dependencies)
     # Recheck the frozen selection and source immediately before any write.
     verify_release_evidence(policy, tag.removeprefix("v"), commit, read, expected=selection)
     if require_tag_source(root, tag) != commit:

@@ -32,8 +32,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeIs, cast
 
 from research_repo_tools.archives import extract_archive as _safe_extract_tar
-from research_repo_tools.complete_runs import CompleteCase, CompletePolicy, collect_complete_sample, parse_policy, serialize_policy
-from research_repo_tools.criterion import SAMPLE_SCHEMA, Comparison, Estimate, Sample, compare_samples, parse_sample, read_estimate, serialize_sample
+from research_repo_tools.complete_runs import CompleteCase, CompletePolicy, collect_complete_sample, parse_policy, render_run, serialize_policy
+from research_repo_tools.criterion import (
+    SAMPLE_SCHEMA,
+    Comparison,
+    ConfidenceInterval,
+    Estimate,
+    Sample,
+    compare_samples,
+    parse_sample,
+    read_estimate,
+    serialize_sample,
+)
 from research_repo_tools.criterion_baselines import SavedSamplePlan, validate_saved_sample
 from research_repo_tools.criterion_inventory import DiscoveryCommand, DiscoveryPlan, discover_inventory, parse_inventory, serialize_inventory
 from research_repo_tools.evidence import Evidence, fingerprint_files, load_evidence, serialize_evidence
@@ -67,6 +77,7 @@ from performance_artifacts import (
     load_bundle_bytes,
     serialize_bundle,
 )
+from release_candidate import read_published_archive
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -2367,7 +2378,8 @@ def collect_criterion_comparisons(
                 continue
             # Historical tables require complete intervals on both sides.
             estimate = _read_criterion_timing_estimate(identity.estimates, stat)
-            estimates.append((benchmark_id, Estimate(estimate.median_ns, estimate.ci_lower_ns, estimate.ci_upper_ns, estimate.confidence_level)))
+            interval = ConfidenceInterval(estimate.ci_lower_ns, estimate.ci_upper_ns, estimate.confidence_level)
+            estimates.append((benchmark_id, Estimate(estimate.median_ns, interval)))
         return Sample(tuple(estimates), statistic=stat, unit="ns")
 
     return list(compare_samples(selected_sample(baseline), selected_sample(current)).comparisons)
@@ -3730,10 +3742,12 @@ def _prepare_github_release_assets(
     config: ReleaseReportConfig,
     target_worktree: Path,
     tmp_dir: Path,
+    current_download: DownloadedReleaseAsset | None = None,
 ) -> tuple[ReleaseAssetEvidence, ReleaseAssetEvidence]:
     """Prepare release-asset samples and return current/baseline measurement evidence."""
     baseline_download = _download_release_baseline(tag=config.baseline_tag, download_dir=tmp_dir, repo_root=config.repo_root)
-    current_download = _download_release_baseline(tag=config.current_tag, download_dir=tmp_dir, repo_root=config.repo_root)
+    if current_download is None:
+        current_download = _download_release_baseline(tag=config.current_tag, download_dir=tmp_dir, repo_root=config.repo_root)
     tmp_dir.mkdir(parents=True, exist_ok=True)
     baseline_extract = tmp_dir / "baseline-asset"
     current_extract = tmp_dir / "current-asset"
@@ -3793,7 +3807,7 @@ def _performance_workspace() -> Iterator[Path]:
             shutil.rmtree(directory)
 
 
-def _build_historical_asset_bundle(*, config: ReleaseReportConfig) -> PerformanceBundle:
+def _build_historical_asset_bundle(*, config: ReleaseReportConfig, current_download: DownloadedReleaseAsset | None = None) -> PerformanceBundle:
     """Inspect historical Delaunay scientific count, coverage and host metadata.
 
     These legacy assets predate complete acquisition declarations. Keep their
@@ -3806,6 +3820,7 @@ def _build_historical_asset_bundle(*, config: ReleaseReportConfig) -> Performanc
             config=config,
             target_worktree=worktree,
             tmp_dir=tmp_dir,
+            current_download=current_download,
         )
         current_evidence = current_asset_evidence.revision
         baseline_evidence = baseline_asset_evidence.revision
@@ -3887,7 +3902,25 @@ def generate_historical_asset_report(*, output: Path, config: ReleaseReportConfi
         output=output,
         report_id=PerformanceReportId(current_tag=current_tag, baseline_tag=baseline_tag),
     )
-    bundle = _build_historical_asset_bundle(config=normalized)
+    # New release assets already contain both original phases. Reuse their
+    # complete comparison and provenance; never relabel a measured PR as final main.
+    with tempfile.TemporaryDirectory(prefix="delaunay-candidate-reader-") as temporary:
+        directory = Path(temporary)
+        downloaded = _download_release_baseline(tag=current_tag, download_dir=directory, repo_root=config.repo_root)
+        extracted = directory / "extracted"
+        _safe_extract_tar(downloaded.archive, extracted)
+        if (extracted / "reuse.json").exists():
+            evidence = read_published_archive(config.repo_root, current_tag, _expected_tag_commit(config.repo_root, current_tag), downloaded.archive, directory)
+            labels = {phase: dict(source.context)["release"] for phase, source in evidence.sources}
+            if labels != {"current": current_tag, "baseline": baseline_tag} or config.suite != "release-signal" or config.scope != "release-signal":
+                msg = "candidate archives retain their declared release-signal pair; select the original baseline instead of combining unrelated acquisitions"
+                raise ValueError(msg)
+            paths = _artifact_paths_for_output(output)
+            payload, manifest = serialize_evidence(evidence)
+            report = render_run(evidence, report_path=output.name, payload_path=paths.payload.name, manifest_path=paths.provenance.name)
+            replace_many({output: report, paths.payload: payload, paths.provenance: manifest})
+            return PerformanceReportId(current_tag=current_tag, baseline_tag=baseline_tag)
+        bundle = _build_historical_asset_bundle(config=normalized, current_download=downloaded)
     return _publish_performance_bundle(bundle=bundle, output=output)
 
 

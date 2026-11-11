@@ -17,14 +17,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_scanner_setup_uses_standard_environment(capsys: pytest.CaptureFixture[str]) -> None:
     """The shared setup path cannot acquire a scanner in another environment."""
-    previous_setup, previous_version, previous_path = semgrep_tool.setup, semgrep_tool.VERSION, os.environ.get("PATH")
+    previous_setup, previous_version, previous_path = semgrep_tool.setup, version("semgrep"), os.environ.get("PATH")
     assert sys.version_info[:2] == (3, 15)
     assert main(["--root", str(ROOT), "semgrep", "setup"]) == 0
     expected = Path(sysconfig.get_path("scripts")) / ("semgrep.exe" if os.name == "nt" else "semgrep")
     output = capsys.readouterr().out
     assert f"Semgrep {version('semgrep')}: {expected}" in output
     assert semgrep_tool.setup is previous_setup
-    assert previous_version == semgrep_tool.VERSION
+    assert previous_version == version("semgrep")
     assert os.environ.get("PATH") == previous_path
 
 
@@ -34,8 +34,9 @@ def test_scanner_setup_uses_standard_environment(capsys: pytest.CaptureFixture[s
 )
 def test_real_fixture_checker_keeps_positive_negative_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, diagnostic: str) -> None:
     """Actual native scans accept a match and reject missing or extra findings."""
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.research-repo-tools.semgrep]\nconfig = "rules.yaml"\nfixtures = "fixture.py"\nnamespace = "delaunay."\ncwd = "."\n',
+    configuration = tmp_path / "scanner.toml"
+    configuration.write_text(
+        '[semgrep]\nconfig = "rules.yaml"\nfixtures = "fixture.py"\nnamespace = "delaunay."\ncwd = "."\n',
         encoding="utf-8",
     )
     (tmp_path / "rules.yaml").write_text(
@@ -60,13 +61,13 @@ def test_real_fixture_checker_keeps_positive_negative_gates(tmp_path: Path, monk
     # directory before Semgrep's launcher resolves its pysemgrep helper.
     result = run_command(
         "uv",
-        ["run", "--locked", "--group", "dev", "research-repo-tools", "--root", str(tmp_path), "semgrep", "check-fixtures"],
+        ["run", "--locked", "--group", "dev", "research-repo-tools", "--config", str(configuration), "--root", str(tmp_path), "semgrep", "check-fixtures"],
         cwd=ROOT,
         env=dict(os.environ),
         timeout=120,
         check=False,
     )
-    assert result.returncode == (1 if diagnostic else 0)
+    assert result.returncode == (1 if diagnostic else 0), result.stderr
     errors = result.stderr
     if diagnostic:
         assert "delaunay.fixture" in errors

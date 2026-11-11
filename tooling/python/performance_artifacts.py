@@ -11,6 +11,7 @@ from research_repo_tools.criterion import (
     COMPARISON_SCHEMA,
     SAMPLE_SCHEMA,
     ComparisonSet,
+    ConfidenceInterval,
     Estimate,
     Sample,
     compare_samples,
@@ -151,7 +152,7 @@ class TimingEstimate:
 
     def __post_init__(self) -> None:
         """Reject non-finite, non-positive, or reversed timings."""
-        Estimate(self.median_ns, self.ci_lower_ns, self.ci_upper_ns, self.confidence_level)
+        Estimate(self.median_ns, ConfidenceInterval(self.ci_lower_ns, self.ci_upper_ns, self.confidence_level))
 
 
 @dataclass(frozen=True, slots=True)
@@ -713,7 +714,8 @@ def comparison_for_bundle(bundle: PerformanceBundle) -> ComparisonSet:
         for row in bundle.rows:
             timing = row.baseline if side == "baseline" else row.current
             if timing is not None:
-                estimates.append((row.benchmark_id, Estimate(timing.median_ns, timing.ci_lower_ns, timing.ci_upper_ns, timing.confidence_level)))
+                interval = ConfidenceInterval(timing.ci_lower_ns, timing.ci_upper_ns, timing.confidence_level)
+                estimates.append((row.benchmark_id, Estimate(timing.median_ns, interval)))
         return Sample(tuple(estimates), "median", "ns")
 
     return compare_samples(sample("baseline"), sample("current"))

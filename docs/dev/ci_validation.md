@@ -4,6 +4,9 @@ Local `just ci` retains every validator. Hosted CI runs portable checks once,
 then preserves the three native platform builds and the separately required
 SARIF jobs. `tooling/release-evidence.toml` requires portable, native and package
 jobs and their successful steps in the same trusted-main run/attempt.
+The separate `sign-package` job authenticates the package producer's immutable
+artifact by ID, digest, run and attempt, signs its original manifest, and retains
+the crate, manifest and Sigstore bundle together. It executes no checkout code.
 
 ## Before-change timing
 
@@ -53,11 +56,13 @@ separate work.
 | Repository Rule SARIF | Complete production native/prose/Rustdoc Semgrep scan, blocking findings and current-generation SARIF upload |
 | Clippy SARIF | Linux all-targets/all-feature diagnostics and security reporting |
 | Main package producer | Clean default/all-feature native Cargo packages and immutable retained archive |
+| Main package signer | Same-attempt producer authentication and signed Cargo manifest; no checkout or package execution |
 | Explicit `test-slow` / `ci-slow` | Existing bounded slow correctness bucket, unchanged |
 
 The native owner includes Python formatting/lint/types/fixture checks, notebook
-lint/advice, default/all-feature all-targets Clippy, and every default Rust/Python
-test bucket, including debug/release units, integrations, doctests, CLI and
+lint/advice, default/all-feature all-targets Clippy, workspace Rustdoc,
+packaged public Rustdoc with default and all features, and every default
+Rust/Python test bucket, including debug/release units, integrations, doctests, CLI and
 feature-only lanes. No platform-sensitive selection is moved to portable CI.
 Within the test workflow, Python consumer tests run before the Rust buckets so
 native tooling failures surface earlier. Release recipe fixtures install
@@ -87,3 +92,8 @@ CI, complete attempts, immutable artifact identity, Cargo byte reproduction,
 frozen post-approval selection and OIDC/environment boundaries remain required.
 The new policy/schema cannot consume older adapter manifests: an eligible main
 run of the adoption commit or a later reviewed commit must produce fresh evidence.
+Candidate acceptance additionally binds the independent local Step 1 acquisition
+and exact generated outputs. Hosted draft/attachment jobs do not measure.
+The full acceptance crosses the deployment approval boundary as an immutable
+artifact; Cargo reproduction still precedes token acquisition. Native adoption
+and real handoff evidence remain gates in [release tracker #696](https://github.com/acgetchell/delaunay/issues/696).

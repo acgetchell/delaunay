@@ -14,13 +14,10 @@ use delaunay::prelude::collections::SmallBuffer;
 #[cfg(feature = "count-allocations")]
 use delaunay::prelude::construction::DelaunayTriangulationBuilder;
 use delaunay::prelude::geometry::{AdaptiveKernel, ExactPredicates};
+use memory_stats::memory_stats;
 #[cfg(feature = "count-allocations")]
 use std::time::{Duration, Instant};
-use std::{
-    hint::black_box,
-    sync::{Mutex, OnceLock},
-};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, get_current_pid};
+use std::{hint::black_box, sync::OnceLock};
 
 #[path = "common/bench_utils.rs"]
 pub mod bench_utils;
@@ -54,28 +51,10 @@ struct MemoryInfo {
 }
 /// Return current process memory usage in KiB.
 fn memory_usage_kib() -> u64 {
-    static SYS: OnceLock<Mutex<System>> = OnceLock::new();
-
-    let pid = get_current_pid().or_abort();
-    let sys = SYS.get_or_init(|| {
-        Mutex::new(
-            System::new_with_specifics(
-                RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory()),
-            )
-            .or_abort(),
-        )
-    });
-    let mut system = sys.lock().or_abort();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing().with_memory(),
-    );
-    system
-        .process(pid)
-        .or_abort("current process missing from RSS observation")
-        .memory()
-        / 1024
+    let resident_bytes = memory_stats()
+        .or_abort("could not read current process RSS")
+        .physical_mem;
+    u64::try_from(resident_bytes).or_abort() / 1024
 }
 
 /// Measure memory delta during triangulation construction.

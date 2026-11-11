@@ -45,6 +45,22 @@ import 'just/helpers.just'
 _default:
     @just --list
 
+# Run the local policy adapter with an external, published verification runtime.
+[positional-arguments]
+[private]
+[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", "--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.2.8", "python", "-I")]
+_release-candidate +args:
+    import runpy
+    import sys
+    from pathlib import Path
+    from research_repo_tools.config import load
+    from research_repo_tools.release_runtime import isolated_release_runtime
+    root = Path.cwd().resolve()
+    script = root / "tooling/python/release_candidate.py"
+    sys.argv[0] = str(script)
+    with isolated_release_runtime(load(root=root)):
+        runpy.run_path(str(script), run_name="__main__")
+
 # Check exact external action identities and restricted refs in workflows and composites.
 [group('validation')]
 action-allowlist:
@@ -194,12 +210,12 @@ check-fast:
 
 # CI simulation: comprehensive validation.
 [group('workflows')]
-ci: check python-fixture-lint _validation-doc-figures-check-if-canonical test bench-compile examples
+ci: check python-fixture-lint _validation-doc-figures-check-if-canonical doc-package-check test bench-compile examples
     @echo "🎯 CI checks complete!"
 
 # Run platform-sensitive checks on each native hosted runner.
 [group('workflows')]
-ci-native: cargo-lock-check python-check notebook-check python-fixture-lint unused-deps clippy doc-check _validation-doc-figures-check-if-canonical test bench-compile examples
+ci-native: cargo-lock-check python-check notebook-check python-fixture-lint unused-deps clippy doc-check _validation-doc-figures-check-if-canonical doc-package-check test bench-compile examples
 
 # Run portable repository checks once; the SARIF workflow owns the production scan.
 [group('workflows')]
@@ -268,10 +284,22 @@ debug-large-scale-4d n="800" repair_every="1": _ensure-nextest
 debug-large-scale-5d n="140" repair_every="1": _ensure-nextest
     DELAUNAY_BULK_PROGRESS_EVERY=20 DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS=1800 DELAUNAY_LARGE_DEBUG_N_5D={{ n }} DELAUNAY_LARGE_DEBUG_REPAIR_EVERY={{ repair_every }} {{ managed }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug debug_large_scale_5d -- --exact --nocapture
 
+# Preview a declared source change; pass --apply to reconcile its manifest and lock.
+[group('maintenance')]
+[positional-arguments]
+dependency-source name *args:
+    {{ managed }} research-repo-tools deps source "$@"
+
 # Build rustdoc for the workspace and reject warnings.
 [group('validation')]
 doc-check:
     RUSTDOCFLAGS='-D warnings' {{ managed }} cargo doc --workspace --no-deps --document-private-items
+
+# Build public rustdoc from the packaged crate with default and all features.
+[group('validation')]
+doc-package-check:
+    {{ managed }} research-repo-tools validation cargo-docs delaunay
+    {{ managed }} research-repo-tools validation cargo-docs delaunay --all-features
 
 # Check release-version references against Cargo.toml.
 [group('validation')]
@@ -508,6 +536,12 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
 performance +args: _ensure-uv
     {{ managed }} research-repo-tools performance "$@"
 
+# Recover owner retention after a callback failure, without acquiring again.
+[group('benchmarks and performance')]
+[positional-arguments]
+performance-capture *args: _ensure-uv
+    {{ managed }} python tooling/python/release_candidate.py capture "$@"
+
 # Promote an explicit new complete run, or rerender the retained selection offline.
 [group('benchmarks and performance')]
 [positional-arguments]
@@ -542,17 +576,28 @@ performance-local suite="release-signal": _ensure-uv
 performance-prepare *args: _ensure-uv
     {{ managed }} research-repo-tools performance prepare tooling/performance-release.toml "$@"
 
+# Render retained raw evidence again after a report-promotion failure.
+[group('benchmarks and performance')]
+performance-promote: _ensure-uv
+    {{ managed }} research-repo-tools performance promote tooling/performance-report.toml --payload target/bench-reports/performance.run.json --manifest target/bench-reports/performance.evidence.json
+
 # Validate retained release measurements and atomically publish README assets/table.
 [group('benchmarks and performance')]
 [positional-arguments]
 performance-readme *args: _ensure-uv
     {{ managed }} research-repo-tools performance readme tooling/performance-release.toml "$@"
 
-# Measure, retain, reload-validate, and promote release performance documentation with five-minute heartbeats.
+# Acquire once and freeze independent owner assertions before promoting reports.
 [group('benchmarks and performance')]
 [positional-arguments]
 performance-release *args: _ensure-uv
-    {{ managed }} research-repo-tools performance release tooling/performance-release.toml --progress-cadence 300 "$@"
+    {{ managed }} python tooling/python/release_candidate.py acquire --checkpoint target/bench-reports/release-checkpoint --progress-cadence 300 "$@"
+
+# Resume only the original acquisition checkpoint and owner record.
+[group('benchmarks and performance')]
+[positional-arguments]
+performance-resume *args: _ensure-uv
+    just performance-release --resume "$@"
 
 # Run the selected CI benchmark suite for one compiler/code pair.
 [group('benchmarks and performance')]
@@ -707,34 +752,42 @@ release-artifact +args:
 # Capture or verify a draft target through an isolated published runtime.
 [group('release')]
 [positional-arguments]
-[script("uvx", "--python", "3.15", "--from", "research-repo-tools==0.2.5", "python", "-I")]
+[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", "--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.2.8", "python", "-I")]
 release-assets operation tag *args:
     import sys
     from pathlib import Path
     from research_repo_tools.cli import main
+    from research_repo_tools.config import load
     from research_repo_tools.measurement import resolve_revision
-    root = Path.cwd()
-    sys.exit(main(["release", "assets", sys.argv[1], "tooling/release-assets.toml", "--checkout", str(root), "--commit", resolve_revision(root, "HEAD"), "--tag", sys.argv[2], *sys.argv[3:]]))
+    from research_repo_tools.release_runtime import isolated_release_runtime
+    root = Path.cwd().resolve()
+    with isolated_release_runtime(load(root=root)):
+        sys.exit(main(["release", "assets", sys.argv[1], "tooling/release-assets.toml", "--checkout", str(root), "--commit", resolve_revision(root, "HEAD"), "--tag", sys.argv[2], *sys.argv[3:]]))
 
-# Dispatch exact-tag release benchmarks and return without waiting or measuring.
-[group('release')]
-release-benchmarks tag: _ensure-gh
-    gh workflow run release-benchmarks.yml --repo acgetchell/delaunay --ref {{ quote(tag) }} -f {{ quote("tag=" + tag) }}
-
-# Verify retained main evidence; accept --expected PATH and --github-output PATH.
+# Stage the accepted original acquisition and dispatch archive attachment only.
 [group('release')]
 [positional-arguments]
-[script("uvx", "--python", "3.15", "--from", "research-repo-tools==0.2.5", "python", "-I")]
+release-benchmarks tag *args: _ensure-gh
+    just _release-candidate benchmarks "$@"
+
+# Authenticate declared registry graphs and this machine's installed dependency bytes.
+[group('release')]
+release-dependencies:
+    {{ managed }} research-repo-tools release dependencies
+
+# Prepare native source receipts and registry inputs before release provenance checks.
+[group('release')]
+release-dependency-builds:
+    uv sync --locked --group dev
+    {{ managed }} cargo fetch --locked
+    {{ managed }} cargo fetch --locked --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
+    {{ managed }} research-repo-tools release dependency-builds
+
+# Freeze or revalidate original benchmark acquisition plus exact final-main Cargo evidence.
+[group('release')]
+[positional-arguments]
 release-evidence *args:
-    import sys
-    import tempfile
-    from pathlib import Path
-    from research_repo_tools.cli import main
-    from research_repo_tools.measurement import resolve_revision
-    from research_repo_tools.release_metadata import read_package_info
-    root = Path.cwd()
-    with tempfile.TemporaryDirectory(prefix="delaunay-release-evidence-") as temporary:
-        sys.exit(main(["release", "evidence", "verify", "tooling/release-evidence.toml", "--checkout", str(root), "--commit", resolve_revision(root, "HEAD"), "--version", read_package_info(root).version, "--output", str(Path(temporary).resolve() / "selection.json"), *sys.argv[1:]]))
+    just _release-candidate verify "$@"
 
 # Require the immutable release event and successful checks on its exact commit.
 [group('release')]
@@ -760,8 +813,21 @@ release-package: _ensure-toolchain
 
 # Publish a reviewed, benchmark-equipped draft using the maintainer's GitHub session.
 [group('release')]
-release-publish tag: (_release-notes-check tag) release-evidence
-    {{ rrt }} release publish {{ quote(tag) }} --approve
+[positional-arguments]
+release-publish tag *args: (_release-notes-check tag)
+    just _release-candidate publish "$@"
+
+# Authenticate original inert workflow records without acquisition or builds.
+[group('release')]
+[positional-arguments]
+release-receive +args:
+    just _release-candidate receive "$@"
+
+# Explicitly dispatch crates.io upload with the independently retained acceptance.
+[group('release')]
+[positional-arguments]
+release-upload tag *args: _ensure-gh
+    just _release-candidate upload "$@"
 
 # Verify the stable GitHub release, benchmark asset, and exact crates.io version.
 [group('release')]

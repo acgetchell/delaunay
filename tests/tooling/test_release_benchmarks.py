@@ -1,10 +1,6 @@
 """Consumer release policy using the installed shared target contract."""
 
-import json
 import os
-import shlex
-import sys
-import tarfile
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -13,7 +9,6 @@ import yaml
 from research_repo_tools.process import run_command
 from research_repo_tools.release_assets import GitHubRelease, ReleaseTarget, parse_release_target
 
-import benchmark_utils
 import release_benchmarks
 
 COMMIT = "a" * 40
@@ -148,137 +143,44 @@ def test_consumer_policy_blocks_wrong_checkout_or_existing_evidence(
     assert handoff.read_bytes() == original
 
 
-def test_release_workflow_preserves_trusted_code_runtime_and_target() -> None:
-    """The release checkout cannot replace the upload implementation or its registry pin."""
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert workflow.index("Preserve publication runtime") < workflow.index("Validate draft release target") < workflow.index("Check out exact release commit")
-    assert 'cp pyproject.toml uv.lock .python-version "$RUNNER_TEMP/release-tools/"' in workflow
-    assert 'cp tooling/python/release_benchmarks.py "$RUNNER_TEMP/release-tools/"' in workflow
-    assert workflow.count('"$RUNNER_TEMP/release-tools/.venv/bin/python"') == 2
-    assert 'preflight "$RUNNER_TEMP/release-target.json"' in workflow
-    assert 'publish "$RUNNER_TEMP/release-target.json"' in workflow
-    configured = yaml.safe_load(workflow)
-    steps = configured["jobs"]["release-baseline"]["steps"]
-    assert steps[0]["with"]["ref"] == "main"
-    assert steps[1]["name"] == "Validate tag dispatch context"
-    assert 'test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"' in steps[1]["run"]
-    assert "merge-base --is-ancestor" in steps[1]["run"]
-
-
-def test_release_workflow_staging_preserves_clean_source_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Execute workflow staging with real Git capture and archive creation, without sampling."""
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-    checkout = tmp_path / "release checkout"
-    checkout.mkdir()
-    (checkout / ".gitignore").write_bytes((WORKFLOW.parents[2] / ".gitignore").read_bytes())
-    for args in (
-        ["init", "--quiet"],
-        ["add", ".gitignore"],
-        ["-c", "user.name=Release Test", "-c", "user.email=release@example.invalid", "commit", "--quiet", "-m", "release"],
-    ):
-        run_command("git", args, cwd=checkout, timeout=30)
-    expected_source = benchmark_utils._source_state(checkout, version=TAG, ref=TAG)
-    assert expected_source.git_clean is True
-
-    executables = tmp_path / "bin"
-    executables.mkdir()
-    just = executables / "just"
-    just.write_text('#!/bin/sh\nmkdir -p target/criterion\nprintf "raw samples\\n" > target/criterion/sample.json\n', encoding="utf-8", newline="\n")
-    just.chmod(0o755)
-    stub = tmp_path / "benchmark_boundary.py"
-    stub.write_text(
-        "import json, sys\n"
-        "from pathlib import Path\n"
-        f"sys.path.insert(0, {str(Path(benchmark_utils.__file__).parent)!r})\n"
-        "import benchmark_utils\n"
-        "assert sys.argv[1:4] == ['run', '--locked', 'benchmark-utils']\n"
-        "command = sys.argv[4]\n"
-        "output = Path(sys.argv[sys.argv.index('--output') + 1])\n"
-        "if command == 'generate-summary':\n"
-        "    output.write_bytes(b'benchmark summary\\n')\n"
-        "elif command == 'create-release-benchmark-metadata':\n"
-        "    tag = sys.argv[sys.argv.index('--tag') + 1]\n"
-        "    source = benchmark_utils._source_state(Path.cwd(), version=tag, ref=tag)\n"
-        "    output.write_text(json.dumps(benchmark_utils._source_state_payload(source)), encoding='utf-8')\n"
-        "else:\n"
-        "    raise AssertionError(command)\n",
-        encoding="utf-8",
-    )
-    uv = executables / "uv"
-    uv.write_text(
-        f'#!/bin/sh\nexec {shlex.quote(Path(sys.executable).as_posix())} {shlex.quote(stub.as_posix())} "$@"\n',
-        encoding="utf-8",
-        newline="\n",
-    )
-    uv.chmod(0o755)
-    output = tmp_path / "github-output"
-    environment = os.environ | {
-        "PATH": f"{executables}{os.pathsep}{os.environ.get('PATH', '')}",
-        "GITHUB_OUTPUT": output.as_posix(),
-        "RELEASE_TAG": TAG,
+def test_release_workflow_separates_verification_from_writers() -> None:
+    """Only the read-only verifier executes checkout code; writers use pinned RRT."""
+    workflow = yaml.safe_load(WORKFLOW.read_bytes())
+    assert set(workflow["jobs"]) == {"fetch", "verify", "attach"}
+    assert set(workflow[True]["workflow_dispatch"]["inputs"]) == {"tag", "candidate"}
+    jobs = workflow["jobs"]
+    for name in ("fetch", "attach"):
+        job = jobs[name]
+        assert job["permissions"]["contents"] == "write"
+        assert not any(step.get("uses", "").startswith("actions/checkout@") for step in job["steps"])
+        rendered = yaml.safe_dump(job)
+        assert "python -I" in rendered
+        assert "research-repo-tools==0.2.8" in rendered
+        assert "setup-just" not in rendered
+        assert "toolchain run" not in rendered
+    assert jobs["verify"]["permissions"] == {"contents": "read", "checks": "read", "actions": "read"}
+    assert jobs["verify"]["steps"][0]["with"] == {
+        "ref": "${{ github.sha }}",
+        "fetch-depth": 0,
+        "persist-credentials": False,
     }
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    for name in ("Generate release benchmark summary", "Package release Criterion baseline"):
-        command = next(step["run"] for step in workflow["jobs"]["release-baseline"]["steps"] if step.get("name") == name)
-        run_command("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", command], cwd=checkout, env=environment, timeout=30)
-
-    assert output.read_text(encoding="utf-8") == f"asset={ASSET}\n"
-    with tarfile.open(checkout / ASSET) as archive:
-        members = {member.name.removeprefix("./"): member for member in archive.getmembers() if member.isfile()}
-        assert set(members) == {"PERFORMANCE_RESULTS.md", "criterion/sample.json", "metadata.json"}
-        contents: dict[str, bytes] = {}
-        for name, member in members.items():
-            extracted = archive.extractfile(member)
-            assert extracted is not None
-            with extracted:
-                contents[name] = extracted.read()
-    assert contents["PERFORMANCE_RESULTS.md"] == b"benchmark summary\n"
-    assert contents["criterion/sample.json"] == b"raw samples\n"
-    assert json.loads(contents["metadata.json"]) == benchmark_utils._source_state_payload(expected_source)
+    assert jobs["attach"]["needs"] == "verify"
+    assert workflow["concurrency"]["cancel-in-progress"] is False
+    assert "performance-release" not in yaml.safe_dump(workflow)
+    assert "cargo bench" not in yaml.safe_dump(workflow)
 
 
-@pytest.mark.parametrize(
-    ("step_name", "mode"),
-    [("Validate draft release target", "preflight"), ("Attach and verify baseline on the draft", "publish")],
-)
-def test_release_workflow_launcher_ignores_incompatible_ambient_uv(tmp_path: Path, step_name: str, mode: str) -> None:
-    """Both workflow commands reach the preserved adapter after ambient uv changes."""
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    command = next(step["run"] for step in workflow["jobs"]["release-baseline"]["steps"] if step.get("name") == step_name)
-    runtime = tmp_path / "release-tools"
-    python = runtime / ".venv/bin/python"
-    python.parent.mkdir(parents=True)
-    python.write_text(f'#!/bin/sh\nexec {shlex.quote(Path(sys.executable).as_posix())} "$@"\n', encoding="utf-8", newline="\n")
-    python.chmod(0o755)
-    adapter = runtime / "release_benchmarks.py"
-    adapter.write_text("import json, sys\nprint(json.dumps([__file__, *sys.argv[1:]]))\n", encoding="utf-8")
-    ambient_bin = tmp_path / "ambient-bin"
-    ambient_bin.mkdir()
-    uv = ambient_bin / "uv"
-    uv.write_text(
-        '#!/bin/sh\nprintf "incompatible uv version\\n" >&2\nprintf "called\\n" > "$RUNNER_TEMP/ambient-uv-called"\nexit 2\n',
-        encoding="utf-8",
-        newline="\n",
-    )
-    uv.chmod(0o755)
-    checkout = tmp_path / "release-checkout"
-    checkout.mkdir()
-    (checkout / "release_benchmarks.py").write_text('raise RuntimeError("release checkout adapter must not run")\n', encoding="utf-8")
-    environment = os.environ.copy()
-    environment["RUNNER_TEMP"] = tmp_path.as_posix()
-    environment["PATH"] = f"{ambient_bin}{os.pathsep}{environment.get('PATH', '')}"
-    result = run_command(
-        "bash",
-        ["--noprofile", "--norc", "-eo", "pipefail", "-c", command],
-        cwd=checkout,
-        env=environment,
-        check=False,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    actual_adapter, actual_mode, actual_target = json.loads(result.stdout)
-    assert Path(actual_adapter) == adapter
-    assert actual_mode == mode
-    assert Path(actual_target) == tmp_path / "release-target.json"
-    assert not (tmp_path / "ambient-uv-called").exists()
+def test_release_workflow_binds_both_transport_attempts() -> None:
+    """The original dispatch and both immutable artifact identities cross job boundaries."""
+    jobs = yaml.safe_load(WORKFLOW.read_bytes())["jobs"]
+    verify = yaml.safe_dump(jobs["verify"])
+    attach = yaml.safe_dump(jobs["attach"])
+    assert "needs.fetch.outputs.artifact-id" in verify
+    assert "needs.fetch.outputs.artifact-digest" in verify
+    assert "needs.fetch.outputs.validated-attempt" in verify
+    assert "needs.verify.outputs.artifact-id" in attach
+    assert "needs.verify.outputs.artifact-digest" in attach
+    assert "needs.verify.outputs.validated-attempt" in attach
+    assert "inputs.candidate" in attach
+    assert "github.actor == 'acgetchell'" in jobs["fetch"]["if"]
+    assert "github.triggering_actor == 'acgetchell'" in jobs["fetch"]["if"]

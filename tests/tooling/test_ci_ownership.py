@@ -1,12 +1,17 @@
 """Remote focused recipes cover the complete local CI contract without repeated lint."""
 
+import json
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import yaml
 from research_repo_tools.just_inspect import dry_run, inspect_justfile
 from research_repo_tools.process import run_command
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -34,6 +39,7 @@ def test_remote_subsets_preserve_every_local_validator() -> None:
         "test-python",
         "clippy",
         "doc-check",
+        "doc-package-check",
         "test-unit",
         "test-unit-features",
         "test-allocation",
@@ -50,34 +56,30 @@ def test_native_tooling_failures_surface_before_scientific_test_buckets() -> Non
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_release_benchmark_dispatch_forwards_one_literal_tag(tmp_path: Path, *, failure: bool) -> None:
-    """Exercise actual recipe expansion with a fake gh; dispatch failure survives."""
+def test_release_benchmark_dispatch_forwards_one_literal_tag(
+    tmp_path: Path, native_console_scripts: Callable[[Path, str, dict[str, str]], Path], *, failure: bool
+) -> None:
+    """Exercise actual recipe forwarding into the isolated adapter without shell interpolation."""
     tag = "v0.9.0 $(touch SHOULD_NOT_EXIST); 'literal'"
     arguments = tmp_path / "arguments"
-    program = tmp_path / "gh"
-    program.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$ARGUMENTS"\nexit "$DISPATCH_EXIT"\n', encoding="utf-8", newline="\n")
-    program.chmod(0o755)
-    script = dry_run(ROOT, "release-benchmarks", [tag]).stderr
-    runner = "uv() { return 0; }\n" + script
+    outside = native_console_scripts(
+        tmp_path,
+        "import json, os, sys\nfrom pathlib import Path\n"
+        "def main():\n"
+        '    Path(os.environ["ARGUMENTS"]).write_text(json.dumps(sys.argv), encoding="utf-8")\n'
+        '    return int(os.environ["DISPATCH_EXIT"])\n',
+        {"uvx": "main"},
+    )
+    (tmp_path / "justfile").write_text(f"import '{(ROOT / 'justfile').as_posix()}'\n", encoding="utf-8")
     result = run_command(
-        "bash",
-        ["--noprofile", "--norc", "-euc", runner],
+        "just",
+        ["release-benchmarks", tag],
         cwd=tmp_path,
-        env=os.environ | {"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}", "ARGUMENTS": str(arguments), "DISPATCH_EXIT": "17" if failure else "0"},
+        env=os.environ | {"PATH": f"{outside}{os.pathsep}{os.environ['PATH']}", "ARGUMENTS": str(arguments), "DISPATCH_EXIT": "17" if failure else "0"},
         check=False,
     )
     assert result.returncode == (17 if failure else 0), result.stderr
-    assert arguments.read_text(encoding="utf-8").splitlines() == [
-        "workflow",
-        "run",
-        "release-benchmarks.yml",
-        "--repo",
-        "acgetchell/delaunay",
-        "--ref",
-        tag,
-        "-f",
-        f"tag={tag}",
-    ]
+    assert json.loads(arguments.read_bytes())[-2:] == ["benchmarks", tag]
     assert not (tmp_path / "SHOULD_NOT_EXIST").exists()
 
 

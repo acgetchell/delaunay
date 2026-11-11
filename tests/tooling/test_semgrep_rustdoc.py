@@ -52,8 +52,8 @@ def consumer(root: Path, sources: dict[str, str], *, selected_rules: set[str] | 
     (root / "semgrep.yaml").write_text(yaml.safe_dump({"rules": selected}), encoding="utf-8")
     manifest = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     exclusions = manifest["tool"]["research-repo-tools"]["semgrep"]["rustdoc-exclude"]
-    (root / "pyproject.toml").write_text(
-        '[tool.research-repo-tools.semgrep]\nconfig = "semgrep.yaml"\n'
+    (root / "scanner.toml").write_text(
+        '[semgrep]\nconfig = "semgrep.yaml"\n'
         'fixtures = "fixtures"\nnamespace = "delaunay."\ninline-suppressions = true\n'
         'report-category = "semgrep-repository-rules"\nreport-layout = "aggregate"\n'
         f'failure-reports = "retain"\nrustdoc-exclude = {json.dumps(exclusions)}\n',
@@ -69,7 +69,23 @@ def consumer(root: Path, sources: dict[str, str], *, selected_rules: set[str] | 
 def scan(root: Path, names: tuple[str, ...], monkeypatch: pytest.MonkeyPatch) -> int:
     """Model only Git inventory; run the installed extractor, scanner and validators."""
     monkeypatch.setattr(semgrep_scan, "security_inventory", lambda *_args, **_kwargs: names)
-    return main(["--root", str(root), "semgrep", "scan", "--include", "*", "--rust-docs", "--batch-size", "1", "--output", "reports"])
+    return main(
+        [
+            "--config",
+            str(root / "scanner.toml"),
+            "--root",
+            str(root),
+            "semgrep",
+            "scan",
+            "--include",
+            "*",
+            "--rust-docs",
+            "--batch-size",
+            "1",
+            "--output",
+            "reports",
+        ]
+    )
 
 
 def test_deep_import_policy_covers_triangulation_paths_and_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -341,7 +357,7 @@ def test_mixed_native_fixture_assertions(tmp_path: Path, capsys: pytest.CaptureF
         (tmp_path / "fixtures/guide.md").write_text(markdown.replace("f64::NAN", "0.0"), encoding="utf-8")
     elif change == "unexpected":
         (tmp_path / "fixtures/example.rs").write_text(example.replace("unwrap_or(0.0)", "unwrap_or(f64::INFINITY)"), encoding="utf-8")
-    assert main(["--root", str(tmp_path), "semgrep", "check-fixtures", "--rust-docs"]) == int(change != "unchanged")
+    assert main(["--config", str(tmp_path / "scanner.toml"), "--root", str(tmp_path), "semgrep", "check-fixtures", "--rust-docs"]) == int(change != "unchanged")
     errors = capsys.readouterr().err
     if change == "missing":
         assert "expected finding not reported" in errors
@@ -368,7 +384,10 @@ def test_workflow_precondition_failure_rejects_retained_reports(
     # Exercise the actual local recipe with a precondition failure. This scratch
     # consumer has no Git repository; the recipe must invalidate old evidence
     # before the shared CLI attempts inventory discovery.
-    cli = f"{shlex.quote(Path(sys.executable).as_posix())} -m research_repo_tools --root {shlex.quote(tmp_path.as_posix())}"
+    cli = (
+        f"{shlex.quote(Path(sys.executable).as_posix())} -m research_repo_tools "
+        f"--config {shlex.quote((tmp_path / 'scanner.toml').as_posix())} --root {shlex.quote(tmp_path.as_posix())}"
+    )
     result = run_command(
         "just",
         ["--justfile", str(ROOT / "justfile"), "--set", "rrt", cli, "semgrep-scan", destination.as_posix() + output_suffix],
