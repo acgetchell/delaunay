@@ -13,7 +13,7 @@ use crate::core::collections::{
 };
 use crate::core::simplex::{NeighborSlot, Simplex, SimplexValidationError};
 use crate::core::tds::{SimplexKey, Tds, TdsError, VertexKey};
-use crate::geometry::matrix::{BigRational, LaError, rational_from_f64};
+use crate::geometry::matrix::{BigRational, LaError};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{InSphere, circumsphere_coordinate_bounds};
 use crate::geometry::robust_predicates::{robust_insphere, strict_insphere_consistency_enabled};
@@ -637,19 +637,17 @@ fn periodic_delaunay_violation_report<U, V, const D: usize>(
         .periodic_domain()
         .expect("periodic report requires a periodic model")
         .into_periods()
-        .map(|value| rational_from_f64(value).expect("validated finite period"));
+        .map(|value| BigRational::from_float(value).expect("validated finite period"));
     // This report borrows immutable storage, so one exact conversion per vertex
     // remains valid for every simplex and candidate image in the scan.
     let exact_points: KeyBasedVertexMap<[BigRational; D]> = tds
         .vertices()
         .map(|(key, vertex)| {
-            (
-                key,
-                vertex
-                    .point()
-                    .coords()
-                    .map(|value| rational_from_f64(value).expect("validated finite point")),
-            )
+            let coordinates = vertex
+                .point()
+                .coords()
+                .map(|value| BigRational::from_float(value).expect("validated finite point"));
+            (key, coordinates)
         })
         .collect();
     let mut scan_simplex = |simplex_key| -> Result<(), DelaunayValidationError> {

@@ -48,9 +48,9 @@
 pub use la_stack::LaError;
 use la_stack::Matrix as LaMatrix;
 pub(crate) use la_stack::{
-    BigRational, DEFAULT_SINGULAR_TOL, ExactF64Conversion, FromPrimitive, Interval,
-    IntervalDeterminantSign, IntervalMatrix, RationalMatrix, RationalVector, Signed,
-    SingularityReason, Tolerance, Vector as LaVector, gram_matrix,
+    BigRational, DEFAULT_SINGULAR_TOL, DeterminantSign, DeterminantWithErrorBound,
+    ExactF64Conversion, Interval, IntervalDeterminantSign, IntervalMatrix, RationalMatrix,
+    RationalVector, Signed, SingularityReason, Tolerance, Vector as LaVector, gram_matrix,
 };
 use thiserror::Error;
 
@@ -216,15 +216,6 @@ fn solve_exact_f64_basis<const N: usize>(
         .map_err(Into::into)
 }
 
-/// Converts one finite IEEE-754 value to the exact rational it represents.
-#[inline]
-pub(crate) fn rational_from_f64(value: f64) -> Option<BigRational> {
-    value
-        .is_finite()
-        .then(|| BigRational::from_f64(value))
-        .flatten()
-}
-
 /// Return a determinant and its certified error bound when the f64 fast filter supports the matrix size.
 ///
 /// `Ok(None)` means the closed-form direct determinant path is unavailable or
@@ -234,12 +225,9 @@ pub(crate) fn rational_from_f64(value: f64) -> Option<BigRational> {
 #[inline]
 pub(crate) fn matrix_fast_filter<const D: usize>(
     m: &Matrix<D>,
-) -> Result<Option<(f64, f64)>, StackMatrixDispatchError> {
+) -> Result<Option<DeterminantWithErrorBound>, StackMatrixDispatchError> {
     match m.det_direct_with_errbound() {
-        Ok(Some(estimate)) => Ok(Some((
-            estimate.determinant(),
-            estimate.absolute_error_bound(),
-        ))),
+        Ok(Some(estimate)) => Ok(Some(estimate)),
         Ok(None) | Err(LaError::NonFinite { .. }) => Ok(None),
         Err(source) => Err(source.into()),
     }

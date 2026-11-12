@@ -1,8 +1,9 @@
 //! Geometric predicates for d-dimensional geometry calculations.
 //!
-//! This module contains fundamental geometric predicates and calculations
-//! that operate on points and simplices, including circumcenter and circumradius
-//! calculations.
+//! Use [`simplex_orientation`] for exact orientation and [`insphere_lifted`]
+//! for exact circumsphere containment. [`insphere_distance`] instead compares
+//! rounded distances with a tolerance. Center and radius calculations live in
+//! [`crate::geometry::util::circumsphere`].
 
 #![forbid(unsafe_code)]
 
@@ -10,8 +11,8 @@ use core::hint::cold_path;
 
 use crate::core::simplex::SimplexValidationError;
 use crate::geometry::matrix::{
-    Interval, IntervalDeterminantSign, IntervalMatrix, LaError, LaVector, Matrix, RationalMatrix,
-    StackMatrixDispatchError, matrix_fast_filter, matrix_set, rational_from_f64,
+    BigRational, DeterminantSign, Interval, IntervalDeterminantSign, IntervalMatrix, LaError,
+    LaVector, Matrix, RationalMatrix, StackMatrixDispatchError, matrix_fast_filter, matrix_set,
 };
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
@@ -22,11 +23,11 @@ use crate::geometry::util::{CircumcenterError, circumcenter, circumradius_with_c
 
 /// Convert an exact determinant sign (from `det_sign_exact`) to an [`Orientation`].
 #[inline]
-const fn sign_to_orientation(sign: i8) -> Orientation {
+const fn sign_to_orientation(sign: DeterminantSign) -> Orientation {
     match sign {
-        1 => Orientation::POSITIVE,
-        -1 => Orientation::NEGATIVE,
-        _ => Orientation::DEGENERATE,
+        DeterminantSign::Positive => Orientation::POSITIVE,
+        DeterminantSign::Negative => Orientation::NEGATIVE,
+        DeterminantSign::Zero => Orientation::DEGENERATE,
     }
 }
 
@@ -45,34 +46,30 @@ fn validate_active_matrix_dimension<const N: usize>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RelativeInsphereSigns {
     /// Sign of the relative simplex orientation determinant.
-    pub(crate) relative_orientation: i32,
+    pub(crate) relative_orientation: DeterminantSign,
     /// Raw sign of the lifted insphere determinant.
-    pub(crate) insphere_determinant: i32,
+    pub(crate) insphere_determinant: DeterminantSign,
 }
 
 /// Convert relative-coordinate lifted determinant signs into a normalized sign.
 #[inline]
 pub(crate) const fn relative_insphere_effective_sign(signs: RelativeInsphereSigns) -> i32 {
-    let effective = signs.insphere_determinant * -signs.relative_orientation;
-    if effective > 0 {
-        1
-    } else if effective < 0 {
-        -1
-    } else {
-        0
+    match relative_insphere_classification(signs) {
+        InSphere::INSIDE => 1,
+        InSphere::OUTSIDE => -1,
+        InSphere::BOUNDARY => 0,
     }
 }
 
 /// Convert relative-coordinate lifted determinant signs into an [`InSphere`] result.
 #[inline]
 pub(crate) const fn relative_insphere_classification(signs: RelativeInsphereSigns) -> InSphere {
-    let sign = relative_insphere_effective_sign(signs);
-    if sign > 0 {
-        InSphere::INSIDE
-    } else if sign < 0 {
-        InSphere::OUTSIDE
-    } else {
-        InSphere::BOUNDARY
+    match (signs.relative_orientation, signs.insphere_determinant) {
+        (DeterminantSign::Zero, _) | (_, DeterminantSign::Zero) => InSphere::BOUNDARY,
+        (DeterminantSign::Positive, DeterminantSign::Negative)
+        | (DeterminantSign::Negative, DeterminantSign::Positive) => InSphere::INSIDE,
+        (DeterminantSign::Positive, DeterminantSign::Positive)
+        | (DeterminantSign::Negative, DeterminantSign::Negative) => InSphere::OUTSIDE,
     }
 }
 
@@ -164,7 +161,7 @@ fn fill_relative_insphere_interval_matrix<const D: usize, const N: usize>(
 fn relative_insphere_interval_sign<const D: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
-) -> Option<i32> {
+) -> Option<DeterminantSign> {
     if simplex_points.len() != D + 1 {
         return None;
     }
@@ -174,8 +171,8 @@ fn relative_insphere_interval_sign<const D: usize>(
     })
     .ok()?;
     match sign {
-        IntervalDeterminantSign::Positive => Some(1),
-        IntervalDeterminantSign::Negative => Some(-1),
+        IntervalDeterminantSign::Positive => Some(DeterminantSign::Positive),
+        IntervalDeterminantSign::Negative => Some(DeterminantSign::Negative),
         // Preserve exact-zero handling as well as inconclusive/range fallback.
         _ => None,
     }
@@ -192,13 +189,13 @@ fn fill_exact_relative_insphere_matrix<const D: usize, const N: usize>(
         .coords()
         .iter()
         .copied()
-        .map(rational_from_f64)
+        .map(BigRational::from_float)
         .collect::<Option<_>>()
         .ok_or_else(|| CoordinateConversionError::NonFiniteValue {
             coordinate_index: 0,
             coordinate_value: InvalidCoordinateValue::from_debug(&simplex_points[0].coords()[0]),
         })?;
-    let zero = rational_from_f64(0.0).expect("zero is a finite IEEE-754 value");
+    let zero = BigRational::from_float(0.0_f64).expect("zero is a finite IEEE-754 value");
     for (row, point) in simplex_points
         .iter()
         .skip(1)
@@ -209,7 +206,7 @@ fn fill_exact_relative_insphere_matrix<const D: usize, const N: usize>(
         for (column, (coordinate, reference_coordinate)) in
             point.coords().iter().zip(&reference).enumerate()
         {
-            let exact_coordinate = rational_from_f64(*coordinate).ok_or_else(|| {
+            let exact_coordinate = BigRational::from_float(*coordinate).ok_or_else(|| {
                 CoordinateConversionError::NonFiniteValue {
                     coordinate_index: column,
                     coordinate_value: InvalidCoordinateValue::from_debug(coordinate),
@@ -245,15 +242,10 @@ pub(crate) fn relative_insphere_signs<const D: usize>(
         });
     }
 
-    let absolute_orientation = match simplex_orientation(simplex_points)? {
-        Orientation::NEGATIVE => -1,
-        Orientation::DEGENERATE => 0,
-        Orientation::POSITIVE => 1,
-    };
-    let relative_orientation = if D.is_multiple_of(2) {
-        absolute_orientation
-    } else {
-        -absolute_orientation
+    let relative_orientation = match (simplex_orientation(simplex_points)?, D.is_multiple_of(2)) {
+        (Orientation::DEGENERATE, _) => DeterminantSign::Zero,
+        (Orientation::POSITIVE, true) | (Orientation::NEGATIVE, false) => DeterminantSign::Positive,
+        (Orientation::NEGATIVE, true) | (Orientation::POSITIVE, false) => DeterminantSign::Negative,
     };
     let insphere_determinant = relative_insphere_determinant_sign(simplex_points, test_point)?;
 
@@ -271,7 +263,7 @@ pub(crate) fn relative_insphere_signs<const D: usize>(
 pub(crate) fn relative_insphere_determinant_sign<const D: usize>(
     simplex_points: &[Point<D>],
     test_point: &Point<D>,
-) -> Result<i32, CoordinateConversionError> {
+) -> Result<DeterminantSign, CoordinateConversionError> {
     if simplex_points.len() != D + 1 {
         return Err(CoordinateConversionError::InvalidSimplexPointCount {
             actual: simplex_points.len(),
@@ -295,7 +287,7 @@ pub(crate) fn relative_insphere_determinant_sign<const D: usize>(
         D + 1,
         |mut matrix| -> Result<_, CoordinateConversionError> {
             fill_exact_relative_insphere_matrix(&mut matrix, simplex_points, test_point)?;
-            Ok(i32::from(matrix.det_sign().as_i8()))
+            Ok(matrix.det_sign())
         }
     )
 }
@@ -316,7 +308,9 @@ pub(crate) fn try_orientation_from_matrix<const N: usize>(
     validate_active_matrix_dimension::<N>(k)?;
 
     // Stage 1: the backend certifies direct determinants for matrix size N ≤ 4.
-    if let Some((det, errbound)) = matrix_fast_filter(matrix)? {
+    if let Some(estimate) = matrix_fast_filter(matrix)? {
+        let det = estimate.determinant();
+        let errbound = estimate.absolute_error_bound();
         if det > errbound {
             return Ok(Orientation::POSITIVE);
         }
@@ -327,7 +321,7 @@ pub(crate) fn try_orientation_from_matrix<const N: usize>(
 
     // Stage 2: exact sign via Bareiss for ambiguous f64 results or N ≥ 5.
     cold_path();
-    Ok(sign_to_orientation(matrix.det_sign_exact().as_i8()))
+    Ok(sign_to_orientation(matrix.det_sign_exact()))
 }
 
 /// Represents the position of a point relative to a circumsphere.
@@ -344,7 +338,8 @@ pub(crate) fn try_orientation_from_matrix<const N: usize>(
 pub enum InSphere {
     /// The point is outside the circumsphere
     OUTSIDE,
-    /// The point is on the boundary of the circumsphere (within numerical tolerance)
+    /// The point is on the circumsphere boundary. Determinant predicates use
+    /// exact zero; [`insphere_distance`] uses its documented distance tolerance.
     BOUNDARY,
     /// The point is inside the circumsphere
     INSIDE,
@@ -374,7 +369,7 @@ impl std::fmt::Display for InSphere {
 pub enum Orientation {
     /// The simplex has negative orientation (determinant < 0)
     NEGATIVE,
-    /// The simplex is degenerate (determinant ≈ 0)
+    /// The simplex is degenerate (determinant exactly zero).
     DEGENERATE,
     /// The simplex has positive orientation (determinant > 0)
     POSITIVE,
@@ -415,8 +410,11 @@ impl std::fmt::Display for Orientation {
 ///
 /// # Errors
 ///
-/// Returns an error if the number of simplex points is not exactly D+1 or
-/// the dimension exceeds D = 6.
+/// - [`CoordinateConversionError::InvalidSimplexPointCount`] if the slice does
+///   not contain exactly `D + 1` points.
+/// - [`CoordinateConversionError::UnsupportedMatrixDimension`] if `D > 6`.
+///
+/// [`Point`] construction already guarantees finite input coordinates.
 ///
 /// # Algorithm
 ///
@@ -655,10 +653,13 @@ pub fn insphere_distance<const D: usize>(
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - The number of simplex points is not exactly D+1
-/// - Matrix operations fail
-/// - Coordinate conversion fails
+/// - [`CoordinateConversionError::InvalidSimplexPointCount`] if the slice does
+///   not contain exactly `D + 1` points.
+/// - [`CoordinateConversionError::UnsupportedMatrixDimension`] if `D > 6`,
+///   except when the query equals a simplex vertex and the boundary shortcut applies.
+/// - [`CoordinateConversionError::DegenerateSimplex`] with
+///   [`DegenerateSimplexReason::ZeroOrientation`] if the simplex has zero
+///   orientation and the query is not one of its vertices.
 ///
 /// # References
 ///
@@ -712,7 +713,7 @@ pub fn insphere<const D: usize>(
     }
 
     let signs = relative_insphere_signs(simplex_points, &test_point)?;
-    if signs.relative_orientation == 0 {
+    if signs.relative_orientation == DeterminantSign::Zero {
         Err(CoordinateConversionError::DegenerateSimplex {
             dimension: D,
             reason: DegenerateSimplexReason::ZeroOrientation,
@@ -803,10 +804,12 @@ pub fn insphere<const D: usize>(
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - The number of simplex points is not exactly D+1
-/// - Matrix operations fail
-/// - Coordinate conversion fails
+/// - [`SimplexValidationError::VertexCountMismatch`] if the slice does not
+///   contain exactly `D + 1` points.
+/// - [`SimplexValidationError::DegenerateSimplex`] if the simplex has zero
+///   orientation, including queries at simplex vertices.
+/// - [`SimplexValidationError::CoordinateConversion`] wrapping
+///   [`CoordinateConversionError::UnsupportedMatrixDimension`] if `D > 6`.
 ///
 /// # References
 ///
@@ -815,13 +818,13 @@ pub fn insphere<const D: usize>(
 /// - Edelsbrunner, Herbert. "Algorithms in Combinatorial Geometry."
 ///   EATCS Monographs on Theoretical Computer Science. Berlin: Springer-Verlag, 1987.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
-/// use delaunay::prelude::geometry::Point;
-/// use delaunay::prelude::geometry::Coordinate;
-/// use delaunay::prelude::geometry::insphere_lifted;
-/// # fn main() -> Result<(), delaunay::prelude::geometry::CoordinateConversionError> {
+/// use delaunay::prelude::geometry::{Coordinate, InSphere, Point, insphere_lifted};
+/// use delaunay::prelude::tds::SimplexValidationError;
+///
+/// # fn main() -> Result<(), SimplexValidationError> {
 /// let point1 = Point::try_from([0.0, 0.0, 0.0])?;
 /// let point2 = Point::try_from([1.0, 0.0, 0.0])?;
 /// let point3 = Point::try_from([0.0, 1.0, 0.0])?;
@@ -830,8 +833,7 @@ pub fn insphere<const D: usize>(
 ///
 /// // Test with a point that should be inside according to the lifted paraboloid method
 /// let test_point = Point::try_from([0.1, 0.1, 0.1])?;
-/// let result = insphere_lifted(&simplex_points, test_point);
-/// assert!(result.is_ok()); // Should execute without error
+/// assert_eq!(insphere_lifted(&simplex_points, test_point)?, InSphere::INSIDE);
 /// # Ok(())
 /// # }
 /// ```
@@ -849,7 +851,7 @@ pub fn insphere_lifted<const D: usize>(
 
     let signs = relative_insphere_signs(simplex_points, &test_point)
         .map_err(|source| SimplexValidationError::CoordinateConversion { source })?;
-    if signs.relative_orientation == 0 {
+    if signs.relative_orientation == DeterminantSign::Zero {
         Err(SimplexValidationError::DegenerateSimplex)
     } else {
         Ok(relative_insphere_classification(signs))
@@ -859,6 +861,7 @@ pub fn insphere_lifted<const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geometry::matrix::DeterminantSign::{Negative, Positive, Zero};
     use crate::geometry::matrix::matrix_set as try_matrix_set;
     use crate::geometry::matrix::test_support::with_la_stack_matrix;
     use crate::geometry::robust_predicates::robust_insphere;
@@ -874,14 +877,14 @@ mod tests {
     fn augmented_insphere_sign<const D: usize>(simplex: &[Point<D>], query: &Point<D>) -> i32 {
         let sign = la_stack::try_with_rational_matrix!(D + 2, |mut matrix| -> Result<_, LaError> {
             for (row, point) in simplex.iter().chain(core::iter::once(query)).enumerate() {
-                let mut squared_norm = rational_from_f64(0.0).unwrap();
+                let mut squared_norm = BigRational::from_float(0.0_f64).unwrap();
                 for (column, &coordinate) in point.coords().iter().enumerate() {
-                    let exact = rational_from_f64(coordinate).unwrap();
+                    let exact = BigRational::from_float(coordinate).unwrap();
                     squared_norm += &exact * &exact;
                     matrix.set(row, column, exact)?;
                 }
                 matrix.set(row, D, squared_norm)?;
-                matrix.set(row, D + 1, rational_from_f64(1.0).unwrap())?;
+                matrix.set(row, D + 1, BigRational::from_float(1.0_f64).unwrap())?;
             }
             Ok(i32::from(matrix.det_sign().as_i8()))
         })
@@ -905,7 +908,7 @@ mod tests {
             assert_eq!(relative_insphere_interval_sign(&simplex, &boundary), None);
             assert_eq!(
                 relative_insphere_determinant_sign(&simplex, &boundary).unwrap(),
-                0
+                DeterminantSign::Zero
             );
             assert_eq!(
                 insphere_lifted(&simplex, boundary).unwrap(),
@@ -914,13 +917,13 @@ mod tests {
             assert_eq!(augmented_insphere_sign(&simplex, &outside), 1);
             assert_eq!(
                 relative_insphere_determinant_sign(&simplex, &outside).unwrap(),
-                1
+                DeterminantSign::Positive
             );
             assert_eq!(
                 insphere_lifted(&simplex, outside).unwrap(),
                 InSphere::OUTSIDE
             );
-            let expected_filter = certifies.then_some(1);
+            let expected_filter = certifies.then_some(DeterminantSign::Positive);
             assert_eq!(
                 relative_insphere_interval_sign(&simplex, &outside),
                 expected_filter
@@ -928,15 +931,18 @@ mod tests {
             simplex.swap(1, 2);
             assert_eq!(
                 relative_insphere_determinant_sign(&simplex, &outside).unwrap(),
-                -1
+                DeterminantSign::Negative
             );
             assert_eq!(
                 relative_insphere_interval_sign(&simplex, &outside),
-                expected_filter.map(|sign| -sign)
+                certifies.then_some(DeterminantSign::Negative)
             );
             if certifies {
                 let inside = Point::try_new([0.5; D]).unwrap();
-                assert_eq!(relative_insphere_interval_sign(&simplex, &inside), Some(1));
+                assert_eq!(
+                    relative_insphere_interval_sign(&simplex, &inside),
+                    Some(DeterminantSign::Positive)
+                );
                 assert_eq!(insphere_lifted(&simplex, inside).unwrap(), InSphere::INSIDE);
             }
         }
@@ -963,11 +969,15 @@ mod tests {
         let query = &points[D + 1];
         let exact = augmented_insphere_sign(simplex, query);
         if let Some(filtered) = relative_insphere_interval_sign(simplex, query) {
-            prop_assert_ne!(filtered, 0);
-            prop_assert_eq!(filtered, exact);
+            prop_assert_ne!(filtered, DeterminantSign::Zero);
+            prop_assert_eq!(i32::from(filtered.as_i8()), exact);
         }
         prop_assert_eq!(
-            relative_insphere_determinant_sign(simplex, query).unwrap(),
+            i32::from(
+                relative_insphere_determinant_sign(simplex, query)
+                    .unwrap()
+                    .as_i8()
+            ),
             exact
         );
         Ok(())
@@ -1005,12 +1015,12 @@ mod tests {
                                 matrix.set(
                                     row,
                                     column,
-                                    rational_from_f64(coordinate).unwrap()
-                                        - rational_from_f64(reference).unwrap(),
+                                    BigRational::from_float(coordinate).unwrap()
+                                        - BigRational::from_float(reference).unwrap(),
                                 )?;
                             }
                         }
-                        Ok(i32::from(matrix.det_sign().as_i8()))
+                        Ok(matrix.det_sign())
                     })
                     .unwrap();
                 for query_index in 0..128 {
@@ -1029,7 +1039,7 @@ mod tests {
                             |mut matrix| -> Result<_, LaError> {
                                 fill_exact_relative_insphere_matrix(&mut matrix, &simplex, &point)
                                     .unwrap();
-                                Ok(i32::from(matrix.det_sign().as_i8()))
+                                Ok(matrix.det_sign())
                             }
                         )
                         .unwrap();
@@ -1121,13 +1131,12 @@ mod tests {
             }
             let bounds = circumsphere_coordinate_bounds(&simplex)
                 .expect("well-conditioned axis simplex has a finite sphere enclosure");
-            let half_scale = rational_from_f64(0.5 * scale).unwrap();
-            let radius_squared =
-                &half_scale * &half_scale * la_stack::BigRational::from_integer(D.into());
+            let half_scale = BigRational::from_float(0.5 * scale).unwrap();
+            let radius_squared = &half_scale * &half_scale * BigRational::from_integer(D.into());
             for [lower, upper] in bounds {
                 assert!(lower < 0.0 && upper > 0.0);
-                let lower = rational_from_f64(lower).unwrap();
-                let upper = rational_from_f64(upper).unwrap();
+                let lower = BigRational::from_float(lower).unwrap();
+                let upper = BigRational::from_float(upper).unwrap();
                 assert!(&lower * &lower >= radius_squared);
                 assert!(&upper * &upper >= radius_squared);
             }
@@ -1180,17 +1189,17 @@ mod tests {
             Point::try_new([1.0, 1.0 + f64::EPSILON]).unwrap(),
         ];
         let bounds = circumsphere_coordinate_bounds(&cancellation).unwrap();
-        let half_epsilon = rational_from_f64(f64::EPSILON / 2.0).unwrap();
+        let half_epsilon = BigRational::from_float(f64::EPSILON / 2.0).unwrap();
         let center = [
             -half_epsilon.clone(),
-            rational_from_f64(1.0).unwrap() + half_epsilon,
+            BigRational::from_float(1.0_f64).unwrap() + half_epsilon,
         ];
         let radius_squared = &center[0] * &center[0] + &center[1] * &center[1];
         for ([lower, upper], coordinate) in bounds.into_iter().zip(center) {
-            let low_gap = &coordinate - rational_from_f64(lower).unwrap();
-            let high_gap = rational_from_f64(upper).unwrap() - coordinate;
-            assert!(low_gap >= rational_from_f64(0.0).unwrap());
-            assert!(high_gap >= rational_from_f64(0.0).unwrap());
+            let low_gap = &coordinate - BigRational::from_float(lower).unwrap();
+            let high_gap = BigRational::from_float(upper).unwrap() - coordinate;
+            assert!(low_gap >= BigRational::from_float(0.0_f64).unwrap());
+            assert!(high_gap >= BigRational::from_float(0.0_f64).unwrap());
             assert!(&low_gap * &low_gap >= radius_squared);
             assert!(&high_gap * &high_gap >= radius_squared);
         }
@@ -1280,7 +1289,11 @@ mod tests {
                     parity * i32::from(absolute.det_sign_exact().as_i8())
                 );
                 assert_eq!(
-                    relative_insphere_determinant_sign(&simplex, &query).unwrap(),
+                    i32::from(
+                        relative_insphere_determinant_sign(&simplex, &query)
+                            .unwrap()
+                            .as_i8()
+                    ),
                     rational_sign
                 );
                 assert_eq!(insphere_lifted(&simplex, query).unwrap(), expected);
@@ -1307,6 +1320,38 @@ mod tests {
     rational_insphere_agreement_test!(4, 6);
     rational_insphere_agreement_test!(5, 7);
     rational_insphere_agreement_test!(6, 8);
+
+    #[test]
+    fn relative_insphere_classification_covers_every_sign_pair() {
+        // Containment uses -orientation * determinant; exact zero in either
+        // factor must remain a boundary signal for callers' degeneracy policy.
+        for (relative_orientation, insphere_determinant, expected, integer) in [
+            (Negative, Negative, InSphere::OUTSIDE, -1),
+            (Negative, Zero, InSphere::BOUNDARY, 0),
+            (Negative, Positive, InSphere::INSIDE, 1),
+            (Zero, Negative, InSphere::BOUNDARY, 0),
+            (Zero, Zero, InSphere::BOUNDARY, 0),
+            (Zero, Positive, InSphere::BOUNDARY, 0),
+            (Positive, Negative, InSphere::INSIDE, 1),
+            (Positive, Zero, InSphere::BOUNDARY, 0),
+            (Positive, Positive, InSphere::OUTSIDE, -1),
+        ] {
+            let signs = RelativeInsphereSigns {
+                relative_orientation,
+                insphere_determinant,
+            };
+            assert_eq!(
+                relative_insphere_classification(signs),
+                expected,
+                "{signs:?}"
+            );
+            assert_eq!(
+                relative_insphere_effective_sign(signs),
+                integer,
+                "{signs:?}"
+            );
+        }
+    }
 
     #[test]
     fn test_enum_display_and_debug_implementations() {
@@ -1591,13 +1636,13 @@ mod tests {
         let midpoint_1d = Point::try_new([1.0]).expect("finite point coordinates");
         let far_point_1d = Point::try_new([10.0]).expect("finite point coordinates");
 
-        assert!(
-            insphere_lifted(&simplex_1d, midpoint_1d).is_ok(),
-            "1D midpoint should not error"
+        assert_eq!(
+            insphere_lifted(&simplex_1d, midpoint_1d),
+            Ok(InSphere::INSIDE)
         );
-        assert!(
-            insphere_lifted(&simplex_1d, far_point_1d).is_ok(),
-            "1D far point should not error"
+        assert_eq!(
+            insphere_lifted(&simplex_1d, far_point_1d),
+            Ok(InSphere::OUTSIDE)
         );
 
         // Test circumcenter points for various dimensions
@@ -1643,9 +1688,13 @@ mod tests {
         ]; // Only 2 vertices for 3D
         let test_point = Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates");
 
-        assert!(
-            insphere_lifted(&incomplete_simplex, test_point).is_err(),
-            "Should error with insufficient vertices"
+        assert_eq!(
+            insphere_lifted(&incomplete_simplex, test_point),
+            Err(SimplexValidationError::VertexCountMismatch {
+                actual: 2,
+                expected: 4,
+                dimension: 3,
+            })
         );
     }
 
@@ -1681,36 +1730,8 @@ mod tests {
         let determinant_sign = relative_insphere_determinant_sign(&simplex, &boundary).unwrap();
         let signs = relative_insphere_signs(&simplex, &boundary).unwrap();
 
-        assert_eq!(determinant_sign, 0);
+        assert_eq!(determinant_sign, DeterminantSign::Zero);
         assert_eq!(determinant_sign, signs.insphere_determinant);
-    }
-
-    #[test]
-    fn predicates_circumcenter_error_cases() {
-        // Test circumcenter calculation with degenerate cases
-        let points = vec![
-            Point::try_new([0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0]).expect("finite point coordinates"),
-        ]; // Only 2 points for 2D
-
-        // Test with insufficient vertices for proper simplex
-        let center_result = circumcenter(&points);
-        assert!(center_result.is_err());
-    }
-
-    #[test]
-    fn predicates_circumcenter_collinear_points() {
-        // Test circumcenter with collinear points (should fail)
-        let points = vec![
-            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([2.0, 0.0, 0.0]).expect("finite point coordinates"),
-            Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
-        ];
-
-        // This should fail because points are collinear
-        let center_result = circumcenter(&points);
-        assert!(center_result.is_err());
     }
 
     #[test]
@@ -1722,13 +1743,18 @@ mod tests {
             Point::try_new([0.0, 1.0]).expect("finite point coordinates"),
         ];
 
-        // Test that the methods run without error
+        // The triangle has center (0.5, 0.5) and squared radius 0.5.
         let test_point = Point::try_new([0.25, 0.25]).expect("finite point coordinates");
-        assert!(insphere_distance(&simplex_points, test_point).is_ok());
+        assert_eq!(
+            insphere_distance(&simplex_points, test_point),
+            Ok(InSphere::INSIDE)
+        );
 
-        // At minimum, both methods should give the same result for the same input
         let far_point = Point::try_new([100.0, 100.0]).expect("finite point coordinates");
-        assert!(insphere_distance(&simplex_points, far_point).is_ok());
+        assert_eq!(
+            insphere_distance(&simplex_points, far_point),
+            Ok(InSphere::OUTSIDE)
+        );
     }
 
     #[test]
@@ -1979,9 +2005,13 @@ mod tests {
             Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
             Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
         ]; // Only 2 vertices for 3D
-        assert!(
-            simplex_orientation(&insufficient_vertices).is_err(),
-            "Should error with insufficient vertices"
+        assert_eq!(
+            simplex_orientation(&insufficient_vertices),
+            Err(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 4,
+                dimension: 3,
+            })
         );
     }
 
@@ -2008,17 +2038,10 @@ mod tests {
 
         // Test that insphere_lifted errors with degenerate simplex
         let result_lifted = insphere_lifted(&degenerate_simplex, test_point);
-        assert!(
-            result_lifted.is_err(),
-            "insphere_lifted should error with degenerate simplex"
+        assert_eq!(
+            result_lifted,
+            Err(SimplexValidationError::DegenerateSimplex)
         );
-
-        // Verify the error is the correct type
-        match result_lifted {
-            Err(SimplexValidationError::DegenerateSimplex) => (), // Expected error type
-            Err(other) => panic!("Wrong error type: {other:?}"),
-            Ok(_) => panic!("Function should have returned an error"),
-        }
 
         // Test error handling for insufficient vertices
         let insufficient_vertices = vec![
@@ -2026,9 +2049,13 @@ mod tests {
             Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
         ]; // Only 2 vertices for 3D
 
-        assert!(
-            insphere_distance(&insufficient_vertices, test_point).is_err(),
-            "insphere_distance should error with insufficient vertices"
+        assert_eq!(
+            insphere_distance(&insufficient_vertices, test_point),
+            Err(CircumcenterError::InvalidSimplex {
+                actual: 2,
+                expected: 4,
+                dimension: 3,
+            })
         );
     }
 
@@ -2333,7 +2360,7 @@ mod tests {
         ];
         let test_point_2d = Point::try_new([1e-7, 1e-7]).expect("finite point coordinates");
         let result_2d = insphere(&tiny_simplex_2d, test_point_2d);
-        assert!(result_2d.is_ok(), "2D tiny simplex should work");
+        assert_eq!(result_2d, Ok(InSphere::INSIDE));
 
         // 3D: Test with large coordinates
         let large_simplex_3d = vec![
@@ -2345,7 +2372,7 @@ mod tests {
         let test_point_3d =
             Point::try_new([1e6 + 0.1, 0.1, 0.1]).expect("finite point coordinates");
         let result_3d = insphere(&large_simplex_3d, test_point_3d);
-        assert!(result_3d.is_ok(), "3D large coordinates should work");
+        assert_eq!(result_3d, Ok(InSphere::INSIDE));
 
         // 4D: Test with negative coordinates
         let negative_simplex_4d = vec![
@@ -2358,7 +2385,7 @@ mod tests {
         let test_point_4d =
             Point::try_new([-0.5, -0.5, -0.5, -0.5]).expect("finite point coordinates");
         let result_4d = insphere(&negative_simplex_4d, test_point_4d);
-        assert!(result_4d.is_ok(), "4D negative coordinates should work");
+        assert_eq!(result_4d, Ok(InSphere::INSIDE));
     }
 
     #[test]
@@ -2745,10 +2772,10 @@ mod tests {
             Point::try_new([0.0, 0.0, eps]).expect("finite point coordinates"),
         ];
         let orientation = simplex_orientation(&nearly_coplanar).unwrap();
-        assert_ne!(
+        assert_eq!(
             orientation,
-            Orientation::DEGENERATE,
-            "Near-degenerate 3D tetrahedron with 2^-50 perturbation should NOT be DEGENERATE"
+            Orientation::NEGATIVE,
+            "The positively lifted fourth point gives a negative homogeneous determinant"
         );
     }
 
@@ -2784,7 +2811,14 @@ mod tests {
             &two_points,
             Point::try_new([0.5, 0.5, 0.5]).expect("finite point coordinates"),
         );
-        assert!(result.is_err(), "insphere with 2 points in 3D should error");
+        assert_eq!(
+            result,
+            Err(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: 2,
+                expected: 4,
+                dimension: 3,
+            })
+        );
     }
 
     // =======================================================================
