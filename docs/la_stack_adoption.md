@@ -233,3 +233,70 @@ contains before/after estimates, samples and benchmark identities; accompanying
 logs preserve commands' completion and statistical diagnostics. These build
 artifacts are not committed. The source report intentionally retains unsuccessful
 tradeoffs as well as improvements.
+
+## Published la-stack 0.5.3 adoption
+
+[Delaunay #680](https://github.com/acgetchell/delaunay/issues/680) updates the
+dependency requirement and both Cargo locks to the non-yanked
+[la-stack 0.5.3 registry release](https://crates.io/crates/la-stack/0.5.3).
+The crate archive matches SHA-256
+`2e6272f0899fd40ceb560c8f54afcf1a7b959009b23de4236056ed5c26100e57`
+and its packaged source identifies
+[`7165ed562f2e4611d201e574fc1f600a8ad8b33e`](https://github.com/acgetchell/la-stack/commit/7165ed562f2e4611d201e574fc1f600a8ad8b33e).
+Delaunay continues to use the same public APIs with default features disabled
+and `exact` enabled. The original kernel adoption landed in
+[Delaunay #681](https://github.com/acgetchell/delaunay/pull/681).
+
+The [upstream investigation](https://github.com/acgetchell/la-stack/issues/331#issuecomment-6734166685)
+found that 4D shared-vertex timing was sensitive to process layout. Controlled
+whole-5D runs comparing the original API adoption revisions on la-stack 0.5.2
+did not reproduce a stable 1.7% penalty. That investigation established no
+defect requiring a kernel or consumer change. The published release therefore
+has no #331-specific performance fix.
+
+### Dependency-version measurements
+
+On November 11, 2026, both phases ran serially on the same aarch64 macOS 27.2.1
+host with Rust 1.99.1 and Criterion 0.8.2. The baseline was Delaunay
+`4532d9c345af3be9c6fa63c87313f00ed8bb4bf1` with la-stack 0.5.2. The second
+phase applied only the manifest and lock changes with source-diff SHA-256
+`6f47ee3d936604e9f2fa723c0c55e6a93f85d7a33caf55e8ebdc186b45cb4d3f`.
+Both used the same harness bytes, fixture preflights, executable paths and
+Criterion arguments. Each phase was compiled in a separate `perf` build root.
+All 35 expected cases ran with ten samples each, one second of warmup and
+two seconds of requested measurement. Criterion extended expensive cases to
+obtain ten samples.
+
+| Whole realization | 0.5.2 median (ms) | 0.5.3 median (ms) | Median change | Criterion mean change (95% CI) |
+|---|---:|---:|---:|---:|
+| 2D, 500 vertices | 6.882 | 6.991 | +1.58% | +1.69% [+0.84%, +2.54%] |
+| 3D, 20 vertices | 103.570 | 107.323 | +3.62% | +3.97% [+3.30%, +4.82%] |
+| 4D, 10 vertices | 105.637 | 106.922 | +1.22% | +1.28% [+0.48%, +2.08%] |
+| 5D, 8 vertices | 16.314 | 15.572 | -4.55% | -5.02% [-6.65%, -3.15%] |
+
+The 4D and 5D single-shared-vertex median changes were -0.05% and +0.06%,
+respectively. Their Criterion mean intervals both included zero. Ordinary
+shared-face medians increased by 1.73% to 5.72% in 2D–5D. Coincident LP
+medians changed by -0.35% to +3.52% in 2D–6D. Degenerate SoS medians changed
+by -0.67% to +5.72% in 2D–6D, with the largest increase in 5D in-sphere.
+Standalone 7D/8D intersection medians changed by -0.81% to +2.94%.
+
+These intervals describe sampling within one process per harness and version.
+Process layout, background load and run order can affect the comparison, and
+the experiment did not estimate between-process uncertainty. The results show
+mixed local timing changes and do not establish a stable improvement or
+regression from the dependency update.
+
+The local evidence is under `target/la-stack-0.5.3.1Df8Yv/`. It contains raw
+Criterion samples and confidence intervals for all 35 cases, an independently
+checked `comparison.tsv`, discovery and preflight output, benchmark commands,
+compiler records, binary digests and the measured source diff.
+
+### Correctness checks
+
+On aarch64 macOS, all 87 focused tests passed. They cover exact rational
+solves through order ten, provisional basis selection and exact LP
+certificates, analytic interval enclosures and exhaustive fallback, SoS
+parity and work budgets, and simplex intersections through 8D. Both locked
+downstream checkpoint tests passed, including the isolated consumer that
+preserves checkpoint bits without `serde_json/float_roundtrip`.

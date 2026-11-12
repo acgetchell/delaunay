@@ -31,7 +31,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::geometry::matrix::{BigRational, Signed, rational_from_f64};
+use crate::geometry::matrix::{BigRational, DeterminantSign, Signed};
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{
     Orientation, relative_insphere_determinant_sign, simplex_orientation,
@@ -284,8 +284,8 @@ pub fn sos_insphere_sign<const D: usize>(
     // term. The complete symbolic polynomial is necessary only when that term
     // vanishes.
     let ordinary_sign = relative_insphere_determinant_sign(simplex, test)?;
-    if ordinary_sign != 0 {
-        return Ok(ordinary_sign);
+    if ordinary_sign != DeterminantSign::Zero {
+        return Ok(i32::from(ordinary_sign.as_i8()));
     }
 
     let points = simplex.iter().chain(core::iter::once(test));
@@ -345,7 +345,7 @@ fn constant_polynomial(value: f64) -> Result<SparsePolynomial, CoordinateConvers
 
 /// Converts a stored coordinate without any rounded intermediate.
 fn exact_coordinate(value: f64) -> Result<BigRational, CoordinateConversionError> {
-    rational_from_f64(value).ok_or_else(|| CoordinateConversionError::NonFiniteValue {
+    BigRational::from_float(value).ok_or_else(|| CoordinateConversionError::NonFiniteValue {
         coordinate_index: 0,
         coordinate_value: InvalidCoordinateValue::from_debug(&value),
     })

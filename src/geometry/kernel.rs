@@ -32,6 +32,7 @@
 use core::marker::PhantomData;
 
 use crate::core::simplex::SimplexValidationError;
+use crate::geometry::matrix::DeterminantSign;
 use crate::geometry::point::Point;
 use crate::geometry::predicates::{
     InSphere, Orientation, insphere_lifted, relative_insphere_determinant_sign,
@@ -676,30 +677,32 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
         let insphere_det_sign = signs.insphere_determinant;
 
         // Fast path: both non-degenerate.
-        if rel_orient_sign != 0 && insphere_det_sign != 0 {
+        if rel_orient_sign != DeterminantSign::Zero && insphere_det_sign != DeterminantSign::Zero {
             return Ok(relative_insphere_effective_sign(signs));
         }
 
         // Resolve orientation factor.
-        let orient_factor: i32 = if rel_orient_sign != 0 {
-            -rel_orient_sign
-        } else {
-            // Orientation degenerate → SoS gives absolute orientation sign.
-            // rel_orient = (-1)^D × abs_orient
-            // orient_factor = -rel_orient = (-1)^(D+1) × abs_orient
-            let sos_abs = sos_orientation_sign(simplex_points)?;
-            if D.is_multiple_of(2) {
-                -sos_abs
-            } else {
-                sos_abs
+        let orient_factor: i32 = match rel_orient_sign {
+            DeterminantSign::Negative => 1,
+            DeterminantSign::Positive => -1,
+            DeterminantSign::Zero => {
+                // Orientation degenerate → SoS gives absolute orientation sign.
+                // rel_orient = (-1)^D × abs_orient
+                // orient_factor = -rel_orient = (-1)^(D+1) × abs_orient
+                let sos_abs = sos_orientation_sign(simplex_points)?;
+                if D.is_multiple_of(2) {
+                    -sos_abs
+                } else {
+                    sos_abs
+                }
             }
         };
 
         // Resolve insphere sign.
-        let insphere_effective: i32 = if insphere_det_sign != 0 {
-            insphere_det_sign
-        } else {
-            sos_insphere_sign(simplex_points, test_point)?
+        let insphere_effective: i32 = match insphere_det_sign {
+            DeterminantSign::Negative => -1,
+            DeterminantSign::Positive => 1,
+            DeterminantSign::Zero => sos_insphere_sign(simplex_points, test_point)?,
         };
 
         Ok((insphere_effective * orient_factor).signum())
@@ -720,10 +723,10 @@ impl<const D: usize> Kernel<D> for AdaptiveKernel<f64> {
 
         let determinant_sign = relative_insphere_determinant_sign(simplex_points, test_point)?;
         let orient_factor = if D.is_multiple_of(2) { -1 } else { 1 };
-        let insphere_effective = if determinant_sign != 0 {
-            determinant_sign
-        } else {
-            sos_insphere_sign(simplex_points, test_point)?
+        let insphere_effective = match determinant_sign {
+            DeterminantSign::Negative => -1,
+            DeterminantSign::Positive => 1,
+            DeterminantSign::Zero => sos_insphere_sign(simplex_points, test_point)?,
         };
 
         Ok((insphere_effective * orient_factor).signum())

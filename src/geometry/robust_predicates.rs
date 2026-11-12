@@ -7,14 +7,15 @@
 
 #![forbid(unsafe_code)]
 
-use core::{cmp::Ordering, hint::cold_path};
+use core::hint::cold_path;
 use std::sync::LazyLock;
 
 use super::predicates::{
-    InSphere, Orientation, insphere_distance, relative_insphere_classification,
-    relative_insphere_determinant_sign, relative_insphere_signs, try_orientation_from_matrix,
+    InSphere, Orientation, RelativeInsphereSigns, insphere_distance,
+    relative_insphere_classification, relative_insphere_determinant_sign, relative_insphere_signs,
+    try_orientation_from_matrix,
 };
-use crate::geometry::matrix::{MAX_STACK_MATRIX_DIM, matrix_set};
+use crate::geometry::matrix::{DeterminantSign, MAX_STACK_MATRIX_DIM, matrix_set};
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::CoordinateConversionError;
 
@@ -285,13 +286,15 @@ fn robust_insphere_positive_oriented_with_consistency<const D: usize>(
     }
 
     let determinant_sign = relative_insphere_determinant_sign(simplex_points, test_point)?;
-    let orient_factor = if D.is_multiple_of(2) { -1 } else { 1 };
-    let effective_sign = determinant_sign * orient_factor;
-    let result = match effective_sign.cmp(&0) {
-        Ordering::Greater => InSphere::INSIDE,
-        Ordering::Less => InSphere::OUTSIDE,
-        Ordering::Equal => InSphere::BOUNDARY,
+    let relative_orientation = if D.is_multiple_of(2) {
+        DeterminantSign::Positive
+    } else {
+        DeterminantSign::Negative
     };
+    let result = relative_insphere_classification(RelativeInsphereSigns {
+        relative_orientation,
+        insphere_determinant: determinant_sign,
+    });
 
     if strict_consistency
         && let ConsistencyResult::Inconsistent(error) =
@@ -333,7 +336,7 @@ fn relative_exact_insphere<const D: usize>(
     }
 
     let signs = relative_insphere_signs(simplex_points, test_point)?;
-    if signs.relative_orientation == 0 {
+    if signs.relative_orientation == DeterminantSign::Zero {
         cold_path();
         Ok(InSphere::BOUNDARY)
     } else {

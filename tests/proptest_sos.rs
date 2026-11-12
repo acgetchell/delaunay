@@ -29,7 +29,7 @@
 mod proptest_config;
 
 use delaunay::geometry::sos::{sos_insphere_sign, sos_orientation_sign};
-use delaunay::prelude::geometry::Point;
+use delaunay::prelude::geometry::{CoordinateConversionError, Point};
 use proptest::prelude::*;
 
 // =============================================================================
@@ -345,6 +345,13 @@ repo_proptest! {
             0..2_usize,
         ),
     ) {
-        prop_assert!(sos_orientation_sign(&points).is_err());
+        prop_assert_eq!(
+            sos_orientation_sign(&points),
+            Err(CoordinateConversionError::InvalidSimplexPointCount {
+                actual: points.len(),
+                expected: 3,
+                dimension: 2,
+            })
+        );
     }
 }

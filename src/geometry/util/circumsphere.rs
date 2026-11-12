@@ -11,7 +11,6 @@ use super::conversions::ValueConversionError;
 use crate::geometry::matrix::{
     BigRational, DEFAULT_SINGULAR_TOL, ExactF64Conversion, LaError, LaVector, Matrix, MatrixError,
     RationalMatrix, RationalVector, SingularityReason, StackMatrixDispatchError, matrix_set,
-    rational_from_f64,
 };
 use crate::geometry::point::Point;
 use crate::geometry::traits::coordinate::{
@@ -480,11 +479,11 @@ fn exact_circumcenter_from_points<const D: usize>(
     // Point construction already proves finiteness, and every finite binary64
     // coordinate has an exact rational representation.
     let reference = points[0].coords().map(|coordinate| {
-        rational_from_f64(coordinate).expect("validated Point coordinates are finite")
+        BigRational::from_float(coordinate).expect("validated Point coordinates are finite")
     });
     let others = points.iter().skip(1).map(|point| {
         point.coords().map(|coordinate| {
-            rational_from_f64(coordinate).expect("validated Point coordinates are finite")
+            BigRational::from_float(coordinate).expect("validated Point coordinates are finite")
         })
     });
     Ok(exact_circumcenter_from_coordinates(&reference, others)?
@@ -498,8 +497,8 @@ pub(crate) fn exact_circumcenter_from_coordinates<const D: usize>(
     reference: &[BigRational; D],
     others: impl Iterator<Item = [BigRational; D]>,
 ) -> Result<RationalVector<D>, LaError> {
-    let zero = rational_from_f64(0.0).expect("zero is finite");
-    let half = rational_from_f64(0.5).expect("one half is finite");
+    let zero = BigRational::from_float(0.0_f64).expect("zero is finite");
+    let half = BigRational::from_float(0.5_f64).expect("one half is finite");
     let mut matrix = RationalMatrix::<D>::zero();
     let mut rhs = from_fn(|_| zero.clone());
 
@@ -705,8 +704,8 @@ mod tests {
                         .iter()
                         .zip(center)
                         .map(|(&coordinate, center)| {
-                            let delta = rational_from_f64(coordinate).unwrap()
-                                - rational_from_f64(center).unwrap();
+                            let delta = BigRational::from_float(coordinate).unwrap()
+                                - BigRational::from_float(center).unwrap();
                             &delta * &delta
                         })
                         .sum::<BigRational>()
@@ -1374,7 +1373,14 @@ mod tests {
         ];
 
         let result = circumcenter(&points_2d);
-        assert_matches!(result, Err(CircumcenterError::InvalidSimplex { .. }));
+        assert_eq!(
+            result,
+            Err(CircumcenterError::InvalidSimplex {
+                actual: 2,
+                expected: 3,
+                dimension: 2,
+            })
+        );
 
         // Test too many points
         let points_extra = vec![
@@ -1385,7 +1391,31 @@ mod tests {
         ];
 
         let result = circumcenter(&points_extra);
-        assert_matches!(result, Err(CircumcenterError::InvalidSimplex { .. }));
+        assert_eq!(
+            result,
+            Err(CircumcenterError::InvalidSimplex {
+                actual: 4,
+                expected: 3,
+                dimension: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn test_circumcenter_collinear_3d() {
+        let points = vec![
+            Point::try_new([0.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([1.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([2.0, 0.0, 0.0]).expect("finite point coordinates"),
+            Point::try_new([3.0, 0.0, 0.0]).expect("finite point coordinates"),
+        ];
+
+        assert_eq!(
+            circumcenter(&points),
+            Err(CircumcenterError::LinearAlgebraFailure {
+                source: LaError::singular_exact(1),
+            })
+        );
     }
 
     #[test]
