@@ -1447,10 +1447,7 @@ where
             #[cfg(debug_assertions)]
             if debug_config.log_conflict {
                 let neighbor_keys: SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    simplex
-                        .neighbor_keys()
-                        .map(Iterator::collect)
-                        .unwrap_or_default();
+                    simplex.neighbor_keys().map_or_default(Iterator::collect);
                 tracing::debug!(
                     simplex_key = ?simplex_key,
                     vertex_keys = ?simplex.vertices(),

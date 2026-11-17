@@ -11,6 +11,9 @@ inputs:
   cache-scope:
     description: Consumer stage owning this compilation cache.
     default: shared
+  release-only:
+    description: Install locked release tooling outside the checkout and select only Cargo.
+    default: "false"
 
 runs:
   using: composite
@@ -22,7 +25,7 @@ runs:
         enable-cache: false
 
     - name: Select short Windows installation root
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && inputs.release-only != 'true'
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
@@ -31,7 +34,7 @@ runs:
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     - name: Cache managed Cargo compilation
-      if: inputs.cache == 'true'
+      if: inputs.cache == 'true' && inputs.release-only != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.os == 'Windows' && 'C:/rrt-build' || format('{0}/rrt-cargo-build', runner.temp) }}
@@ -41,10 +44,12 @@ runs:
           }}
 
     - name: Install the locked tooling package
+      if: inputs.release-only != 'true'
       shell: bash
       run: uv sync --locked --managed-python --only-group tooling
 
     - name: Install managed release binaries
+      if: inputs.release-only != 'true'
       shell: bash
       env:
         # Only the release API lookup receives this token; child processes do not.
@@ -52,6 +57,7 @@ runs:
       run: uv run --locked --no-sync --no-python-downloads --no-env-file research-repo-tools toolchain sync-binaries
 
     - name: Install declared tools from the locked package
+      if: inputs.release-only != 'true'
       shell: bash
       env:
         RESEARCH_REPO_TOOLS_CARGO_BUILD_HOME: ${{ runner.os == 'Windows' && 'C:/rrt-build' || format('{0}/rrt-cargo-build', runner.temp) }}
@@ -63,8 +69,22 @@ runs:
         uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain export
         uv run --locked --no-sync --no-python-downloads research-repo-tools --version
 
+    - name: Install locked release tools and export the Cargo selection
+      if: inputs.release-only == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        environment="$RUNNER_TEMP/release-tools"
+        UV_PROJECT_ENVIRONMENT="$environment" uv sync --locked --managed-python --no-default-groups --no-install-project
+        bin="$environment/bin"
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+            bin="$environment/Scripts"
+        fi
+        "$bin/research-repo-tools" toolchain sync --tool cargo
+        PATH="$bin:$PATH" "$bin/research-repo-tools" toolchain export --tool cargo
+
     - name: Cache consumer Rust builds
-      if: inputs.cache == 'true' && inputs.consumer-cache == 'true'
+      if: inputs.cache == 'true' && inputs.consumer-cache == 'true' && inputs.release-only != 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |

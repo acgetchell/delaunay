@@ -30,6 +30,7 @@ reuses the declared citation date even after UTC midnight.
 ## Contents
 
 - [Reusable CI evidence](#reusable-ci-evidence)
+- [Validate shared-tooling adoption](#validate-shared-tooling-adoption)
 - [Prepare the environment](#prepare-the-environment)
 - [Step 1: Prepare the release PR](#step-1-prepare-the-release-pr)
 - [Step 2: Publish after the PR is merged](#step-2-publish-after-the-pr-is-merged)
@@ -39,7 +40,7 @@ reuses the declared citation date even after UTC midnight.
 
 ## Reusable CI evidence
 
-The published, locked `research-repo-tools==0.2.8` owns measurement, candidate,
+The published, locked `research-repo-tools==0.2.9` owns measurement, candidate,
 archive, signature and provider verification. Delaunay's adapters own its
 173-case scientific plan, independent local record selection, maintainer dispatch
 and Cargo reproduction.
@@ -85,6 +86,44 @@ Named selections are immutable review records, not a latest-success selector.
 Original local acquisition identity remains distinct from the final-main
 signature. No editable, sibling or Git dependency override supplies release
 authority.
+
+## Validate shared-tooling adoption
+
+Complete shared-tooling adoption before preparing the consumer release. The
+RRT v0.2.9 command migration is owned by
+[#693](https://github.com/acgetchell/delaunay/issues/693); its published-package,
+native and operational acceptance belongs to
+[#696](https://github.com/acgetchell/delaunay/issues/696). The supplying release
+is tracked by [RRT #236](https://github.com/acgetchell/research-repo-tools/issues/236).
+The migration pin and the native and operational acceptance are tracked
+independently.
+
+Reconcile the manifest, lock, isolated runtime pins, Just recipes and composite
+actions against the published supplying package. A version bump does not rewrite
+existing workflow arguments. For source evidence verification, keep
+`tooling/release-evidence.toml` relative to the source `--root`; retain the
+external handoff copy for the isolated writer. Preserve path containment.
+
+Keep full contributor setup for local development. Release phases must select
+only their required tools, consistently through sync, check, export and run.
+Retain necessary native dependency preparation separately. Verification and
+recovery must not implicitly install unrelated tools, rebuild packages or acquire
+benchmarks. Preserve the explicit post-approval Cargo reproduction boundary.
+
+Execute the consumer's actual shell blocks and transitive recipes against the
+installed published package with inert provider boundaries. Require successful
+policy parsing and original handoff/journal recovery; retain failure sentinels
+for unintended setup, builds and acquisition. YAML presence checks alone do not
+establish that those commands work. Keep live permissions, tag-only writes and
+publication checks within their existing authorization boundaries.
+
+Record native checks and hosted cold/warm setup, operation and complete-job
+durations under #696 with source/package identities, runner, cache state,
+run/attempt, configured timeout and justified budget margin. Distinguish queue
+time and applicable approval waits from execution. Reuse eligible retained
+evidence only when its identity, context and freshness still match; command
+integration tests alone do not require another benchmark acquisition. Pending
+consumer validation does not block RRT publication.
 
 ## Prepare the environment
 
@@ -368,7 +407,7 @@ just release-evidence
 
 Wait for successful portable checks and native `CI` builds on Linux, macOS and Windows, plus Clippy
 and repository-rule SARIF checks, for this exact commit before proceeding.
-These retain the declared Rust 1.99.1 baseline, Delaunay's numerical and
+These retain the declared Rust 1.100.0 baseline, Delaunay's numerical and
 topological regressions, feature coverage, examples and benchmark compilation.
 The publishing policy in `pyproject.toml` binds all six check names to GitHub
 Actions app ID `15368`. CodeRabbit and human review remain protected-PR
@@ -435,9 +474,11 @@ checks. Its bounded verification job passes only inert notes, policy and native
 selection to an isolated writer. The writer has no checkout, project environment,
 registry token or OIDC permission.
 
-The writer creates or captures the stable draft through RRT's receipt protocol.
-Only the original tag-push attempt is eligible for automatic preparation.
-Keep its `draft-receipt.json`, `target.json` and immutable artifact locator.
+The writer creates or captures the stable draft through RRT's authenticated
+handoff. Only the original tag-push attempt is eligible for automatic preparation.
+Retain the original handoff artifact locator and complete `draft-state` artifact.
+The separately retained `draft-receipt.json` and `target.json` serve the attachment
+workflow's receipt lookup.
 A failed or uncertain creation requires inspection of that journal; rerunning
 a workflow does not authorize a second draft. Attachment retrieves the original
 receipt and requires its native selection to match the pre-tag acceptance.
@@ -588,7 +629,9 @@ acquisition and published assets. The full reviewed digest is checked before
 approval and the exact resulting bytes are pinned afterward. Original records
 and published assets remain unchanged.
 
-An uncertain draft creation uses the original receipt's manual recovery protocol.
+For uncertain draft creation, use the original handoff and complete state
+directory with the shared authenticated recovery procedure.
+[RRT draft recovery](https://github.com/acgetchell/research-repo-tools/blob/v0.2.9/docs/PREPARING_DRAFTS.md)
 A published release with missing required assets cannot be repaired by attachment.
 
 If the crates.io upload fails or Cargo times out, inspect the original run and

@@ -6,7 +6,7 @@ artifact-prefix = "draft-receipt"
 
 [[jobs]]
 name = "verify"
-steps = [ "Require protected main and native and SARIF checks", "Verify tagged source and freeze native evidence and notes", "Retain inert verified handoff" ]
+steps = [ "Verify tagged source and freeze native evidence and notes", "Retain inert verified handoff" ]
 runner-labels = [ "ubuntu-latest" ]
 
 [[jobs]]

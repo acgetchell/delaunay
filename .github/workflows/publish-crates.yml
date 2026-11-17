@@ -54,9 +54,10 @@ jobs:
         uses: $/.github/actions/setup-just
         with:
           cache: "false"
+          release-only: "true"
 
       - name: Prepare dependency provenance before inspection
-        run: just release-dependency-builds
+        run: just release-fetch-dependencies
 
       - name: Verify the independently reviewed acceptance
         env:
@@ -64,10 +65,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           CANDIDATE_TRANSFER: ${{ inputs.candidate }}
           CANDIDATE_ACCEPTANCE: ${{ inputs.acceptance }}
-        run: |
-          set -euo pipefail
-          just release-receive "$RUNNER_TEMP/accepted-candidate" --published
-          just --set rrt 'uv run --locked --no-sync research-repo-tools' _release-notes-check "$RELEASE_TAG"
+        run: just release-receive "$RUNNER_TEMP/accepted-candidate" --published
 
       - name: Freeze the full acceptance before approval
         id: approval
@@ -95,30 +93,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install declared uv without caches
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Set up declared tools without caches
+        uses: $/.github/actions/setup-just
         with:
-          version-file: pyproject.toml
-          enable-cache: false
-
-      - name: Install locked publication tooling
-        run: |
-          uv sync --locked --managed-python --only-group tooling --no-install-project
-          printf '%s/.venv/bin\n' "$GITHUB_WORKSPACE" >> "$GITHUB_PATH"
-
-      - name: Install the declared minimal Rust toolchain
-        run: |
-          set -euo pipefail
-          toolchain="$(uv run --locked --no-sync python -c \
-            'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust-toolchain.toml").read_text())["toolchain"]["channel"])')"
-          rustup toolchain install "$toolchain" --profile minimal --no-self-update
-          printf 'RUSTUP_TOOLCHAIN=%s\n' "$toolchain" >> "$GITHUB_ENV"
+          cache: "false"
+          release-only: "true"
 
       - name: Prepare native dependency provenance
-        run: |
-          cargo fetch --locked
-          cargo fetch --locked --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
-          uv run --locked --no-sync research-repo-tools release dependency-builds
+        run: just release-fetch-dependencies
 
       - name: Require this exact approval receipt
         env:
@@ -151,13 +133,12 @@ jobs:
         run: |
           set -euo pipefail
           just release-receive "$RUNNER_TEMP/accepted-candidate" --published --expected "$RUNNER_TEMP/approved-acceptance/acceptance.json"
-          just --set rrt 'uv run --locked --no-sync research-repo-tools' _release-notes-check "$RELEASE_TAG"
-          uv run --locked --no-sync research-repo-tools release registry "$RELEASE_TAG" --expect absent
+          research-repo-tools release registry "$RELEASE_TAG" --expect absent
 
       - name: Reproduce the accepted Cargo bytes without credentials
         env:
           GH_TOKEN: ${{ github.token }}
-        run: just release-artifact verify --candidate "$RUNNER_TEMP/accepted-candidate"
+        run: just --set release_python 'python -I' release-artifact verify --candidate "$RUNNER_TEMP/accepted-candidate"
 
       - name: Obtain a short-lived crates.io token
         id: auth
@@ -175,4 +156,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
-        run: just --set rrt 'uv run --locked --no-sync research-repo-tools' release-verify "$RELEASE_TAG"
+        run: just --set release_tool research-repo-tools release-verify "$RELEASE_TAG"

@@ -205,7 +205,7 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool declarations live in their authoritative consumer files: exact uv and Cargo
 tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
-in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.8` from PyPI
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.9` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
@@ -271,7 +271,7 @@ guide covers attested promotion of a temporary exact Git pin back to PyPI.
 `deps update-tools` is the separate
 legacy interface for user-installed tools; this repository uses managed TOML pins.
 
-[rrt-dependency-updates]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.8/docs/UPDATING_DEPENDENCIES.md
+[rrt-dependency-updates]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.9/docs/UPDATING_DEPENDENCIES.md
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,

@@ -178,19 +178,20 @@ jobs:
         uses: $/.github/actions/setup-just
         with:
           cache: "false"
+          release-only: "true"
 
       - name: Prepare native dependency provenance
-        run: just release-dependency-builds
+        run: just release-fetch-dependencies
 
       - name: Verify clean default and all-feature Cargo packages
-        run: just release-package
+        run: just --set release_tool research-repo-tools release-package
 
       - name: Retain verified Cargo package
         id: package
         env:
           GH_TOKEN: ${{ github.token }}
           PROMOTION_DIRECTORY: ${{ runner.temp }}/cargo-promotion
-        run: just release-artifact create "$PROMOTION_DIRECTORY"
+        run: just --set release_python 'python -I' release-artifact create "$PROMOTION_DIRECTORY"
 
       - name: Upload verified Cargo package
         id: handoff
@@ -218,7 +219,7 @@ jobs:
       - name: Install trusted package runner
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.7"
+          version: "0.13.8"
           enable-cache: false
           cache-python: false
 
@@ -230,7 +231,7 @@ jobs:
           PACKAGE_NAME: ${{ needs.package.outputs.package }}
           VALIDATED_ATTEMPT: ${{ needs.package.outputs.validated-attempt }}
         working-directory: ${{ runner.temp }}
-        shell: uvx --no-config --isolated --python 3.15 --from research-repo-tools==0.2.8 python -I "{0}"
+        shell: uvx --no-config --isolated --python 3.15 --from research-repo-tools==0.2.9 python -I "{0}"
         run: |
           import os, re
           from pathlib import Path

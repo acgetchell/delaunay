@@ -1126,13 +1126,6 @@ fn print_construction_phase_telemetry(telemetry: &ConstructionTelemetry) {
     );
 }
 
-#[cfg_attr(
-    not(feature = "diagnostics"),
-    expect(
-        clippy::missing_const_for_fn,
-        reason = "the diagnostics build of this helper emits detailed output"
-    )
-)]
 fn print_construction_telemetry(telemetry: &ConstructionTelemetry) {
     #[cfg(not(feature = "diagnostics"))]
     let _ = telemetry.has_data();

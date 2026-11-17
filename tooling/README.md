@@ -1,6 +1,6 @@
 # Tooling configuration
 
-Declare reusable workflows here using the published `research-repo-tools==0.2.8`
+Declare reusable workflows here using the published `research-repo-tools==0.2.9`
 contracts. `python/` holds the retained Delaunay-specific scientific modules and
 measurement and publication policy; consumer policy checks live in `tests/tooling/`.
 Shared infrastructure is called directly through the package's CLI or public
@@ -26,10 +26,8 @@ The retained Python ownership is explicit:
 | `notebook_utils`, `notebook_validation` | Delaunay CLI inputs, environment bounds and mesh/validation witness models |
 | `notebook_validation_rendering`, `notebook_visualization` | Scientific figure construction and geometry checks |
 | `profiling_metadata` | Dynamic CI mode/filter labels over shared capture and publication |
-| `release_benchmarks` | Trusted workflow handoff, tagged checkout and refusal to replace an existing release baseline |
 | `release_candidate` | Independent local acquisition records, frozen acceptance, original draft/asset handoffs and candidate history |
 | `cargo_release` | Cargo dry-run locations, credential-free reproduction and published-event boundary over shared evidence verification |
-| `prepare_release` | Tag-push draft orchestration after Cargo evidence, metadata and required checks |
 
 Generic setup, subprocesses, file discovery, Criterion parsing/pairing, host
 probes, notebook infrastructure, paper/PDF maintenance, SARIF and publication
@@ -76,6 +74,5 @@ stable draft title to equal its tag. The installed verifier owns archive bounds,
 identity, immutable retrieval and frozen revalidation. `draft-receipt.toml`
 binds retrieval to the original tag-push preparation journal.
 The canonical candidate workflow uses identical-byte attachment retries and
-preserves original measured provenance. The older `release_benchmarks` and
-`prepare_release` adapters remain legacy interfaces; the current workflows
-use `release_candidate` and isolated shared draft APIs.
+preserves original measured provenance. Release workflows use
+`release_candidate` and the isolated shared draft APIs.

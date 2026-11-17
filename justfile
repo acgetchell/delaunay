@@ -13,6 +13,10 @@ perf_delaunay_binary := "target/perf/delaunay" + binary_extension
 rrt := "uv run --locked --group dev research-repo-tools"
 # Cargo execution must not resynchronize Python while the local CI lanes overlap.
 managed := "uv run --locked --no-sync --group dev research-repo-tools toolchain run --"
+# Hosted release jobs override these with their external, locked runtime.
+release_tool := "uv run --locked --no-sync research-repo-tools"
+release_python := "uv run --locked --no-sync python -I"
+release_cargo := release_tool + " toolchain run --tool cargo --"
 
 # Semgrep misreads Python 3.15's positive RLIM_INFINITY on Linux. Keep its
 # inherited stack finite until https://github.com/semgrep/semgrep/issues/11979 is fixed.
@@ -49,7 +53,7 @@ _default:
 # Run the local policy adapter with an external, published verification runtime.
 [positional-arguments]
 [private]
-[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", "--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.2.8", "python", "-I")]
+[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", "--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.2.9", "python", "-I")]
 _release-candidate +args:
     import runpy
     import sys
@@ -764,12 +768,12 @@ python-typecheck: _ensure-uv
 [group('release')]
 [positional-arguments]
 release-artifact +args:
-    uv run --locked --no-sync python tooling/python/cargo_release.py "$@"
+    {{ release_python }} tooling/python/cargo_release.py "$@"
 
 # Capture or verify a draft target through an isolated published runtime.
 [group('release')]
 [positional-arguments]
-[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", "--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.2.8", "python", "-I")]
+[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", "--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.2.9", "python", "-I")]
 release-assets operation tag *args:
     import sys
     from pathlib import Path
@@ -790,15 +794,14 @@ release-benchmarks tag *args: _ensure-gh
 # Authenticate declared registry graphs and this machine's installed dependency bytes.
 [group('release')]
 release-dependencies:
-    {{ managed }} research-repo-tools release dependencies
+    {{ release_cargo }} {{ release_tool }} release dependencies
 
-# Prepare native source receipts and registry inputs before release provenance checks.
+# Prepare local source receipts before release provenance checks.
 [group('release')]
 release-dependency-builds:
     uv sync --locked --group dev
-    {{ managed }} cargo fetch --locked
-    {{ managed }} cargo fetch --locked --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
-    {{ managed }} research-repo-tools release dependency-builds
+    {{ release_cargo }} just release-fetch-dependencies
+    {{ release_cargo }} {{ release_tool }} release dependency-builds
 
 # Freeze or revalidate original benchmark acquisition plus exact final-main Cargo evidence.
 [group('release')]
@@ -806,15 +809,16 @@ release-dependency-builds:
 release-evidence *args:
     just _release-candidate verify "$@"
 
+# Fetch locked registry sources for the two Cargo provenance checks.
+[group('release')]
+release-fetch-dependencies:
+    cargo fetch --locked
+    cargo fetch --locked --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
+
 # Require the immutable release event and successful checks on its exact commit.
 [group('release')]
-release-gate tag: (_release-notes-check tag)
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tag={{ quote(tag) }}
-    {{ rrt }} release gate "$tag"
-    release_id="$(jq -er '.release.id' "$GITHUB_EVENT_PATH")"
-    gh api "repos/acgetchell/delaunay/releases/$release_id" | jq -e '.immutable == true' > /dev/null
+release-gate tag:
+    {{ release_cargo }} {{ release_tool }} release gate {{ quote(tag) }}
 
 # Print retained release notes for a tag.
 [group('release')]
@@ -823,15 +827,15 @@ release-notes tag:
 
 # Verify clean default and all-feature packages without uploading.
 [group('release')]
-release-package: _ensure-toolchain
-    {{ managed }} research-repo-tools validation cargo-metadata --package delaunay
-    {{ managed }} cargo publish --locked --package delaunay --registry crates-io --dry-run
-    {{ managed }} cargo publish --locked --package delaunay --registry crates-io --dry-run --all-features
+release-package:
+    {{ release_tool }} validation cargo-metadata --package delaunay
+    {{ release_cargo }} cargo publish --locked --package delaunay --registry crates-io --dry-run
+    {{ release_cargo }} cargo publish --locked --package delaunay --registry crates-io --dry-run --all-features
 
 # Publish a reviewed, benchmark-equipped draft using the maintainer's GitHub session.
 [group('release')]
 [positional-arguments]
-release-publish tag *args: (_release-notes-check tag)
+release-publish tag *args:
     just _release-candidate publish "$@"
 
 # Authenticate original inert workflow records without acquisition or builds.
@@ -849,7 +853,7 @@ release-upload tag *args: _ensure-gh
 # Verify the stable GitHub release, benchmark asset, and exact crates.io version.
 [group('release')]
 release-verify tag:
-    {{ rrt }} release verify {{ quote(tag) }} --attempts 7 --interval 10
+    {{ release_cargo }} {{ release_tool }} release verify {{ quote(tag) }} --attempts 7 --interval 10
 
 # Require matching final changelog and citation dates.
 [group('release')]

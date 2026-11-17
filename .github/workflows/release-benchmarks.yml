@@ -38,7 +38,7 @@ jobs:
       - name: Install trusted package runner
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.7"
+          version: "0.13.8"
           enable-cache: false
           cache-python: false
 
@@ -49,8 +49,8 @@ jobs:
           CANDIDATE_TRANSFER: ${{ inputs.candidate }}
         run: |
           set -euo pipefail
-          uvx --python 3.15 \
-            --from 'research-repo-tools==0.2.8' \
+          uvx --no-config --isolated --python 3.15 \
+            --from 'research-repo-tools==0.2.9' \
             python -I - <<'PY'
           import hashlib, json, os
           from pathlib import Path
@@ -119,9 +119,10 @@ jobs:
         uses: $/.github/actions/setup-just
         with:
           cache: "false"
+          release-only: "true"
 
       - name: Prepare dependency provenance before inspection
-        run: just release-dependency-builds
+        run: just release-fetch-dependencies
 
       - name: Require this retrieval attempt
         env:
@@ -173,7 +174,7 @@ jobs:
       - name: Install trusted package runner
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.7"
+          version: "0.13.8"
           enable-cache: false
           cache-python: false
 
@@ -206,8 +207,8 @@ jobs:
           CANDIDATE_TRANSFER: ${{ inputs.candidate }}
         run: |
           set -euo pipefail
-          uvx --python 3.15 \
-            --from 'research-repo-tools==0.2.8' \
+          uvx --no-config --isolated --python 3.15 \
+            --from 'research-repo-tools==0.2.9' \
             python -I - <<'PY'
           import hashlib, json, os
           from pathlib import Path

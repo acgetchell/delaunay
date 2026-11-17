@@ -15,7 +15,7 @@ uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
 The installed package and tooling/notebook groups pin
-`research-repo-tools==0.2.8`. Shared CLI commands and documented Python APIs own
+`research-repo-tools==0.2.9`. Shared CLI commands and documented Python APIs own
 setup, maintenance, source inventory, subprocesses, archive extraction, worktree
 lifecycle, Criterion parsing, file transactions and notebook infrastructure.
 Retained adapters own Delaunay science and policy. The
@@ -71,9 +71,7 @@ reviewed acceptance digest. After environment approval, the same acceptance
 must pass again, followed by byte-identical Cargo reproduction before token
 acquisition. See [release gates and recovery](../../docs/RELEASING.md).
 
-The legacy `prepare_release.py` and `release_benchmarks.py` interfaces are no
-longer the canonical workflow entry points. `release-assets` remains the public
-isolated shared CLI. The citation-date adapter is deleted:
+`release-assets` exposes the isolated shared CLI.
 `changelog-release` and tagged previews use `changelog.date-source = "citation"`.
 
 Changelog generation normalizes history and retains Unreleased and the latest
@@ -149,17 +147,14 @@ live in consumer TOML, with immutable history under `docs/performance-runs/`.
 Existing reports, timing payloads and archives remain unchanged.
 
 The scientific single-checkout adapter still owns construction counters,
-summary interpretation, named Criterion baselines and tagged archive metadata.
+summary interpretation and named Criterion baselines.
 The published complete acquisition command requires a pair; running it for
 `bench-latest` would repeat measurements. The historical asset adapter retains
 Delaunay's nested count/coverage and hosted-session checks. It now reads into
 private scratch without creating Git worktrees, and cannot promote old evidence
-as a complete run. The old paired execution, promotion and README Python paths
-are retired. See the [ownership record](../../docs/dev/tooling_adoption.md#declarative-independent-performance-adoption).
-
-`release_benchmarks.py` retains the workflow's captured release ID and tag commit,
-checks the exact benchmarked checkout and refuses to overwrite existing baseline
-assets. Upload and explicit publication use the shared `ReleaseTarget` API.
+as a complete run. New releases use the shared candidate archive in place of
+`benchmark-utils create-release-benchmark-metadata`, which produced the legacy
+metadata format. See the [ownership record](../../docs/dev/tooling_adoption.md#declarative-independent-performance-adoption).
 
 The six declarations ship in the Python wheel/sdist and install under
 `share/delaunay/tooling/`. They remain consumer-owned resources; commands run

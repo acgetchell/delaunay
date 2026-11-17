@@ -2,10 +2,9 @@
 name = "delaunay"
 version = "0.8.4"
 edition = "2024"
-rust-version = "1.99.1"
+rust-version = "1.100.0"
 autobins = false
 authors = [ "Adam Getchell <adam@adamgetchell.org>" ]
-homepage = "https://github.com/acgetchell/delaunay"
 documentation = "https://docs.rs/delaunay"
 repository = "https://github.com/acgetchell/delaunay"
 description = "D-dimensional Delaunay triangulations and convex hulls in Rust, with exact predicates, deterministic degeneracy handling, explicit topology validation, and bistellar flips for finite point sets."
@@ -56,14 +55,14 @@ rustdoc-args = [ "--cfg", "docsrs" ]
 [dependencies]
 allocation-counter = { version = "0.8.1", optional = true } # for memory profiling
 ciborium = { version = "0.2.2", default-features = false }
-clap = { version = "4.6.7", features = [ "derive" ], optional = true }
+clap = { version = "4.6.8", features = [ "derive" ], optional = true }
 la-stack = { version = "0.5.3", default-features = false, features = [ "exact" ] }
 tracing = { version = "0.1.44", default-features = false, features = [ "std" ] }
 rustc-hash = "2.1.3" # Fast non-cryptographic hashing for performance
 smallvec = { version = "1.16.5", features = [ "serde" ] } # Stack allocation for small collections
 num-traits = "0.2.19"
 ordered-float = "5.5.1"
-rand = "0.10.3"
+rand = "0.10.4"
 serde = { version = "1.0.229", features = [ "derive" ] }
 serde_json = { version = "1.0.154", optional = true }
 sha2 = { version = "0.11.1", default-features = false }

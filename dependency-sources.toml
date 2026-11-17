@@ -20,7 +20,7 @@ cargo-owner = "rust"
 [sources.tooling]
 project = "python"
 package = "research-repo-tools"
-version = "0.2.8"
+version = "0.2.9"
 
 # Native payload pins follow the shared actionlint policy.
 [source-builds]

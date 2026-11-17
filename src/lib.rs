@@ -553,9 +553,8 @@ mod core {
             let mut simplex_neighbors: Vec<Vec<Option<Uuid>>> = tds
                 .simplices()
                 .map(|(_, simplex)| {
-                    let mut neighbors: Vec<Option<Uuid>> = simplex
-                        .neighbors()
-                        .map(|neighbor_keys| {
+                    let mut neighbors: Vec<Option<Uuid>> =
+                        simplex.neighbors().map_or_default(|neighbor_keys| {
                             neighbor_keys
                                 .map(|neighbor| {
                                     neighbor.and_then(|neighbor_key| {
@@ -563,8 +562,7 @@ mod core {
                                     })
                                 })
                                 .collect()
-                        })
-                        .unwrap_or_default();
+                        });
                     neighbors.sort();
                     neighbors
                 })

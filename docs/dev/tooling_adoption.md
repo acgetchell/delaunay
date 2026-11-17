@@ -1,7 +1,7 @@
 # Shared tooling adoption
 
 The repository now pins the published
-[research-repo-tools v0.2.8](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.8)
+[research-repo-tools v0.2.9](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.9)
 PyPI distribution in runtime dependencies, the tooling/dev groups, and the
 notebook extra/group. `uv.lock` records exact registry artifacts and hashes.
 Python follows the shared package's 3.15 floor. Ruff, ty and pytest inherit exact
@@ -12,12 +12,14 @@ the lock and consumer checks.
 The locked Semgrep runs in the same Python 3.15 environment. The uv overrides
 select patched MCP 1.30.0 and, on Windows, pywin32 312 with Python 3.15 wheels;
 Semgrep's own pins still select MCP 1.29.0 and pywin32 311. Its OpenTelemetry
-1.37 pins also require a compatible API/SDK/exporter 1.45.1 and instrumentation
-0.66b1 override set to address [GHSA-xcq7-p3pf-p88h][otel-advisory]. Retire these
+1.37 pins also require a compatible API/SDK/exporter 1.45.2 and instrumentation
+0.66b2 override set to address [GHSA-xcq7-p3pf-p88h][otel-advisory] and
+[GHSA-mf5v-w3w3-f6cg][otel-api-advisory]. Retire these
 overrides when Semgrep's constraints permit the patched dependencies directly.
 Native Linux and Windows execution must be verified by their CI jobs.
 
 [otel-advisory]: https://github.com/advisories/GHSA-xcq7-p3pf-p88h
+[otel-api-advisory]: https://github.com/advisories/GHSA-mf5v-w3w3-f6cg
 
 The Rust dependency is now the published la-stack 0.5.2, retaining disabled
 default features and the `exact` feature. This dependency refresh makes the
@@ -82,6 +84,23 @@ registry inputs with the declared minimal Rust toolchain and authenticate native
 source builds before release checks. Release-provider tests supply inert
 dependency identities; the separate provenance command exercises the actual
 locked registry graphs and installed bytes.
+
+## v0.2.9 release command adoption
+
+The published package plans the tag-source handoff from a checkout-relative
+policy and authenticates it in the isolated writer. The workflow preserves the
+original receipt artifact for attachment and the full writer state for recovery.
+Release verification jobs use an external locked runtime and the selected Cargo
+toolchain. They fetch the two locked Rust graphs before inspection. The local
+dependency receipt command remains available for contributor environments.
+
+The shared candidate handoff retains the original acquisition before report
+promotion, and shared batch staging journals the original asset IDs.
+Delaunay keeps its independent owner selection, full acceptance and historical
+asset checks, and its post-approval byte reproduction. The retired
+`prepare_release.py` and `release_benchmarks.py` scripts had no active callers.
+The single-checkout writer for legacy release metadata is also retired.
+Historical archive parsing and single-checkout scientific measurements remain.
 
 ## v0.2.8 candidate reuse adoption (#690)
 
@@ -774,8 +793,8 @@ These follow-up results are native aarch64 macOS evidence.
 ## Dependabot automation
 
 The Dependabot caller pins the reviewed reusable workflow revision
-`b082da0b0fbd99436a418a3cc232434020558658` from
-`acgetchell/research-repo-tools` v0.2.8. This workflow pin is independent of the PyPI
+`aa9e59fac03b11516be45cf32fcb22912061bead` from
+`acgetchell/research-repo-tools` v0.2.9. This workflow pin is independent of the PyPI
 package pin. Its reviewed `pull_request_target` job runs from trusted base
 definitions without checking out or executing PR code and receives no repository
 secrets. The local policy lists exact Cargo, uv, workflow, and composite-action

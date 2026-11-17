@@ -13,29 +13,26 @@ import os
 import re
 import subprocess
 import tempfile
-from dataclasses import dataclass, replace
+from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from research_repo_tools.candidate_publication import plan_candidate_publication
+from research_repo_tools.candidate_handoff import capture_candidate_handoff
 from research_repo_tools.candidate_reuse import (
-    CandidatePolicy,
     acquisition_assertion_digest,
     parse_candidate_policy,
     plan_candidate_archive,
-    serialize_candidate_policy,
     verify_candidate_archive,
     verify_candidate_release,
 )
 from research_repo_tools.cli import main as shared_main
-from research_repo_tools.common_measurement import validate_run_policy
-from research_repo_tools.complete_runs import run_identity
 from research_repo_tools.config import load as load_config
 from research_repo_tools.dependency_provenance import check_release_dependencies
-from research_repo_tools.evidence import Evidence, deterministic_json, parse_evidence
+from research_repo_tools.evidence import Evidence, deterministic_json
 from research_repo_tools.files import replace_many
-from research_repo_tools.measurement import load_measurement, resolve_revision
+from research_repo_tools.measurement import resolve_revision
 from research_repo_tools.performance_progress import ProgressReporter
 from research_repo_tools.performance_release import load_performance_release, load_preparation, measure_release, serialize_preparation
 from research_repo_tools.process import run_command
@@ -55,9 +52,11 @@ from research_repo_tools.release_assets import (
 from research_repo_tools.release_interfaces import load_evidence_policy
 from research_repo_tools.release_metadata import read_package_info
 from research_repo_tools.release_publishing import ReviewedRelease, check_reviewed_release
+from research_repo_tools.release_staging import stage_release_assets
 from research_repo_tools.release_validation import api, parse_release_json
-from research_repo_tools.scheduled_runs import ScheduledRun
-from research_repo_tools.suite_runs import parse_suite_run
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 SETTINGS = "tooling/performance-release.toml"
 REPOSITORY = "acgetchell/delaunay"
@@ -91,9 +90,32 @@ def owner_directory(root: Path, checkpoint: str, selected: Path | None = None) -
     return directory
 
 
+@contextmanager
+def owner_update(directory: Path) -> Iterator[None]:
+    """Serialize owner updates, including shared transactions."""
+    # Shared replacement is failure-atomic but does not serialize writers.
+    # Atomic directory creation works on every supported host and fails closed
+    # after an unclean termination; never infer that an existing lock is stale.
+    lock = directory / ".candidate-owner.lock"
+    try:
+        lock.mkdir(mode=0o700)
+    except FileExistsError as error:
+        raise ValueError(f"owner record update is active or interrupted: {lock}; inspect the original operation before removing its lock") from error
+    try:
+        yield
+    finally:
+        lock.rmdir()
+
+
 def freeze(directory: Path, files: dict[str, bytes]) -> None:
-    """Serialize owner-record updates; retries cannot replace earlier bytes."""
+    """Retain immutable owner records; retries cannot replace earlier bytes."""
     directory = directory.resolve(strict=True)
+    with owner_update(directory):
+        _freeze_owner_files(directory, files)
+
+
+def _freeze_owner_files(directory: Path, files: dict[str, bytes]) -> None:
+    """Retain records while holding the owner lock."""
     updates = {directory / name: data for name, data in files.items()}
     if any(not path.resolve().is_relative_to(directory) for path in updates):
         message = "owner files must remain within their record directory"
@@ -104,19 +126,8 @@ def freeze(directory: Path, files: dict[str, bytes]) -> None:
             if path.exists() and path.read_bytes() != data:
                 raise ValueError(f"immutable output differs: {path.name}")
 
-    # Shared replacement is failure-atomic but does not serialize writers.
-    # Atomic directory creation works on every supported host and fails closed
-    # after an unclean termination; never infer that an existing lock is stale.
-    lock = directory / ".candidate-owner.lock"
-    try:
-        lock.mkdir(mode=0o700)
-    except FileExistsError as error:
-        raise ValueError(f"owner record update is active or interrupted: {lock}; inspect the original operation before removing its lock") from error
-    try:
-        unchanged()
-        replace_many(updates, verify=unchanged)
-    finally:
-        lock.rmdir()
+    unchanged()
+    replace_many(updates, verify=unchanged)
 
 
 def remember_owner(root: Path, owner: Path) -> None:
@@ -195,32 +206,8 @@ def capture(root: Path, owner: Path, *, retained_scratch: bool = False) -> dict[
     payload, manifest = (owner / "run.json").read_bytes(), (owner / "evidence.json").read_bytes()
     # Restore only identical/missing scratch evidence for a failed capture retry.
     freeze(root, {settings.payload: payload, settings.manifest: manifest})
-    evidence = parse_evidence(payload, manifest)
-    run = validate_run_policy(evidence, load_measurement(root, settings.measurement), release=True)
-    if not isinstance(run, ScheduledRun):
-        message = "candidate acquisition requires the declared trial schedule"
-        raise TypeError(message)
-    policy = CandidatePolicy(
-        settings.repository,
-        preparation.pair.current,
-        None,
-        "local",
-        run_identity(evidence),
-        run.plan,
-        dict(evidence.sources)["current"],
-        tuple(
-            (index, suite, phase, source) for index, trial in enumerate(run.trials, 1) for suite, phase, _sample, source in parse_suite_run(trial).observations
-        ),
-        report=settings.report,
-    )
-    acquisition = acquisition_assertion_digest(policy)
-    freeze(owner, {"policy.json": serialize_candidate_policy(policy), "acquisition.sha256": (acquisition + "\n").encode("ascii")})
-    receipt_path = owner / "publication.json"
-    if not receipt_path.exists():
-        _plan, receipt = plan_candidate_publication(root, settings.payload, settings.manifest, policy, acquisition_sha256=acquisition)
-        freeze(owner, {"publication.json": receipt})
-    publication = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
-    freeze(owner, {"publication.sha256": (publication + "\n").encode("ascii")})
+    with owner_update(owner):
+        _plan, acquisition, publication = capture_candidate_handoff(root, settings, owner)
     return {"owner_directory": str(owner), "acquisition_sha256": acquisition, "publication_sha256": publication}
 
 
@@ -281,15 +268,15 @@ def final_directory(owner: Path, commit: str, selection: str) -> Path:
 
 def verify(root: Path, owner: Path, selection: str = "reviewed") -> Path:
     """Bind the separately trusted record to clean HEAD and signed native CI."""
-    check_release_dependencies(root)
     commit = resolve_revision(root, "HEAD")
-    policy = replace(parse_candidate_policy((owner / "policy.json").read_bytes()), commit=commit)
     final = final_directory(owner, commit, selection)
     final.mkdir(parents=True, exist_ok=True)
-    freeze(final, {"policy.json": serialize_candidate_policy(policy)})
     accepted = final / "acceptance.json"
     with tempfile.TemporaryDirectory(prefix="delaunay-candidate-verification-") as temporary:
-        output = Path(temporary).resolve() / "acceptance.json"
+        scratch = Path(temporary).resolve()
+        output = scratch / "acceptance.json"
+        policy = scratch / "policy.json"
+        native = scratch / "native.json"
         arguments = [
             "--root",
             str(root),
@@ -300,7 +287,13 @@ def verify(root: Path, owner: Path, selection: str = "reviewed") -> Path:
             "--checkout",
             str(root),
             "--policy",
-            str(final / "policy.json"),
+            str(owner / "policy.json"),
+            "--commit",
+            commit,
+            "--policy-output",
+            str(policy),
+            "--native-output",
+            str(native),
             "--payload",
             str(owner / "run.json"),
             "--manifest",
@@ -321,8 +314,7 @@ def verify(root: Path, owner: Path, selection: str = "reviewed") -> Path:
         status = shared_main(arguments)
         if status:
             raise RuntimeError(f"candidate verification failed with exit {status}")
-        freeze(final, {"acceptance.json": output.read_bytes()})
-        freeze(final, {"native.json": deterministic_json(parse_release_json(accepted.read_bytes())["native"])})
+        freeze(final, {path.name: path.read_bytes() for path in (policy, output, native)})
     return accepted
 
 
@@ -559,52 +551,67 @@ def stage(root: Path, owner: Path, selection: str) -> Path:
     freeze(final, {"target.json": serialize_release_target(target)})
     target = parse_release_target(target_path.read_bytes())
     revalidate_release_target(root, target, checkout=root)
+    transfer_path = final / "transfer.json"
+    previous = require_draft_transfer(parse_transfer(transfer_path.read_bytes())) if transfer_path.exists() else None
+    if previous is not None and (previous.target, previous.acquisition, previous.publication) != (target, acquisition, publication):
+        message = "original dispatch assertions changed"
+        raise ValueError(message)
     artifact = archive(owner, commit, selection)
     inputs = {"policy": final / "policy.json", "publication": owner / "publication.json", "acceptance": accepted, "archive": artifact}
     transport = final / "transport"
     transport.mkdir(exist_ok=True)
-    assertions: dict[str, dict[str, str | int]] = {}
+    paths: dict[str, Path] = {}
     for role, source in inputs.items():
         suffix = "tar.gz" if role == "archive" else "json"
         name = f"delaunay-{policy.tag}-{selection}-candidate-{role}.{suffix}"
         payload = source.read_bytes()
         freeze(transport, {name: payload})
-        publish_release_asset(root, REPOSITORY, policy.tag, transport / name, target=target, checkout=root)
+        paths[role] = transport / name
+    if previous is not None:
         release = revalidate_release_target(root, target, checkout=root)
-        entry = next((item for item in release.assets if item[0] == name), None)
-        if entry is None:
-            message = f"staged candidate asset is missing from the prepared release: {name}"
-            raise ValueError(message)
-        assertions[role] = {"name": name, "id": entry[1], "sha256": hashlib.sha256(payload).hexdigest()}
-    payload = (
-        json.dumps(
-            {
-                "schema": 1,
-                "target": json.loads(serialize_release_target(target)),
-                "acquisition": acquisition,
-                "publication": publication,
-                "assets": assertions,
-            },
-            sort_keys=True,
-        ).encode("utf-8")
-        + b"\n"
-    )
-    require_draft_transfer(parse_transfer(payload))
-    freeze(final, {"transfer.json": payload})
-    return final / "transfer.json"
+        states = dict(release.asset_states)
+        for role, asset in previous.assets.role_assertions():
+            source = paths[role]
+            payload = source.read_bytes()
+            if (source.name, hashlib.sha256(payload).hexdigest()) != (asset.name, asset.sha256):
+                message = "retained transport differs from the original dispatch"
+                raise ValueError(message)
+            if (asset.name, asset.identifier, len(payload), asset.sha256) not in release.assets or states.get(asset.identifier) != "uploaded":
+                message = "staged candidate asset metadata differs from the original dispatch"
+                raise ValueError(message)
+        return transfer_path
+    with owner_update(final):
+        batch = parse_release_json(
+            stage_release_assets(
+                root,
+                target,
+                tuple(paths.values()),
+                journal=final / "staging.json",
+                destination=final / "staged-assets.json",
+                approve=True,
+                checkout=root,
+            )
+        )
+    staged = batch["assets"]
+    assertions = {role: AssetAssertion(path.name, staged[path.name]["id"], staged[path.name]["sha256"]) for role, path in paths.items()}
+    assets = OriginalAssets(assertions["policy"], assertions["publication"], assertions["acceptance"], assertions["archive"])
+    freeze(final, {"transfer.json": serialize_transfer(DraftTransfer(target, acquisition, publication, assets))})
+    return transfer_path
 
 
-def seal(root: Path, owner: Path, selection: str) -> Path:
+def seal(root: Path, owner: Path, selection: str, *, target: ReleaseTarget, acceptance_sha256: str) -> Path:
     """Independently select the canonical attached asset before publication."""
-    final = final_directory(owner, resolve_revision(root, "HEAD"), selection)
+    final = final_directory(owner, resolve_revision(root, "HEAD"), selection).resolve(strict=True)
     transfer = require_draft_transfer(parse_transfer((final / "transfer.json").read_bytes()))
-    release = revalidate_release_target(root, transfer.target, checkout=root)
-    for _role, asset in transfer.assets.role_assertions():
-        entries = [entry for entry in release.assets if entry[0] == asset.name]
-        if len(entries) != 1 or entries[0][1] != asset.identifier or (entries[0][3] is not None and entries[0][3] != asset.sha256):
-            message = "original staged candidate asset identity changed"
-            raise ValueError(message)
-    name = archive_name(transfer.target.tag)
+    if transfer.target != target:
+        message = "publication transfer differs from the authenticated draft receipt"
+        raise ValueError(message)
+    if transfer.assets.acceptance.sha256 != acceptance_sha256:
+        message = "publication transfer differs from the reviewed acceptance"
+        raise ValueError(message)
+    release = revalidate_release_target(root, target, checkout=root)
+    check_transfer_assets(release, transfer)
+    name = archive_name(target.tag)
     entry = next((item for item in release.assets if item[0] == name), None)
     if entry is None:
         message = "canonical accepted benchmark archive is not yet attached"
@@ -612,29 +619,38 @@ def seal(root: Path, owner: Path, selection: str) -> Path:
     digest = transfer.assets.archive.sha256
     publication = PublicationTransfer(transfer, AssetAssertion(name, entry[1], digest))
     with tempfile.TemporaryDirectory(prefix="delaunay-seal-") as temporary:
-        download_release_asset(root, REPOSITORY, transfer.target.tag, name, Path(temporary) / "archive.tar.gz", expected_sha256=digest, allow_draft=True)
-    if entry not in revalidate_release_target(root, transfer.target, checkout=root).assets:
+        download_release_asset(root, REPOSITORY, target.tag, name, Path(temporary) / "archive.tar.gz", expected_sha256=digest, allow_draft=True)
+    if entry not in revalidate_release_target(root, target, checkout=root).assets:
         message = "attached archive identity changed during verification"
         raise ValueError(message)
-    freeze(final, {"publication-transfer.json": serialize_transfer(publication)})
-    freeze(final.parent, {"publication-transfer.json": serialize_transfer(publication)})
+    payload = serialize_transfer(publication)
+    freeze(final, {"publication-transfer.json": payload})
+    freeze(final.parent, {"publication-transfer.json": payload})
     # Published readers authenticate this index through the immutable release.
     # Promotion still uses the independently retained local/dispatch assertion.
-    index = f"delaunay-{transfer.target.tag}-candidate.json"
-    freeze(final, {index: serialize_transfer(publication)})
-    publish_release_asset(root, REPOSITORY, transfer.target.tag, final / index, target=transfer.target, checkout=root)
-    release = revalidate_release_target(root, transfer.target, checkout=root)
-    entry = next((item for item in release.assets if item[0] == index), None)
-    if entry is None:
-        message = "published-history index is missing from the prepared release"
-        raise ValueError(message)
-    index_digest = hashlib.sha256(serialize_transfer(publication)).hexdigest()
-    with tempfile.TemporaryDirectory(prefix="delaunay-index-seal-") as temporary:
-        download_release_asset(root, REPOSITORY, transfer.target.tag, index, Path(temporary) / "index.json", expected_sha256=index_digest, allow_draft=True)
-    if entry not in revalidate_release_target(root, transfer.target, checkout=root).assets:
-        message = "published-history index identity changed during verification"
-        raise ValueError(message)
-    freeze(final, {"index-assertion.json": deterministic_json({"name": index, "id": entry[1], "sha256": index_digest})})
+    index = f"delaunay-{target.tag}-candidate.json"
+    digest = hashlib.sha256(payload).hexdigest()
+    assertion_path = final / "index-assertion.json"
+    with owner_update(final):
+        _freeze_owner_files(final, {index: payload})
+        if assertion_path.exists():
+            assertion = transfer_asset(parse_release_json(assertion_path.read_bytes()))
+            if (assertion.name, assertion.sha256) != (index, digest):
+                message = "published-history index differs from the sealed transfer"
+                raise ValueError(message)
+        else:
+            publish_release_asset(root, REPOSITORY, target.tag, final / index, target=target, checkout=root)
+            release = revalidate_release_target(root, target, checkout=root)
+            entry = next((item for item in release.assets if item[0] == index), None)
+            if entry is None:
+                message = "published-history index is missing from the prepared release"
+                raise ValueError(message)
+            assertion = AssetAssertion(index, entry[1], digest)
+        check_transfer_assets(revalidate_release_target(root, target, checkout=root), publication, index=assertion)
+        with tempfile.TemporaryDirectory(prefix="delaunay-index-seal-") as temporary:
+            download_release_asset(root, REPOSITORY, target.tag, index, Path(temporary) / "index.json", expected_sha256=digest, allow_draft=True)
+        check_transfer_assets(revalidate_release_target(root, target, checkout=root), publication, index=assertion)
+        _freeze_owner_files(final, {"index-assertion.json": deterministic_json({"name": index, "id": assertion.identifier, "sha256": digest})})
     return final / "publication-transfer.json"
 
 
@@ -699,15 +715,18 @@ def publish_draft(root: Path, owner: Path, selection: str, tag: str) -> None:
         message = "publication tag differs from the package release"
         raise ValueError(message)
     accepted = verify_existing(root, owner, selection).read_bytes()
-    preparation_target(root, owner, selection)
-    sealed = seal(root, owner, selection)
+    acceptance_sha256 = hashlib.sha256(accepted).hexdigest()
+    target = parse_release_target(preparation_target(root, owner, selection).read_bytes())
+    sealed = seal(root, owner, selection, target=target, acceptance_sha256=acceptance_sha256)
     transfer = require_publication_transfer(parse_transfer(sealed.read_bytes()))
     index = transfer_asset(parse_release_json((sealed.parent / "index-assertion.json").read_bytes()))
-    target = transfer.original.target
+    if transfer.original.target != target:
+        message = "publication transfer differs from the authenticated draft receipt"
+        raise ValueError(message)
     if index.name != f"delaunay-{tag}-candidate.json" or index.sha256 != hashlib.sha256(serialize_transfer(transfer)).hexdigest():
         message = "published-history index differs from the sealed transfer"
         raise ValueError(message)
-    if hashlib.sha256(accepted).hexdigest() != transfer.original.assets.acceptance.sha256:
+    if acceptance_sha256 != transfer.original.assets.acceptance.sha256:
         message = "publication transfer differs from the reviewed acceptance"
         raise ValueError(message)
     # Sealing can take time. Recheck that same acceptance after attachment work.
@@ -716,10 +735,8 @@ def publish_draft(root: Path, owner: Path, selection: str, tag: str) -> None:
         raise ValueError(message)
     reviewed = check_reviewed_release(load_config(root=root), tag, event=ReviewedRelease(tag, target.commit, target.release_id), draft=True)
     check_transfer_assets(reviewed, transfer, index=index)
-    # RRT 0.2.8's release publish command captures a new target by tag. Its asset
-    # publisher can recreate a missing attachment. Neither operation preserves
-    # this already sealed selection. Keep the shared read-only gates, then make
-    # only the lifecycle request to the original ID, without attachment repair.
+    # The shared final gate verifies the required asset names. The local writer
+    # also pins every staged asset and the history index to its original ID.
     try:
         run_command("gh", ["api", "--method", "PATCH", f"repos/{REPOSITORY}/releases/{target.release_id}", "--field", "draft=false"], cwd=root)
         check_published_transfer(root, transfer, index=index)
@@ -849,9 +866,9 @@ def check_published_transfer(root: Path, transfer: PublicationTransfer, *, index
     check_transfer_assets(release, transfer, index=index)
 
 
-def check_transfer_assets(release: GitHubRelease, transfer: PublicationTransfer, *, index: AssetAssertion | None = None) -> None:
+def check_transfer_assets(release: GitHubRelease, transfer: Transfer, *, index: AssetAssertion | None = None) -> None:
     """Keep the captured release and every original asset at both boundaries."""
-    target = transfer.original.target
+    target = transfer.original.target if isinstance(transfer, PublicationTransfer) else transfer.target
     if (release.repository, release.tag, release.identifier, release.title) != (
         REPOSITORY,
         target.tag,
@@ -860,12 +877,13 @@ def check_transfer_assets(release: GitHubRelease, transfer: PublicationTransfer,
     ):
         message = "candidate release identity changed"
         raise ValueError(message)
-    assets = tuple(asset for _role, asset in transfer.role_assertions())
+    roles = transfer.role_assertions() if isinstance(transfer, PublicationTransfer) else transfer.assets.role_assertions()
+    assets = tuple(asset for _role, asset in roles)
     if index is not None:
         assets += (index,)
     for asset in assets:
-        entry = next((item for item in release.assets if item[0] == asset.name), None)
-        if entry is None or entry[1] != asset.identifier or (entry[3] is not None and entry[3] != asset.sha256):
+        entries = [entry for entry in release.assets if entry[0] == asset.name]
+        if len(entries) != 1 or entries[0][1] != asset.identifier or (entries[0][3] is not None and entries[0][3] != asset.sha256):
             message = "candidate asset identity changed"
             raise ValueError(message)
 
@@ -1023,7 +1041,9 @@ def run_owner_operation(root: Path, options: argparse.Namespace) -> None:
     elif options.operation == "stage":
         print(stage(root, owner, options.selection))
     elif options.operation == "seal":
-        print(seal(root, owner, options.selection))
+        accepted = verify_existing(root, owner, options.selection).read_bytes()
+        target = parse_release_target(preparation_target(root, owner, options.selection).read_bytes())
+        print(seal(root, owner, options.selection, target=target, acceptance_sha256=hashlib.sha256(accepted).hexdigest()))
     elif options.operation == "record":
         print(record_path(root, owner, options.selection, options.role))
     elif options.operation == "upload":

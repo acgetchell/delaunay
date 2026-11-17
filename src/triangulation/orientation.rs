@@ -181,10 +181,7 @@ where
                 let vertex_keys: SmallBuffer<VertexKey, MAX_PRACTICAL_DIMENSION_SIZE> =
                     simplex.vertices().iter().copied().collect();
                 let neighbor_keys: SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    simplex
-                        .neighbor_keys()
-                        .map(Iterator::collect)
-                        .unwrap_or_default();
+                    simplex.neighbor_keys().map_or_default(Iterator::collect);
                 tracing::debug!(
                     simplex_uuid = %simplex.uuid(),
                     ?simplex_key,

@@ -4,14 +4,14 @@ import hashlib
 import json
 import runpy
 import subprocess
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import yaml
-from research_repo_tools import files as shared_files
+from research_repo_tools import files as shared_files, release_assets as shared_assets
 from research_repo_tools.release_assets import GitHubRelease, ReleaseTarget, serialize_release_target
 
 import release_candidate as candidate
@@ -186,6 +186,8 @@ def test_sealing_retains_the_original_history_index(transfer: dict[str, Any], tm
     final = candidate.final_directory(owner, SHA, "reviewed")
     final.mkdir(parents=True)
     data, payloads = transfer["data"], transfer["payloads"]
+    target = candidate.parse_release_target(json.dumps(data["target"]).encode())
+    acceptance = data["assets"]["acceptance"]["sha256"]
     (final / "transfer.json").write_bytes(json.dumps(data).encode())
     data["assets"]["attached"] = {"name": candidate.archive_name(TAG), "id": 5, "sha256": data["assets"]["archive"]["sha256"]}
     payloads["attached"] = payloads["archive"]
@@ -195,18 +197,29 @@ def test_sealing_retains_the_original_history_index(transfer: dict[str, Any], tm
 
     def upload(_root: Path, _repository: str, _tag: str, path: Path, **_kwargs: object) -> None:
         assert path.name == f"delaunay-{TAG}-candidate.json"
+        transfer["calls"].append("upload-index")
         payloads["index"] = path.read_bytes()
         data["assets"].setdefault("index", {"name": path.name, "id": 6, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
 
     monkeypatch.setattr(candidate, "publish_release_asset", upload)
-    publication = candidate.seal(root, owner, "reviewed").read_bytes()
+    with pytest.raises(ValueError, match="authenticated draft receipt"):
+        candidate.seal(root, owner, "reviewed", target=replace(target, release_id=43), acceptance_sha256=acceptance)
+    with pytest.raises(ValueError, match="reviewed acceptance"):
+        candidate.seal(root, owner, "reviewed", target=target, acceptance_sha256="0" * 64)
+    assert transfer["calls"] == []
+
+    publication = candidate.seal(root, owner, "reviewed", target=target, acceptance_sha256=acceptance).read_bytes()
     assertion = (final / "index-assertion.json").read_bytes()
     assert json.loads(assertion) == {"name": f"delaunay-{TAG}-candidate.json", "id": 6, "sha256": hashlib.sha256(publication).hexdigest()}
-    assert candidate.seal(root, owner, "reviewed").read_bytes() == publication
+    assert candidate.seal(root, owner, "reviewed", target=target, acceptance_sha256=acceptance).read_bytes() == publication
     data["assets"]["index"]["id"] = 7
-    with pytest.raises(ValueError, match=r"immutable output differs: index-assertion\.json"):
-        candidate.seal(root, owner, "reviewed")
+    with pytest.raises(ValueError, match="candidate asset identity changed"):
+        candidate.seal(root, owner, "reviewed", target=target, acceptance_sha256=acceptance)
+    del data["assets"]["index"]
+    with pytest.raises(ValueError, match="candidate asset identity changed"):
+        candidate.seal(root, owner, "reviewed", target=target, acceptance_sha256=acceptance)
     assert (final / "index-assertion.json").read_bytes() == assertion
+    assert transfer["calls"].count("upload-index") == 1
 
 
 @pytest.mark.parametrize("key", ["GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR", "GITHUB_EVENT_NAME", "GITHUB_WORKFLOW_REF", "GITHUB_SHA", "GITHUB_REF"])
@@ -218,7 +231,21 @@ def test_dispatch_authentication_precedes_provider_access(transfer: dict[str, An
     assert not (tmp_path / "output").exists()
 
 
-def test_staging_retry_keeps_original_draft_before_any_upload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@dataclass
+class StagingProvider:
+    """Draft asset observations and uploads for the installed staging API."""
+
+    target: ReleaseTarget
+    prepared: Path
+    uploaded: dict[str, tuple[int, bytes]] = field(default_factory=dict)
+    interrupt_second_upload: bool = True
+    draft_available: bool = True
+    report_digest: bool = True
+
+
+@pytest.fixture
+def staging_provider(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> StagingProvider:
+    """Model provider and checkout observations while using real RRT staging."""
     root, owner = tmp_path / "checkout", tmp_path / "owner"
     root.mkdir()
     owner.mkdir()
@@ -236,29 +263,94 @@ def test_staging_retry_keeps_original_draft_before_any_upload(tmp_path: Path, mo
     prepared = tmp_path / "prepared-target.json"
     monkeypatch.setattr(candidate, "preparation_target", lambda *_args: prepared)
     prepared.write_bytes(serialize_release_target(original))
-    monkeypatch.setattr(candidate, "revalidate_release_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(shared_assets, "require_release_checkout", lambda *_args: None)
+    monkeypatch.setattr(shared_assets, "_remote_commit", lambda *_args: SHA)
+    provider = StagingProvider(original, prepared)
 
-    def interrupted(*_args: object, **_kwargs: object) -> None:
+    def observe(_root: Path, repository: str, tag: str, release_id: int) -> GitHubRelease:
+        assert (repository, tag, release_id) == (original.repository, original.tag, original.release_id)
+        if not provider.draft_available:
+            message = "original draft no longer exists"
+            raise ValueError(message)
+        return GitHubRelease(
+            repository,
+            tag,
+            release_id,
+            draft=True,
+            immutable=False,
+            prerelease=False,
+            title=tag,
+            assets=tuple(
+                (name, identifier, len(data), hashlib.sha256(data).hexdigest() if provider.report_digest else None)
+                for name, (identifier, data) in provider.uploaded.items()
+            ),
+            asset_states=tuple((identifier, "uploaded") for identifier, _ in provider.uploaded.values()),
+        )
+
+    def upload(_root: Path, args: list[str]) -> bytes:
         assert (final / "target.json").read_bytes() == serialize_release_target(original)
-        message = "interrupted upload"
-        raise OSError(message)
+        assert args[:3] == ["api", "--method", "POST"]
+        endpoint, name = args[3].split("?name=")
+        assert endpoint == f"https://uploads.github.com/repos/{original.repository}/releases/{original.release_id}/assets"
+        assert name not in provider.uploaded
+        if provider.interrupt_second_upload and len(provider.uploaded) == 1:
+            message = "interrupted second upload"
+            raise OSError(message)
+        provider.uploaded[name] = len(provider.uploaded) + 1, Path(args[-1]).read_bytes()
+        return b"{}"
 
-    monkeypatch.setattr(candidate, "publish_release_asset", interrupted)
-    with pytest.raises(OSError, match="interrupted upload"):
+    def download(_root: Path, repository: str, identifier: int, limit: int) -> bytes:
+        assert repository == original.repository
+        data = next(data for asset_id, data in provider.uploaded.values() if asset_id == identifier)
+        assert len(data) <= limit
+        return data
+
+    monkeypatch.setattr(shared_assets, "_release_by_id", observe)
+    monkeypatch.setattr(shared_assets, "_gh", upload)
+    monkeypatch.setattr(shared_assets, "_download", download)
+    return provider
+
+
+def test_staging_resumes_the_real_batch_on_the_original_draft(tmp_path: Path, staging_provider: StagingProvider) -> None:
+    """A partial upload leaves original IDs in the journal and retries only missing files."""
+    root, owner = tmp_path / "checkout", tmp_path / "owner"
+    final = candidate.final_directory(owner, SHA, "reviewed")
+    original, prepared, uploaded = staging_provider.target, staging_provider.prepared, staging_provider.uploaded
+    with pytest.raises(ValueError, match=r"asset staging interrupted.*interrupted second upload"):
         candidate.stage(root, owner, "reviewed")
+    assert len(uploaded) == 1
+    first_name, (first_id, first_bytes) = next(iter(uploaded.items()))
+    journal = (final / "staging.json").read_bytes()
+    assert json.loads(journal)["assets"] == {first_name: {"id": first_id, "size": len(first_bytes), "sha256": hashlib.sha256(first_bytes).hexdigest()}}
+    assert not (final / "staged-assets.json").exists()
+    assert not (final / "transfer.json").exists()
 
-    def replaced(_root: Path, target: ReleaseTarget, **_kwargs: object) -> None:
-        assert target == original
-        message = "original draft no longer exists"
-        raise ValueError(message)
-
-    monkeypatch.setattr(candidate, "revalidate_release_target", replaced)
-    monkeypatch.setattr(candidate, "publish_release_asset", lambda *_args, **_kwargs: pytest.fail("replacement draft must never receive an upload"))
+    staging_provider.draft_available = False
     with pytest.raises(ValueError, match="original draft no longer exists"):
         candidate.stage(root, owner, "reviewed")
     prepared.write_bytes(serialize_release_target(replace(original, release_id=43)))
     with pytest.raises(ValueError, match="immutable output differs"):
         candidate.stage(root, owner, "reviewed")
+    assert (final / "staging.json").read_bytes() == journal
+    assert len(uploaded) == 1
+
+    prepared.write_bytes(serialize_release_target(original))
+    staging_provider.draft_available = True
+    staging_provider.interrupt_second_upload = False
+    transfer_path = candidate.stage(root, owner, "reviewed")
+    retained = candidate.require_draft_transfer(candidate.parse_transfer(transfer_path.read_bytes()))
+    assert len(uploaded) == 4
+    assert uploaded[first_name] == (first_id, first_bytes)
+    assert {asset.name: asset.identifier for _, asset in retained.assets.role_assertions()} == {name: identifier for name, (identifier, _) in uploaded.items()}
+    assert (final / "staging.json").read_bytes() == (final / "staged-assets.json").read_bytes()
+    assert json.loads((final / "staged-assets.json").read_bytes())["state"] == "complete"
+    assert candidate.stage(root, owner, "reviewed") == transfer_path
+
+    staging_provider.report_digest = False
+    with pytest.raises(ValueError, match="staged candidate asset metadata differs"):
+        candidate.stage(root, owner, "reviewed")
+    assert len(uploaded) == 4
+    assert transfer_path.read_bytes() == candidate.serialize_transfer(retained)
 
 
 def test_staging_rejects_malformed_owner_digest_before_provider_access(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -493,29 +585,30 @@ def test_explicit_review_selection_preserves_previous_acceptance(tmp_path: Path,
     owner.mkdir()
     for name in ("policy.json", "acquisition.sha256", "publication.sha256"):
         (owner / name).write_bytes(b"a" * 64)
-    monkeypatch.setattr(candidate, "check_release_dependencies", lambda *_args: None)
     monkeypatch.setattr(candidate, "resolve_revision", lambda *_args: SHA)
-    # Binding behavior is covered by the full synthetic acquisition test.
-    monkeypatch.setattr(candidate, "parse_candidate_policy", lambda *_args: ReleaseTarget(candidate.REPOSITORY, TAG, 42, SHA, TAG))
-    monkeypatch.setattr(candidate, "serialize_candidate_policy", serialize_release_target)
     requests: list[list[str]] = []
 
     def shared(arguments: list[str]) -> int:
         requests.append(arguments)
-        output = Path(arguments[arguments.index("--output") + 1])
-        selected = Path(arguments[arguments.index("--policy") + 1]).parent.name
-        value = json.dumps({"native": {"selection": selected}}).encode()
+        assert Path(arguments[arguments.index("--policy") + 1]) == owner / "policy.json"
+        assert arguments[arguments.index("--commit") + 1] == SHA
+        selection = {"run": 1 if len(requests) <= 2 else 2}
+        value = json.dumps({"native": selection}).encode()
         if "--acceptance" in arguments:
             assert Path(arguments[arguments.index("--acceptance") + 1]).read_bytes() == value
-        output.write_bytes(value)
+        Path(arguments[arguments.index("--output") + 1]).write_bytes(value)
+        Path(arguments[arguments.index("--policy-output") + 1]).write_bytes(b"bound policy")
+        Path(arguments[arguments.index("--native-output") + 1]).write_bytes(json.dumps(selection).encode())
         return 0
 
     monkeypatch.setattr(candidate, "shared_main", shared)
     first = candidate.verify(root, owner)
     assert candidate.verify(root, owner) == first
     second = candidate.verify(root, owner, "retry-2")
-    assert json.loads(first.read_bytes())["native"] == {"selection": "reviewed"}
-    assert json.loads(second.read_bytes())["native"] == {"selection": "retry-2"}
+    assert first.parent.name == "reviewed"
+    assert second.parent.name == "retry-2"
+    assert json.loads(first.read_bytes())["native"] == {"run": 1}
+    assert json.loads(second.read_bytes())["native"] == {"run": 2}
     assert ["--acceptance" in arguments for arguments in requests] == [False, True, False]
 
 

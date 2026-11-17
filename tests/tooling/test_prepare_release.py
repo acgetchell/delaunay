@@ -1,223 +1,116 @@
-"""Exercise draft orchestration with real installed lifecycle checks and fake providers."""
+"""Exercise the actual tag-planning shell against the installed release CLI."""
 
 import json
-import subprocess
+import os
+import shlex
+import shutil
+import sys
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
-from research_repo_tools import config, release_assets, release_interfaces
-from research_repo_tools.cli import main as shared_main
-
-import prepare_release
+from research_repo_tools.process import run_command
 
 ROOT = Path(__file__).resolve().parents[2]
-TAG = "v0.8.3"
-COMMIT = "a" * 40
-NOTES = "Release notes\n"
+WORKFLOW = ROOT / ".github/workflows/prepare-release.yml"
 REPOSITORY = "acgetchell/delaunay"
+TAG = "v0.8.4"
+SHA = "a" * 40
+PLANNER = "Verify tagged source and freeze native evidence and notes"
 
 
-@pytest.fixture
-def provider(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """Model transport/evidence while retaining the installed release-target parser."""
-    state: dict[str, Any] = {"releases": [], "writes": [], "evidence": [], "protected": True, "commit": COMMIT, "checks": "success"}
-    for key, value in {"GITHUB_REPOSITORY": REPOSITORY, "GITHUB_EVENT_NAME": "push", "GITHUB_REF": f"refs/tags/{TAG}", "GITHUB_SHA": COMMIT}.items():
-        monkeypatch.setenv(key, value)
-    monkeypatch.setattr(prepare_release, "resolve_revision", lambda *_args: COMMIT)
-    monkeypatch.setattr(prepare_release, "require_release_checkout", lambda *_args: None)
-    monkeypatch.setattr(release_assets, "require_release_checkout", lambda *_args: None)
-    settings = config.load(root=ROOT)
-    assert settings.publishing is not None
-    required_checks = settings.publishing.required_checks
-    monkeypatch.setattr(prepare_release.config, "load", lambda *_args, **_kwargs: settings)
-    monkeypatch.setattr(prepare_release, "load_evidence_policy", lambda _path: object())
-    monkeypatch.setattr(prepare_release, "check_metadata", lambda *_args: None)
-    monkeypatch.setattr(prepare_release.changelog, "notes", lambda *_args: (NOTES, tmp_path / "CHANGELOG.md", TAG))
+@pytest.mark.parametrize("external_policy", [False, True])
+def test_original_source_shell_uses_checkout_relative_policy(tmp_path: Path, *, external_policy: bool) -> None:
+    """The installed planner accepts the consumer shell and guards policy containment."""
+    checkout, runner = tmp_path / "tag source café", tmp_path / "runner temp café"
+    (checkout / "tooling").mkdir(parents=True)
+    runner.mkdir()
+    for name in ("Cargo.toml", "pyproject.toml", ".python-version", "tooling/release-evidence.toml"):
+        shutil.copyfile(ROOT / name, checkout / name)
+    policy = checkout / "tooling/release-evidence.toml"
+    (runner / "evidence.toml").write_bytes(policy.read_bytes())
+    output = runner / "github-output"
+    output.touch()
+    fake_provider = runner / "provider.py"
+    fake_provider.write_text(
+        """
+import sys
+from research_repo_tools import draft_workflow, release_interfaces
+from research_repo_tools.cli import main
 
-    def evidence(*_args: object, **kwargs: object) -> bytes:
-        state["evidence"].append(kwargs)
-        if state.get("bad-evidence"):
-            msg = "missing retained exact-commit evidence"
-            raise ValueError(msg)
-        return b'{"frozen":true}\n'
-
-    monkeypatch.setattr(prepare_release, "verify_release_evidence", evidence)
-
-    def read(endpoint: str, **_kwargs: object) -> Any:
-        if endpoint == f"commits/{COMMIT}/check-runs?filter=latest&per_page=100":
-            checks = [
-                {"id": index, "name": item.name, "head_sha": COMMIT, "app": {"id": item.app_id}, "status": "completed", "conclusion": state["checks"]}
-                for index, item in enumerate(required_checks, 1)
-            ]
-            return [{"total_count": len(checks), "check_runs": checks}]
-        routes = {
-            "": lambda: {"default_branch": "main"},
-            "branches/main": lambda: {"protected": state["protected"]},
-            f"compare/{COMMIT}...main": lambda: {"status": "identical"},
-            "releases?per_page=100": lambda: state.get("inventory", [state["releases"]]),
-            "releases/42": lambda: state["releases"][0],
-            "releases/42/assets?per_page=100": lambda: [state["releases"][0]["assets"]],
-            f"git/ref/tags/{TAG}": lambda: {"ref": f"refs/tags/{TAG}", "object": {"type": "commit", "sha": state["commit"]}},
-        }
-        return routes[endpoint]()
-
-    def command(executable: str, args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        if executable == "git":
-            result = f"{state['commit']}\trefs/tags/{TAG}^{{}}\n"
-        elif args[:2] == ["release", "create"]:
-            state["writes"].append(args)
-            assert Path(args[args.index("--notes-file") + 1]).read_text(encoding="utf-8") == NOTES
-            state["releases"].append(draft())
-            result = ""
-        else:
-            result = json.dumps(read(args[-1].removeprefix(f"repos/{REPOSITORY}/")))
-        return subprocess.CompletedProcess([executable, *args], 0, stdout=result, stderr="")
-
-    def binary_command(executable: str, args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        result = command(executable, args, **kwargs)
-        return subprocess.CompletedProcess(result.args, result.returncode, result.stdout.encode(), b"")
-
-    monkeypatch.setattr(prepare_release, "api", read)
-    monkeypatch.setattr(prepare_release, "run_command", command)
-    monkeypatch.setattr(release_assets, "run_command_bytes", binary_command)
-    return state
-
-
-def draft() -> dict[str, Any]:
-    """Provider response including an independently retained benchmark attachment."""
-    return {
-        "id": 42,
-        "url": f"https://api.github.com/repos/{REPOSITORY}/releases/42",
-        "tag_name": TAG,
-        "name": TAG,
-        "body": NOTES,
-        "draft": True,
-        "immutable": False,
-        "prerelease": False,
-        "assets": [{"id": 7, "name": "benchmark.tar.gz", "size": 100, "state": "uploaded"}],
+# Only provider/source observations are synthetic. The installed CLI still
+# resolves paths, loads the real consumer policy, and freezes the handoff.
+release_interfaces._checkout = lambda *args, **kwargs: None
+draft_workflow.check_release_source = lambda *args, **kwargs: None
+draft_workflow.notes = lambda *args: ("Original notes café\u005cn", None, None)
+draft_workflow.verify_release_evidence = lambda *args, **kwargs: b'{"original": "native selection"}'
+sys.exit(main(sys.argv[1:]))
+""",
+        encoding="utf-8",
+    )
+    verify = yaml.safe_load(WORKFLOW.read_bytes())["jobs"]["verify"]["steps"]
+    script = next(step["run"] for step in verify if step.get("name") == PLANNER)
+    if external_policy:
+        script = script.replace("tooling/release-evidence.toml", '"$RUNNER_TEMP/evidence.toml"')
+    bootstrap = f"""uvx() {{
+    [[ "$*" == '--no-config --isolated --no-cache --python 3.15 --from research-repo-tools==0.2.9 python -I -m research_repo_tools '* ]] || return 91
+    shift 11
+    {shlex.quote(Path(sys.executable).as_posix())} -I {shlex.quote(fake_provider.as_posix())} "$@"
+}}
+git() {{
+    case "$*" in
+        "--no-pager rev-parse "*) printf '%s\\n' "$GITHUB_SHA" ;;
+        "--no-pager merge-base --is-ancestor $GITHUB_SHA origin/main") ;;
+        *) return 92 ;;
+    esac
+}}
+gh() {{
+    [[ "$*" == "api repos/$GITHUB_REPOSITORY --jq .default_branch" ]] || return 96
+    printf 'main\\n'
+}}
+cargo() {{ exit 93; }}
+just() {{ exit 94; }}
+uv() {{ exit 95; }}
+"""
+    environment = os.environ | {
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REF": f"refs/tags/{TAG}",
+        "GITHUB_SHA": SHA,
+        "RELEASE_TAG": TAG,
+        "GITHUB_REPOSITORY": REPOSITORY,
+        "GITHUB_WORKSPACE": checkout.as_posix(),
+        "RUNNER_TEMP": runner.as_posix(),
+        "GITHUB_OUTPUT": output.as_posix(),
     }
-
-
-def test_successful_preparation_and_safe_retry(tmp_path: Path, provider: dict[str, Any]) -> None:
-    assert prepare_release.prepare(tmp_path, TAG) == 42
-    assert len(provider["writes"]) == 1
-    arguments = provider["writes"][0]
-    assert arguments[:3] == ["release", "create", TAG]
-    assert arguments[arguments.index("--target") + 1] == COMMIT
-    assert "--draft" in arguments
-    assert "--verify-tag" in arguments
-    before = json.dumps(provider["releases"])
-    assert prepare_release.prepare(tmp_path, TAG) == 42
-    assert len(provider["writes"]) == 1
-    assert json.dumps(provider["releases"]) == before
-    assert provider["evidence"][1] == {"expected": b'{"frozen":true}\n'}
-
-
-def test_unverified_dependencies_prevent_draft_creation(tmp_path: Path, provider: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
-    def reject(root: Path, *, packages: tuple[str, ...]) -> None:
-        assert root == tmp_path
-        assert packages == ()
-        msg = "unverified dependency provenance"
-        raise ValueError(msg)
-
-    monkeypatch.setattr(prepare_release, "check_release_dependencies", reject)
-    with pytest.raises(ValueError, match="unverified dependency provenance"):
-        prepare_release.prepare(tmp_path, TAG)
-    assert not provider["writes"]
-
-
-def test_declared_asset_cli_captures_the_draft_identity(tmp_path: Path, provider: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
-    """Exercise the installed CLI and real consumer asset declaration without uploads."""
-    provider["releases"] = [draft()]
-    monkeypatch.setattr(release_interfaces, "resolve_revision", lambda *_args: COMMIT)
-    monkeypatch.setattr(release_interfaces, "require_release_checkout", lambda *_args: None)
-    captured = tmp_path / "captured.json"
-    arguments = [
-        "--root",
-        str(ROOT),
-        "release",
-        "assets",
-        "preflight",
-        "tooling/release-assets.toml",
-        "--checkout",
-        str(tmp_path),
-        "--commit",
-        COMMIT,
-        "--tag",
-        TAG,
-        "--output",
-        str(captured),
-    ]
-    assert shared_main(arguments) == 0
-    target = release_assets.parse_release_target(captured.read_bytes())
-    assert (target.repository, target.release_id, target.tag, target.commit, target.expected_title) == (REPOSITORY, 42, TAG, COMMIT, TAG)
-    assert not provider["writes"]
-
-
-@pytest.mark.parametrize(
-    "failure", ["evidence", "checks", "protected", "commit", "inventory", "notes", "published", "immutable", "prerelease", "title", "ambiguous"]
-)
-def test_failures_never_create_or_modify_releases(tmp_path: Path, provider: dict[str, Any], failure: str) -> None:
-    if failure == "evidence":
-        provider["bad-evidence"] = True
-    elif failure == "checks":
-        provider["checks"] = "failure"
-    elif failure in {"protected", "commit"}:
-        provider[failure] = False if failure == "protected" else "b" * 40
-    elif failure == "inventory":
-        provider["inventory"] = []
+    result = run_command("bash", ["-euc", bootstrap + script], cwd=checkout, env=environment, check=False)
+    handoff = runner / "handoff/handoff.json"
+    if external_policy:
+        assert result.returncode == 1
+        assert "relative" in result.stderr
+        assert not handoff.exists()
+        assert output.read_bytes() == b""
     else:
-        release = draft()
-        if failure == "notes":
-            release["body"] = "conflicting notes"
-        elif failure == "published":
-            release["draft"] = False
-        elif failure == "title":
-            release["name"] = "conflicting title"
-        elif failure != "ambiguous":
-            release[failure] = True
-        provider["releases"] = [release, release.copy()] if failure == "ambiguous" else [release]
-    before = json.dumps(provider["releases"])
-    with pytest.raises(ValueError, match=r"evidence|checks|protected|tag|notes|draft|mutable|title|ambiguous|published|prerelease|inventory"):
-        prepare_release.prepare(tmp_path, TAG)
-    assert not provider["writes"]
-    assert json.dumps(provider["releases"]) == before
+        assert result.returncode == 0, result.stderr
+        data = json.loads(handoff.read_bytes())
+        assert data["source"] == {"ref": f"refs/tags/{TAG}", "commit": SHA}
+        assert data["evidence_policy"].encode() == policy.read_bytes()
+        assert data["selection"] == {"original": "native selection"}
+        assert data["notes"] == "Original notes café\n"
+        assert output.read_text(encoding="utf-8") == f"commit={SHA}\n"
 
 
-@pytest.mark.parametrize("variable", ["GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_SHA"])
-def test_tag_context_is_required(tmp_path: Path, provider: dict[str, Any], monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
-    monkeypatch.setenv(variable, "wrong")
-    with pytest.raises(ValueError, match="tag-push"):
-        prepare_release.prepare(tmp_path, TAG)
-    assert not provider["writes"]
-
-
-def test_preparation_workflow_has_no_registry_or_publication_authority() -> None:
-    """Draft creation receives inert, authenticated native evidence without checkout code."""
-    workflow = yaml.safe_load((ROOT / ".github/workflows/prepare-release.yml").read_bytes())
+def test_draft_job_retains_receipt_and_full_recovery_state() -> None:
+    """The shared writer has isolated draft authority and retains the original state."""
+    workflow = yaml.safe_load(WORKFLOW.read_bytes())
     assert workflow[True] == {"push": {"tags": ["v*"]}}
     assert workflow["concurrency"]["cancel-in-progress"] is False
-    verify = workflow["jobs"]["verify"]
-    assert "merge-base --is-ancestor" in yaml.safe_dump(verify)
-    assert "release evidence verify" in yaml.safe_dump(verify)
-    guard = next(step["run"] for step in verify["steps"] if step.get("name") == "Require protected main and native and SARIF checks")
-    assert "require_checks(checks, commit, settings.publishing.required_checks)" in guard
-    assert 'branch.get("protected") is not True' in guard
     job = workflow["jobs"]["prepare"]
     assert job["needs"] == "verify"
-    assert job["permissions"] == {"contents": "write", "actions": "read"}
+    assert job["permissions"] == {"contents": "write", "actions": "read", "checks": "read"}
     assert "environment" not in job
     assert not any(step.get("uses", "").startswith("actions/checkout@") for step in job["steps"])
-    writer = job["steps"][1]
-    assert "research-repo-tools==0.2.8" in writer["shell"]
-    assert "python -I" in writer["shell"]
-    assert "prepare_release_draft(" in writer["run"]
-    assert "attempt != 1" in writer["run"]
-    assert "same_tag != [run]" in writer["run"]
-    assert job["steps"][-1]["if"] == "always()"
-    assert "draft-receipt.json" in job["steps"][-1]["with"]["path"]
-    assert "cargo build" not in yaml.safe_dump(workflow)
-    assert "cargo package" not in yaml.safe_dump(workflow)
-    assert "id-token" not in yaml.safe_dump(workflow)
+    receipt, state = job["steps"][-2:]
+    assert receipt["if"] == state["if"] == "always()"
+    assert "draft-state/draft-receipt.json" in receipt["with"]["path"]
+    assert "draft-state/target.json" in receipt["with"]["path"]
+    assert state["with"]["path"].endswith("/draft-state/*")

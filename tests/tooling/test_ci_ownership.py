@@ -149,13 +149,13 @@ def test_cache_owners_keep_tool_preparation_and_native_stage_outputs_separate() 
     setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
     caches = {step["name"]: step for step in setup["runs"]["steps"] if step.get("uses", "").startswith("actions/cache@")}
     managed = caches["Cache managed Cargo compilation"]
-    assert managed["if"] == "inputs.cache == 'true'"
+    assert managed["if"] == "inputs.cache == 'true' && inputs.release-only != 'true'"
     assert "rrt-build" in managed["with"]["path"]
     assert "restore-keys" not in managed["with"]
     for required in ("runner.os", "runner.arch", "pyproject.toml", "rust-toolchain.toml", "uv.lock", "Cargo.lock"):
         assert required in managed["with"]["key"]
     consumer = caches["Cache consumer Rust builds"]
-    assert consumer["if"] == "inputs.cache == 'true' && inputs.consumer-cache == 'true'"
+    assert consumer["if"] == "inputs.cache == 'true' && inputs.consumer-cache == 'true' && inputs.release-only != 'true'"
     assert set(consumer["with"]["path"].split()) == {"target/debug", "target/release", "target/perf"}
     for field in ("key", "restore-keys"):
         for required in ("inputs.cache-scope", "runner.os", "runner.arch", "rust-toolchain.toml", "Cargo.lock"):
@@ -163,7 +163,7 @@ def test_cache_owners_keep_tool_preparation_and_native_stage_outputs_separate() 
     assert "github.sha" in consumer["with"]["key"]
     assert "github.sha" not in consumer["with"]["restore-keys"]
     package = next(step for step in jobs["package"]["steps"] if step.get("uses") == "$/.github/actions/setup-just")
-    assert package["with"]["cache"] == "false"
+    assert package["with"] == {"cache": "false", "release-only": "true"}
 
 
 def reachable(recipes: dict[str, dict[str, Any]], name: str) -> set[str]:
