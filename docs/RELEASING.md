@@ -11,8 +11,8 @@ accepted archive without collecting timings. Review and publish the draft with
 The original acquisition and approval records live outside the checkout.
 Back up the owner directory printed by `performance-release`; Git commits and
 Actions artifacts do not replace that independent record. Final publication,
-native adoption evidence and the verified la-stack v0.5.3 comparison remain
-tracked in [v0.8.5 release tracker #696](https://github.com/acgetchell/delaunay/issues/696).
+native adoption and the live evidence handoff are tracked in
+[v0.8.5 release tracker #696](https://github.com/acgetchell/delaunay/issues/696).
 
 The changelog is generated for the target tag before the tag exists, so the
 release process does not require a temporary local tag.
@@ -30,6 +30,7 @@ reuses the declared citation date even after UTC midnight.
 ## Contents
 
 - [Reusable CI evidence](#reusable-ci-evidence)
+- [Release command alignment](#release-command-alignment)
 - [Validate shared-tooling adoption](#validate-shared-tooling-adoption)
 - [Prepare the environment](#prepare-the-environment)
 - [Step 1: Prepare the release PR](#step-1-prepare-the-release-pr)
@@ -86,6 +87,35 @@ Named selections are immutable review records, not a latest-success selector.
 Original local acquisition identity remains distinct from the final-main
 signature. No editable, sibling or Git dependency override supplies release
 authority.
+
+## Release command alignment
+
+The released [la-stack v0.5.3 guide](https://github.com/acgetchell/la-stack/blob/7165ed562f2e4611d201e574fc1f600a8ad8b33e/docs/RELEASING.md),
+[recipes](https://github.com/acgetchell/la-stack/blob/7165ed562f2e4611d201e574fc1f600a8ad8b33e/justfile)
+and [workflows](https://github.com/acgetchell/la-stack/tree/7165ed562f2e4611d201e574fc1f600a8ad8b33e/.github/workflows)
+define the comparison for [#693](https://github.com/acgetchell/delaunay/issues/693).
+The tag resolves to `7165ed562f2e4611d201e574fc1f600a8ad8b33e`. Its non-yanked
+registry checksum matches Delaunay's Cargo lock. The [release record](https://github.com/acgetchell/la-stack/issues/333)
+links the successful native and signed package-evidence run and records the
+remaining fresh-consumer failures from that release.
+
+- `update-version`, `changelog-release`, `release-version-check` and
+  `publish-check` synchronize release metadata and validate the candidate.
+  One acquisition supplies reports and the README. Delaunay retains its
+  scientific workload and default/all-feature Cargo package checks.
+- `release-evidence` inspects the original acquisition and signed final-main
+  evidence. `tag` revalidates the saved acceptance and writes the annotation
+  from the changelog section shown by `release-notes`. Delaunay binds the
+  signed Cargo archive digest before tagging.
+- A tag push prepares a draft with generated notes. `release-benchmarks TAG`
+  attaches the accepted archive without acquisition. RRT v0.2.9 authenticates
+  the draft handoff and journals the asset batch. Delaunay's dispatch command
+  stages those assets from the retained owner record.
+- `release-publish TAG` publishes the reviewed draft. `release-upload TAG`
+  freezes the same acceptance across `crates-io` approval and runs a nonbuilding
+  Cargo upload. Delaunay also proves matching-tool, byte-identical Cargo
+  reproduction before acquiring a registry token. `release-verify TAG` checks
+  the release and registry.
 
 ## Validate shared-tooling adoption
 
@@ -443,9 +473,11 @@ test "$(git rev-parse "$TAG^{commit}")" = "$RELEASE_COMMIT"
 git --no-pager tag -l --format='%(contents)' "$TAG"
 ```
 
-`just tag` first runs `release-version-check`, then builds the annotation from
-the matching active or archived changelog section. For a changelog larger than
-125 kB, the annotation points to that section instead of embedding it.
+`just tag` runs `release-version-check` and revalidates the existing acceptance
+for the exact package tag before creating the annotation from its changelog
+section. If you reviewed a different named acceptance, pass the owner and
+selection as `just tag "$TAG" "$OWNER" NAME`. For a changelog larger than
+125 kB, the annotation points to the section.
 
 <a id="3-push-the-tag"></a>
 
@@ -569,8 +601,8 @@ runs even after an uncertain upload response.
 
 The separate main signer has attestation permissions only. Draft and attachment
 writers have no registry credentials; the upload job has no repository-write
-permission. Delaunay retains its stronger Cargo archive guarantee while #693's
-published-reference parity gate remains pending.
+permission. Delaunay retains its Cargo archive guarantee alongside the shared
+approval and upload flow.
 
 ### 8. Verify registry availability and downstream resolution
 

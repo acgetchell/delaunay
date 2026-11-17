@@ -102,6 +102,10 @@ asset checks, and its post-approval byte reproduction. The retired
 The single-checkout writer for legacy release metadata is also retired.
 Historical archive parsing and single-checkout scientific measurements remain.
 
+RRT also checks Actions pins in the same workflow and composite scope used by
+`just update-actions`. Portable CI checks `setup-uv` across both locations and
+requires the three CodeQL subpaths to share one reviewed release SHA and tag.
+
 ## v0.2.8 candidate reuse adoption (#690)
 
 The release-signal declaration now schedules one sequential schema-6 trial,
@@ -136,9 +140,10 @@ all existing v0.8.4 evidence.
 
 Synthetic fixtures exercise acquisition, publication, whole-tree binding,
 immutable transfers and Cargo reproduction. They do not establish native
-adoption or a real retained-evidence handoff. Those gates, publication/checksum
-verification and the published la-stack v0.5.3 parity review belong to
-[v0.8.5 tracker #696](https://github.com/acgetchell/delaunay/issues/696).
+adoption or a real retained-evidence handoff. Those gates and final publication
+verification belong to [v0.8.5 tracker #696](https://github.com/acgetchell/delaunay/issues/696).
+The [release command comparison](../RELEASING.md#release-command-alignment)
+records the published la-stack v0.5.3 reference and Delaunay's differences.
 
 ## v0.2.5 scanner and generator adoption
 

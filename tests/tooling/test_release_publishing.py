@@ -453,7 +453,6 @@ def test_account_payloads_match_workflow_identity_and_require_tag_review() -> No
     assert allowed["verified_allowed"] is False
     updates = tomllib.loads((ROOT / ".github/action-updates.toml").read_text(encoding="utf-8"))["actions"]
     assert "rust-lang/crates-io-auth-action" not in updates
-    assert "astral-sh/setup-uv" not in updates
     assert "acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml" not in updates
     auto_merge = (ROOT / ".github/workflows/dependabot-auto-merge.yml").read_text(encoding="utf-8")
     assert '".github/workflows/publish-crates.yml"' not in auto_merge
@@ -526,7 +525,7 @@ def test_preupload_shell_requires_evidence_and_proven_absence(tmp_path: Path, fa
 def test_packaging_stops_on_failure_and_completes_on_success(tmp_path: Path, failure_index: int | None) -> None:
     """Reach each packaging stage and preserve its failure without running later work."""
     expected_calls = [
-        "run --locked --no-sync research-repo-tools validation cargo-metadata --package delaunay",
+        "run --locked --no-sync research-repo-tools toolchain run --tool cargo -- research-repo-tools validation cargo-metadata --package delaunay",
         "run --locked --no-sync research-repo-tools toolchain run --tool cargo -- cargo publish --locked --package delaunay --registry crates-io --dry-run",
         (
             "run --locked --no-sync research-repo-tools toolchain run --tool cargo -- "

@@ -443,7 +443,7 @@ def test_release_recipes_forward_shared_policy_arguments() -> None:
     assert "research-repo-tools release check --final-release" in strict_check.stdout + strict_check.stderr
     for name in ("tag", "tag-force"):
         dependencies = {dependency["recipe"] for dependency in recipes[name]["dependencies"]}
-        assert "release-version-check" in dependencies
+        assert {"release-version-check", "_release-candidate"} <= dependencies
         injected = "v0.8.0; echo INJECTED"
         command = dry_run(REPO_ROOT, name, (injected,))
         tag_command = next(line for line in (command.stdout + command.stderr).splitlines() if "research-repo-tools changelog tag " in line)

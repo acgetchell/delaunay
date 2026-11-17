@@ -179,6 +179,32 @@ def test_transfer_variants_keep_wire_schema(transfer: dict[str, Any]) -> None:
     assert json.loads(candidate.serialize_transfer(publication)) == data
 
 
+def test_reviewed_tag_requires_the_exact_existing_acceptance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pre-tag command revalidates an existing selection and rejects other tags."""
+    monkeypatch.setattr(candidate, "selected_owner", lambda *_args: tmp_path)
+    monkeypatch.setattr(candidate, "release_tag", lambda *_args: TAG)
+    monkeypatch.setattr(candidate, "resolve_revision", lambda *_args: SHA)
+    calls: list[str] = []
+    accepted = candidate.final_directory(tmp_path, SHA, "reviewed") / "acceptance.json"
+
+    def verify(_root: Path, _owner: Path, selection: str) -> Path:
+        calls.append(selection)
+        return accepted
+
+    monkeypatch.setattr(candidate, "verify", verify)
+    parser = candidate.argument_parser()
+    with pytest.raises(ValueError, match="tag differs from the package release"):
+        candidate.run_owner_operation(tmp_path, parser.parse_args(["verify", "--reviewed-tag", "v9.9.9"]))
+    options = parser.parse_args(["verify", "--reviewed-tag", TAG])
+    with pytest.raises(FileNotFoundError):
+        candidate.run_owner_operation(tmp_path, options)
+    assert calls == []
+    accepted.parent.mkdir(parents=True)
+    accepted.write_bytes(b"reviewed acceptance")
+    candidate.run_owner_operation(tmp_path, options)
+    assert calls == ["reviewed"]
+
+
 def test_sealing_retains_the_original_history_index(transfer: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A retry must retain the first verified index ID even when replacement bytes match."""
     root, owner = tmp_path / "checkout", tmp_path / "owner"

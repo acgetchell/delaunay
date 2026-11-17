@@ -328,6 +328,14 @@ def verify_existing(root: Path, owner: Path, selection: str) -> Path:
     return accepted
 
 
+def verify_reviewed_tag(root: Path, owner: Path, selection: str, tag: str) -> Path:
+    """Require an existing acceptance for the exact package version being tagged."""
+    if tag != release_tag(root):
+        message = "tag differs from the package release being reviewed"
+        raise ValueError(message)
+    return verify_existing(root, owner, selection)
+
+
 def archive(owner: Path, commit: str, selection: str = "reviewed") -> Path:
     """Derive an immutable release archive without acquisition or native work."""
     final = final_directory(owner, commit, selection)
@@ -1014,6 +1022,8 @@ def argument_parser() -> argparse.ArgumentParser:
             command.add_argument("role", choices=("transfer", "publication"))
         if name in {"upload", "benchmarks", "publish"}:
             command.add_argument("tag")
+        if name == "verify":
+            command.add_argument("--reviewed-tag", help="revalidate the existing acceptance before tagging this exact release")
         command.add_argument("owner_directory", nargs="?", default="")
         if name == "capture":
             command.add_argument("--retained-scratch", action="store_true", help="explicitly retry retention of the original locally controlled acquisition")
@@ -1034,7 +1044,11 @@ def run_owner_operation(root: Path, options: argparse.Namespace) -> None:
         print(json.dumps(capture(root, owner, retained_scratch=options.retained_scratch)))
         remember_owner(root, owner)
     elif options.operation == "verify":
-        accepted = verify(root, owner, options.selection)
+        accepted = (
+            verify(root, owner, options.selection)
+            if options.reviewed_tag is None
+            else verify_reviewed_tag(root, owner, options.selection, options.reviewed_tag)
+        )
         print(json.dumps({"acceptance": str(accepted), "sha256": hashlib.sha256(accepted.read_bytes()).hexdigest()}))
     elif options.operation == "archive":
         print(archive(owner, resolve_revision(root, "HEAD"), options.selection))

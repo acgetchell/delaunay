@@ -17,6 +17,7 @@ managed := "uv run --locked --no-sync --group dev research-repo-tools toolchain 
 release_tool := "uv run --locked --no-sync research-repo-tools"
 release_python := "uv run --locked --no-sync python -I"
 release_cargo := release_tool + " toolchain run --tool cargo --"
+actions_inputs := quote(".github/workflows") + " " + quote(".github/actions/setup-just/action.yml")
 
 # Semgrep misreads Python 3.15's positive RLIM_INFINITY on Linux. Keep its
 # inherited stack finite until https://github.com/semgrep/semgrep/issues/11979 is fixed.
@@ -75,6 +76,11 @@ action-allowlist:
 [group('validation')]
 action-lint: _ensure-actionlint
     {{ rrt }} files run --include '.github/workflows/*.yml' --include '.github/workflows/*.yaml' -- uv run --locked actionlint
+
+# Check shared Actions pin consistency and the repository's single CodeQL release.
+[group('validation')]
+action-pin-check:
+    uv run --locked --no-sync --no-python-downloads --offline --group dev python tooling/python/check_action_pins.py {{ actions_inputs }}
 
 # Audit every maintained Python and Rust lockfile without executing dependency code.
 [group('security')]
@@ -355,7 +361,7 @@ fmt-check:
 
 # Check the external Actions allowlist, workflow syntax, and security audits.
 [group('validation')]
-github-actions-check: action-allowlist action-lint zizmor
+github-actions-check: action-allowlist action-pin-check action-lint zizmor
     @echo "✅ GitHub Actions checks complete!"
 
 # Check JSON files parse cleanly.
@@ -828,7 +834,7 @@ release-notes tag:
 # Verify clean default and all-feature packages without uploading.
 [group('release')]
 release-package:
-    {{ release_tool }} validation cargo-metadata --package delaunay
+    {{ release_cargo }} research-repo-tools validation cargo-metadata --package delaunay
     {{ release_cargo }} cargo publish --locked --package delaunay --registry crates-io --dry-run
     {{ release_cargo }} cargo publish --locked --package delaunay --registry crates-io --dry-run --all-features
 
@@ -957,12 +963,12 @@ spherical-readme-hero: _ensure-uv notebook-cli
 
 # Create an annotated git tag from the CHANGELOG.md section for the given version
 [group('release')]
-tag version: release-version-check
+tag version owner="" selection="reviewed": release-version-check (_release-candidate "verify" owner "--selection" selection "--reviewed-tag" version)
     {{ rrt }} changelog tag {{ quote(version) }}
 
 # Replace an existing annotated tag from the CHANGELOG.md section.
 [group('release')]
-tag-force version: release-version-check
+tag-force version owner="" selection="reviewed": release-version-check (_release-candidate "verify" owner "--selection" selection "--reviewed-tag" version)
     {{ rrt }} changelog tag {{ quote(version) }} --force
 
 # Export a shared configuration or workflow template.
@@ -1124,7 +1130,7 @@ update: update-tools update-dependencies
 [group('build and setup')]
 [positional-arguments]
 update-actions *args: _ensure-uv
-    uv run --locked --only-group tooling --inexact research-repo-tools actions update --policy .github/action-updates.toml .github/workflows "$@"
+    uv run --locked --only-group tooling --inexact research-repo-tools actions update --policy .github/action-updates.toml {{ actions_inputs }} "$@"
 
 # Advance Cargo dependency declarations and lockfile entries for every resolution root.
 [doc('Update repository Cargo dependency requirements and lockfiles.')]

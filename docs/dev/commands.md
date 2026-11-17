@@ -995,25 +995,29 @@ just citation-check
 ## GitHub Actions Validation
 
 `just github-actions-check` composes the strict selected-actions allowlist,
-`actionlint`, and Zizmor. The allowlist checks every workflow and nested local
-composite definition, including new files, through the installed shared parser.
+pin consistency, `actionlint`, and Zizmor. The allowlist checks every workflow
+and nested local composite definition, including new files, through the
+installed shared parser.
 
 Run with:
 
 ```bash
 just action-allowlist
+just action-pin-check
 just action-lint
 ```
 
 `just update-actions --dry-run` previews exact SHA and version-comment updates
-for workflow identities in `.github/action-updates.toml`. `--check` detects available updates without writing;
+for opted-in identities in `.github/action-updates.toml`. `--check` detects available updates without writing;
 omit the flag to apply them deliberately. This stage stays separate from
 `just update`. The publishing authentication action and privileged Dependabot
 workflow retain their dedicated review and are excluded from automatic updates.
-The upstream updater accepts workflow YAML only. setup-uv remains on the
-Dependabot path so its workflow and setup-composite references stay coupled.
-CodeQL uses an explicit action-release target because its latest GitHub release
-is a bundle tag that the shared updater rejects as a semantic version.
+The updater and offline pin check cover `.github/workflows` and the setup-just
+composite. Use `just update-actions` for `setup-uv` and CodeQL version updates.
+Advance the three CodeQL policy targets together to the reviewed action release.
+The checker requires a common CodeQL SHA, matching explicit targets, and
+consistent `setup-uv` pins across both locations. Dependabot's routine version
+updates exclude those four identities.
 
 `.github/settings/actions-selected.json` owns the explicit action identities and
 ref constraints. Both owner-exemption flags are false. Each approved CodeQL
