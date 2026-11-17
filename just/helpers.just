@@ -50,8 +50,6 @@ _ensure-cargo-llvm-cov: _ensure-toolchain
 
 _ensure-cargo-machete: _ensure-toolchain
 
-_ensure-dprint: _ensure-toolchain
-
 _ensure-gh: _ensure-uv
     {{ rrt }} validation require gh
 
@@ -61,8 +59,6 @@ _ensure-jq: _ensure-uv
     {{ rrt }} validation require jq
 
 _ensure-nextest: _ensure-toolchain
-
-_ensure-rumdl: _ensure-toolchain
 
 _ensure-samply: _ensure-toolchain
 
@@ -76,12 +72,8 @@ _ensure-shfmt: _ensure-uv
     set -euo pipefail
     uv run --locked shfmt --version >/dev/null
 
-_ensure-taplo: _ensure-toolchain
-
 _ensure-toolchain:
     uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain check
-
-_ensure-typos: _ensure-toolchain
 
 _ensure-uv:
     uv run --locked --no-sync --no-python-downloads research-repo-tools --version > /dev/null

@@ -122,6 +122,11 @@ checkout's perf-profile CLI. Packaged docs use the shared isolated build helper.
 `just --jobs 1 ci` runs the same graph serially. `just ci-native` remains a
 sequential composition of the four hosted stage recipes after normal setup.
 
+The hosted `portable` job loads the locked `dev` group and installs the selected
+managed tools for its checks: Cargo with rustfmt from the pinned Rust toolchain,
+dprint, rumdl, Taplo, typos, and zizmor. It uses its own managed compilation
+cache key so a portable install cannot populate the native preparation cache.
+
 Hosted preparation completes before the native matrix starts. Each stage still
 installs and verifies exact tool versions in its own runner; preparation shares
 only managed Cargo compilation output through RRT v0.2.8's supported build

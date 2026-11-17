@@ -32,6 +32,9 @@ jobs:
           persist-credentials: false
       - name: Set up shared tooling
         uses: $/.github/actions/setup-just
+        with:
+          portable-only: "true"
+          consumer-cache: "false"
       - name: Run portable checks
         run: just ci-portable
 
