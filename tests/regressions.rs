@@ -1838,19 +1838,16 @@ fn snapshot_periodic_topology(
                     (uuid, offset)
                 })
                 .collect();
-            let neighbors = simplex
-                .neighbors()
-                .map(|keys| {
-                    keys.map(|neighbor_key| {
-                        neighbor_key.map(|key| {
-                            dt.simplex(key)
-                                .expect("neighbor should reference a live simplex")
-                                .uuid()
-                        })
+            let neighbors = simplex.neighbors().map_or_default(|keys| {
+                keys.map(|neighbor_key| {
+                    neighbor_key.map(|key| {
+                        dt.simplex(key)
+                            .expect("neighbor should reference a live simplex")
+                            .uuid()
                     })
-                    .collect()
                 })
-                .unwrap_or_default();
+                .collect()
+            });
             (simplex.uuid(), vertices, neighbors)
         })
         .collect();

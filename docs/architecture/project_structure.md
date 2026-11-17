@@ -120,8 +120,7 @@ delaunay/
 │       ├── notebook_visualization.py
 │       ├── performance_artifacts.py
 │       ├── profiling_metadata.py
-│       ├── prepare_release.py
-│       └── release_benchmarks.py
+│       └── release_candidate.py
 ├── AGENTS.md
 ├── Cargo.toml
 ├── Cargo.lock
@@ -174,12 +173,11 @@ find . -type f \( -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.yml
 - `docs/dev/` contains operational rules for agents and contributors, indexed
   by [`../dev/README.md`](../dev/README.md).
 - `docs/architecture/` contains focused architecture references.
-- `tooling/python/release_benchmarks.py` owns release benchmark handoff policy;
-  the shared package owns remote release identity and publication checks.
+- `tooling/python/release_candidate.py` owns independent local release selection
+  and maintainer dispatch. The shared package owns draft preparation, remote
+  release identity and publication checks.
 - `tooling/python/cargo_release.py` retains native Cargo dry-run/reproduction
   glue around the shared evidence APIs and declarative release policies.
-- `tooling/python/prepare_release.py` orchestrates tag-triggered stable draft
-  creation after protected-main evidence, metadata and required checks.
 - `.github/` contains issue templates, workflow definitions, and
   repository-integrated automation.
 

@@ -9,9 +9,12 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
 from research_repo_tools import action_updates
 from research_repo_tools.cli import main
 from research_repo_tools.process import run_command
+
+from check_action_pins import CODEQL, check_action_pins
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = ROOT / ".github/settings/actions-selected.json"
@@ -126,6 +129,56 @@ def test_privileged_references_remain_excluded_from_updater() -> None:
     assert AUTH not in actions
     assert not any("dependabot-approve" in name for name in actions)
     assert json.loads(POLICY.read_bytes())["patterns_allowed"].count(f"{AUTH}@{REVIEWED_COMMIT}") == 1
+
+
+@pytest.mark.parametrize(
+    ("pin", "error"),
+    [
+        (("actions/setup-just/action.yml", "astral-sh/setup-uv", "v10.3.3"), "inconsistent astral-sh/setup-uv"),
+        (("workflows/codeql.yml", "github/codeql-action/analyze", "v4.39.1"), "does not match explicit policy tag"),
+        (("workflows/codeql.yml", "github/codeql-action/analyze", "v4.39.3"), "must use the same release commit SHA"),
+    ],
+)
+def test_action_pin_check_rejects_drift(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    pin: tuple[str, str, str],
+    error: str,
+) -> None:
+    """Exercise the installed checker across the composite, releases and policy targets."""
+    inputs = [".github/workflows", ".github/actions/setup-just/action.yml"]
+    shutil.copytree(ROOT / ".github", tmp_path / ".github")
+    assert check_action_pins(tmp_path, inputs) == 0
+    file, identity, version = pin
+    path = tmp_path / ".github" / file
+    original = path.read_text(encoding="utf-8")
+    updated, count = re.subn(rf"{re.escape(identity)}@[0-9a-f]{{40}}\s+#\s+v[\d.]+", f"{identity}@{SHA} # {version}", original)
+    assert count == 1
+    path.write_text(updated, encoding="utf-8", newline="\n")
+    assert check_action_pins(tmp_path, inputs) == 1
+    assert error in capsys.readouterr().err
+    assert path.read_bytes() == updated.encode()
+
+
+def test_portable_ci_checks_the_same_action_scope_as_the_updater() -> None:
+    """Follow the actual expanded recipe graph when changing checker scope."""
+    checked = run_command("just", ["--dry-run", "ci-portable"], cwd=ROOT).stderr
+    updated = run_command("just", ["--dry-run", "update-actions", "--dry-run"], cwd=ROOT).stderr
+    check_line = next(line for line in checked.splitlines() if "tooling/python/check_action_pins.py" in line)
+    update_line = next(line for line in updated.splitlines() if "actions update --policy" in line)
+    assert shlex.split(check_line)[-2:] == shlex.split(update_line)[-3:-1] == [".github/workflows", ".github/actions/setup-just/action.yml"]
+
+
+def test_coupled_action_pins_leave_dependabot_security_updates_eligible() -> None:
+    """Reserve coordinated version updates for the installed RRT updater."""
+    policy = tomllib.loads((ROOT / ".github/action-updates.toml").read_text(encoding="utf-8"))
+    actions = next(
+        entry for entry in yaml.safe_load((ROOT / ".github/dependabot.yml").read_bytes())["updates"] if entry["package-ecosystem"] == "github-actions"
+    )
+    ignored = {entry["dependency-name"]: set(entry["update-types"]) for entry in actions["ignore"]}
+    version_updates = {f"version-update:semver-{level}" for level in ("major", "minor", "patch")}
+    assert policy["actions"]["astral-sh/setup-uv"] == "latest"
+    assert all(ignored[identity] == version_updates for identity in CODEQL | {"astral-sh/setup-uv"})
 
 
 def test_codeql_update_preview_preserves_adopted_workflow_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

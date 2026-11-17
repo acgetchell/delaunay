@@ -8,6 +8,10 @@
 //! used to choose a reconstruction path or skip validation.
 
 #![forbid(unsafe_code)]
+#![expect(
+    clippy::empty_enums,
+    reason = "Serde generates empty field enums beside the topology wire types to reject unknown fields"
+)]
 
 use crate::DelaunayTriangulationConstructionError;
 use crate::builder::DelaunayTriangulationBuilder;

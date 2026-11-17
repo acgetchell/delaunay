@@ -50,16 +50,13 @@ fn neighbor_signatures<K, const D: usize>(
     let mut signatures = triangulation
         .simplices()
         .map(|(_, simplex)| {
-            let neighbors = simplex
-                .neighbors()
-                .map(|neighbors| {
-                    neighbors
-                        .map(|neighbor| {
-                            neighbor.and_then(|key| triangulation.simplex_uuid_from_key(key))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            let neighbors = simplex.neighbors().map_or_default(|neighbors| {
+                neighbors
+                    .map(|neighbor| {
+                        neighbor.and_then(|key| triangulation.simplex_uuid_from_key(key))
+                    })
+                    .collect()
+            });
             (simplex.uuid(), neighbors)
         })
         .collect::<Vec<_>>();

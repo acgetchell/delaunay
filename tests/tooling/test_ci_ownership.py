@@ -149,13 +149,13 @@ def test_cache_owners_keep_tool_preparation_and_native_stage_outputs_separate() 
     setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
     caches = {step["name"]: step for step in setup["runs"]["steps"] if step.get("uses", "").startswith("actions/cache@")}
     managed = caches["Cache managed Cargo compilation"]
-    assert managed["if"] == "inputs.cache == 'true'"
+    assert managed["if"] == "inputs.cache == 'true' && inputs.release-only != 'true'"
     assert "rrt-build" in managed["with"]["path"]
     assert "restore-keys" not in managed["with"]
     for required in ("runner.os", "runner.arch", "pyproject.toml", "rust-toolchain.toml", "uv.lock", "Cargo.lock"):
         assert required in managed["with"]["key"]
     consumer = caches["Cache consumer Rust builds"]
-    assert consumer["if"] == "inputs.cache == 'true' && inputs.consumer-cache == 'true'"
+    assert consumer["if"] == "inputs.cache == 'true' && inputs.consumer-cache == 'true' && inputs.release-only != 'true'"
     assert set(consumer["with"]["path"].split()) == {"target/debug", "target/release", "target/perf"}
     for field in ("key", "restore-keys"):
         for required in ("inputs.cache-scope", "runner.os", "runner.arch", "rust-toolchain.toml", "Cargo.lock"):
@@ -163,7 +163,43 @@ def test_cache_owners_keep_tool_preparation_and_native_stage_outputs_separate() 
     assert "github.sha" in consumer["with"]["key"]
     assert "github.sha" not in consumer["with"]["restore-keys"]
     package = next(step for step in jobs["package"]["steps"] if step.get("uses") == "$/.github/actions/setup-just")
-    assert package["with"]["cache"] == "false"
+    assert package["with"] == {"cache": "false", "release-only": "true"}
+
+
+@pytest.mark.parametrize("failures", [0, 1, 2])
+def test_binary_setup_retries_once_and_propagates_failure(failures: int) -> None:
+    """Execute the managed binary step with an installer that fails on demand."""
+    setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
+    step = next(step for step in setup["runs"]["steps"] if step["name"] == "Install managed release binaries")
+    runner = f"""attempts=0
+uv() {{
+    attempts=$((attempts + 1))
+    printf '%s\\n' "$*"
+    if (( attempts <= {failures} )); then return 17; fi
+    return 0
+}}
+"""
+    result = run_command("bash", ["-euc", runner + step["run"]], check=False)
+    assert result.returncode == (17 if failures == 2 else 0), result.stderr
+    command = "run --locked --no-sync --no-python-downloads --no-env-file research-repo-tools toolchain sync-binaries"
+    assert [line for line in result.stdout.splitlines() if line.startswith("run ")] == [command] * (1 if failures == 0 else 2)
+
+
+@pytest.mark.parametrize(("runner_os", "fallback"), [("Windows", "false"), ("Linux", "unset")])
+def test_cargo_http_fallback_is_scoped_to_managed_tool_installation(runner_os: str, fallback: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Execute setup and observe the Cargo override for each tooling command."""
+    setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
+    step = next(step for step in setup["runs"]["steps"] if step["name"] == "Install declared tools from the locked package")
+    runner = """uv() {
+    printf '%s %s\\n' "${CARGO_HTTP_MULTIPLEXING-unset}" "$*"
+}
+"""
+    monkeypatch.setenv("RUNNER_OS", runner_os)
+    monkeypatch.delenv("CARGO_HTTP_MULTIPLEXING", raising=False)
+    result = run_command("bash", ["-euc", runner + step["run"]])
+    calls = [line.split(maxsplit=1) for line in result.stdout.splitlines()]
+    assert calls[0] == [fallback, "run --locked --managed-python --only-group tooling research-repo-tools toolchain sync"]
+    assert {value for value, _ in calls[1:]} == {"unset"}
 
 
 def reachable(recipes: dict[str, dict[str, Any]], name: str) -> set[str]:

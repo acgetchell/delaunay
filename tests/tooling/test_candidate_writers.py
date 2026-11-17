@@ -1,5 +1,7 @@
 """Execute isolated workflow handoff checks with only provider transport modeled."""
 
+import base64
+import hashlib
 import json
 import runpy
 from pathlib import Path
@@ -7,7 +9,8 @@ from typing import Any
 
 import pytest
 import yaml
-from research_repo_tools import release_drafts, release_validation
+from research_repo_tools import draft_workflow, release_receipts, release_validation
+from research_repo_tools.evidence import deterministic_json
 from research_repo_tools.release_assets import ReleaseTarget
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,47 +48,105 @@ def handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "head_branch": TAG,
         "head_sha": SHA,
         "path": ".github/workflows/prepare-release.yml",
+        "name": "Prepare GitHub release",
+        "status": "in_progress",
+        "pull_requests": [],
+        "repository": {"id": 17, "full_name": REPOSITORY},
+        "head_repository": {"id": 17, "full_name": REPOSITORY},
     }
     artifact = {
         "id": 456,
         "expired": False,
         "name": "draft-handoff-123-1",
         "digest": "sha256:" + "b" * 64,
-        "workflow_run": {"id": 123, "head_sha": SHA},
+        "size_in_bytes": 100,
+        "workflow_run": {"id": 123, "head_sha": SHA, "head_branch": TAG, "repository_id": 17, "head_repository_id": 17},
     }
     state: dict[str, Any] = {"run": run, "artifact": artifact, "history": [run], "calls": [], "rerun": False}
 
+    payload = (ROOT / run["path"]).read_bytes()
+    blob = b"blob " + str(len(payload)).encode() + b"\0" + payload
+    responses = {
+        "actions/runs/123": run,
+        "actions/artifacts/456": artifact,
+        "actions/workflows/prepare-release.yml": {"id": 7, "name": run["name"], "path": run["path"], "state": "active"},
+        f"contents/{run['path']}?ref={SHA}": {
+            "type": "file",
+            "path": run["path"],
+            "encoding": "base64",
+            "content": base64.b64encode(payload).decode(),
+            "size": len(payload),
+            "sha": hashlib.sha1(blob, usedforsecurity=False).hexdigest(),
+        },
+    }
+    jobs = [
+        {
+            "id": 99,
+            "name": "verify",
+            "run_id": 123,
+            "run_attempt": 1,
+            "head_sha": SHA,
+            "head_branch": TAG,
+            "labels": ["ubuntu-latest"],
+            "status": "completed",
+            "conclusion": "success",
+            "steps": [
+                {"name": name, "status": "completed", "conclusion": "success"}
+                for name in ("Verify tagged source and freeze native evidence and notes", "Retain inert verified handoff")
+            ],
+        }
+    ]
+
     def api(endpoint: str, *, repository: str) -> dict[str, Any]:
         assert repository == REPOSITORY
-        if endpoint == "actions/runs/123":
-            return state["run"].copy()
-        assert endpoint == "actions/artifacts/456"
-        return state["artifact"]
+        return responses[endpoint].copy()
 
-    def download(repository: str, observed: dict[str, Any], directory: Path, names: tuple[str, ...]) -> None:
+    def pages(_read: object, endpoint: str, field: str) -> list[dict[str, Any]]:
+        return {("actions/workflows/7/runs", "workflow_runs"): state["history"], ("actions/runs/123/attempts/1/jobs", "jobs"): jobs}[endpoint, field]
+
+    planned = deterministic_json(
+        {
+            "schema": "research-repo-tools/draft-handoff/v1",
+            "repository": REPOSITORY,
+            "source": {"ref": f"refs/tags/{TAG}", "commit": SHA},
+            "event": "push",
+            "title": TAG,
+            "notes": "original notes",
+            "evidence_policy": (ROOT / "tooling/release-evidence.toml").read_text(encoding="utf-8"),
+            "selection": {"original": "native selection"},
+            "checks": [{"name": "portable", "app_id": 15368}],
+        }
+    )
+
+    def download(repository: str, observed: dict[str, Any], directory: Path, names: tuple[str, ...], **_kwargs: object) -> None:
         assert repository == REPOSITORY
-        assert observed == artifact
+        assert observed["id"] == artifact["id"]
         state["calls"].append("download")
         directory.mkdir()
         for name in names:
-            content = (ROOT / "tooling/release-evidence.toml").read_bytes() if name == "evidence.toml" else b"original inert bytes"
-            (directory / name).write_bytes(content)
+            (directory / name).write_bytes(planned if name == "handoff.json" else b"original inert bytes")
         if state["rerun"]:
             state["run"]["run_attempt"] = 2
 
     monkeypatch.setattr(release_validation, "api", api)
-    monkeypatch.setattr(release_validation, "read_pages", lambda *_args: state["history"])
     monkeypatch.setattr(release_validation, "download_artifact", download)
+    monkeypatch.setattr(draft_workflow, "api", api)
+    monkeypatch.setattr(draft_workflow, "read_pages", pages)
+    monkeypatch.setattr(release_receipts, "read_pages", pages)
+    monkeypatch.setattr(draft_workflow, "download_artifact", download)
+    monkeypatch.setattr(draft_workflow, "_require_draft", lambda *_args: None)
 
-    def prepare(_root: Path, repository: str, tag: str, commit: str, **kwargs: object) -> ReleaseTarget:
+    def prepare(_root: Path, repository: str, tag: str, commit: str, **kwargs: Any) -> ReleaseTarget:
         assert (repository, tag, commit) == (REPOSITORY, TAG, SHA)
-        assert kwargs["expected"] == b"original inert bytes"
-        assert kwargs["notes"] == b"original inert bytes"
+        assert json.loads(kwargs["expected"]) == {"original": "native selection"}
+        assert kwargs["notes"] == b"original notes"
         assert kwargs["approve"] is True
+        kwargs["verify_inputs"]()
+        kwargs["reserve_receipt"](b"original pending journal")
         state["calls"].append("prepare")
         return ReleaseTarget(repository, tag, 42, commit, tag)
 
-    monkeypatch.setattr(release_drafts, "prepare_release_draft", prepare)
+    monkeypatch.setattr(draft_workflow, "_prepare_release_draft", prepare)
     return state
 
 
@@ -109,12 +170,16 @@ def test_original_draft_writer_authenticates_handoff(handoff: dict[str, Any], tm
     if failure == "none":
         runpy.run_path(str(script), run_name="__main__")
         assert handoff["calls"] == ["download", "prepare"]
-        assert json.loads((tmp_path / "target.json").read_bytes())["release_id"] == 42
+        output = tmp_path / "draft-state"
+        assert json.loads((output / "target.json").read_bytes())["release_id"] == 42
+        assert (output / "draft-receipt.json").read_bytes() == b"original pending journal"
+        assert (output / "producer.json").is_file()
+        assert json.loads((output / "handoff.json").read_bytes())["selection"] == {"original": "native selection"}
     else:
-        with pytest.raises(ValueError, match=r"original exact tag push|identity differs|producer attempt|prior or unproven|producer changed"):
+        with pytest.raises(ValueError, match=r"original exact tag push|original tag-push run|artifact ID|authoritative SHA-256"):
             runpy.run_path(str(script), run_name="__main__")
         assert "prepare" not in handoff["calls"]
-        assert not (tmp_path / "target.json").exists()
+        assert not (tmp_path / "draft-state").exists()
 
 
 @pytest.mark.parametrize("failure", ["none", "attempt", "digest", "commit", "event", "rerun"])

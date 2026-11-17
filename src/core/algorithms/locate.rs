@@ -1447,10 +1447,7 @@ where
             #[cfg(debug_assertions)]
             if debug_config.log_conflict {
                 let neighbor_keys: SmallBuffer<Option<SimplexKey>, MAX_PRACTICAL_DIMENSION_SIZE> =
-                    simplex
-                        .neighbor_keys()
-                        .map(Iterator::collect)
-                        .unwrap_or_default();
+                    simplex.neighbor_keys().map_or_default(Iterator::collect);
                 tracing::debug!(
                     simplex_key = ?simplex_key,
                     vertex_keys = ?simplex.vertices(),
@@ -2085,12 +2082,14 @@ mod tests {
     use crate::core::collections::NeighborBuffer;
     use crate::core::simplex::Simplex;
     use crate::core::test_support::single_simplex_tds;
-    #[cfg(feature = "diagnostics")]
+    #[cfg(any(debug_assertions, feature = "diagnostics"))]
     use crate::core::test_support::tds_from_specs;
     use crate::geometry::kernel::{FastKernel, RobustKernel};
     use crate::vertex;
     use slotmap::KeyData;
     use std::assert_matches;
+    #[cfg(debug_assertions)]
+    use std::process::Command;
 
     #[test]
     fn test_internal_inconsistency_site_display_variants() {
@@ -2723,6 +2722,68 @@ mod tests {
             0,
             "Expected 0 simplices in conflict for point far outside"
         );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_find_conflict_region_reports_boundary_neighbor() {
+        const CHILD: &str = "DELAUNAY_TEST_CONFLICT_BOUNDARY_CHILD";
+        if env::var_os(CHILD).is_none() {
+            // The diagnostic configuration is cached on first use.
+            let (_, test_name) = concat!(
+                module_path!(),
+                "::test_find_conflict_region_reports_boundary_neighbor"
+            )
+            .split_once("::")
+            .unwrap();
+            let output = Command::new(env::current_exe().unwrap())
+                .args(["--exact", test_name, "--nocapture"])
+                .env(CHILD, "1")
+                .env("DELAUNAY_DEBUG_CONFLICT", "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success(),
+                "isolated conflict search failed\n{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let boundary = stdout
+                .lines()
+                .find(|line| line.contains("find_conflict_region: BFS boundary (non-conflict)"))
+                .and_then(|line| line.split_once("neighbors="));
+            assert!(
+                boundary.is_some_and(|(_, neighbors)| neighbors.contains("Some(")),
+                "boundary diagnostic did not report a shared neighbor\n{stdout}"
+            );
+            return;
+        }
+
+        let vertices = [
+            vertex![0.0, 0.0].unwrap(),
+            vertex![1.0, 0.0].unwrap(),
+            vertex![0.0, 1.0].unwrap(),
+            vertex![1.0, -1.0].unwrap(),
+        ];
+        let tds = tds_from_specs(&vertices, &[vec![0, 1, 2], vec![1, 0, 3]]);
+        let top_corner = tds.vertex_key_from_uuid(&vertices[2].uuid()).unwrap();
+        let (start, _) = tds
+            .simplices()
+            .find(|(_, simplex)| simplex.vertices().contains(&top_corner))
+            .unwrap();
+        // The query is inside the upper triangle and outside the lower
+        // triangle's circumsphere. The lower triangle is the BFS boundary.
+        let query = Point::try_new([0.2, 0.3]).unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .finish();
+        let region = tracing::subscriber::with_default(subscriber, || {
+            find_conflict_region(&tds, &FastKernel::<f64>::new(), &query, start)
+        })
+        .unwrap();
+        assert_eq!(region.as_slice(), &[start]);
     }
 
     #[test]

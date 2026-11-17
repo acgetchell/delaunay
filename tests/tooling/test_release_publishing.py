@@ -142,6 +142,8 @@ def release_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
         draft=False,
         immutable=True,
         prerelease=False,
+        title=TAG,
+        body=changelog.notes(POLICY, TAG)[0],
         assets=((f"delaunay-{TAG}-criterion-baseline.tar.gz", 7, 100, "digest"),),
     )
     monkeypatch.setattr(release_publishing, "lookup_release", lambda *_args: release)
@@ -149,7 +151,7 @@ def release_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
     def published(root: Path, *, packages: tuple[str, ...] | None = None) -> tuple[dependency_provenance.DependencyIdentity, ...]:
         assert root == ROOT
         assert packages == ()
-        return (dependency_provenance.DependencyIdentity("research-repo-tools", "0.2.8", "https://pypi.org/simple"),)
+        return (dependency_provenance.DependencyIdentity("research-repo-tools", "0.2.9", "https://pypi.org/simple"),)
 
     monkeypatch.setattr(dependency_provenance, "check_release_dependencies", published)
     return {"event": event, "path": event_file, "checks": checks}
@@ -196,41 +198,27 @@ def test_wrong_release_identity_or_missing_asset_blocks_gate(release_event: dict
     assert main(["--root", str(ROOT), "release", "gate", tag]) == 1
 
 
-@pytest.mark.parametrize("immutable", [True, False, None])
-def test_real_recipe_requires_provider_immutable_state(tmp_path: Path, immutable: bool | None) -> None:
-    """Run the consumer's actual jq gate, with only provider/CLI boundaries stubbed."""
-    payload = tmp_path / "event.json"
-    payload.write_text(json.dumps({"release": {"id": 42}}), encoding="utf-8")
-    # Notes have their own real-shell tests; isolate the final event/immutable
-    # script from dependency expansion here.
-    script = "#!/usr/bin/env bash" + dry_run(ROOT, "release-gate", [TAG]).stderr.rsplit("#!/usr/bin/env bash", 1)[1]
-    provider = (
-        f'gh() {{ [[ "$1 $2" == "api repos/acgetchell/delaunay/releases/42" ]] || return 90; echo {shlex.quote(json.dumps({"immutable": immutable}))}; }}\n'
-    )
-    result = run_command(
-        "bash",
-        ["--noprofile", "--norc", "-euc", "set -o pipefail\nuv() { return 0; }\n" + provider + script],
-        env={**os.environ, "GITHUB_EVENT_PATH": payload.as_posix()},
-        check=False,
-    )
-    assert (result.returncode == 0) == (immutable is True), result.stderr
-
-
-@pytest.mark.parametrize("mismatch", ["none", "title", "notes"])
-def test_notes_precheck_uses_generated_body_and_title(tmp_path: Path, mismatch: str) -> None:
-    """Keep Markdown bytes intact through the real generated-notes comparison."""
-    response = {"tagName": TAG, "name": "wrong" if mismatch == "title" else TAG, "body": "wrong" if mismatch == "notes" else changelog.notes(POLICY, TAG)[0]}
-    payload = tmp_path / "release.json"
-    payload.write_text(json.dumps(response), encoding="utf-8")
-    runner = (
-        'uv() { if [[ "$*" == "run --locked --no-sync --no-python-downloads research-repo-tools --version" ]]; then return 0; fi; '
-        '[[ "$1 $2 $3 $4 $5" == "run --locked --group dev research-repo-tools" ]] || return 90; shift 5; '
-        f'{shlex.quote(sys.executable)} -m research_repo_tools --root {shlex.quote(str(ROOT))} "$@"; }}\n'
-        f"gh() {{ cat {shlex.quote(payload.as_posix())}; }}\n"
-    )
-    script = dry_run(ROOT, "_release-notes-check", [TAG]).stderr
-    result = run_command("bash", ["--noprofile", "--norc", "-euc", runner + script], cwd=ROOT, check=False)
-    assert (result.returncode == 0) == (mismatch == "none"), result.stderr
+@pytest.mark.parametrize(
+    ("change", "diagnostic"),
+    [
+        ({"immutable": False}, "published release must be immutable"),
+        ({"immutable": None}, "GitHub release lifecycle fields differ or are malformed"),
+        ({"title": "replacement title"}, "release title differs from the declared tag title"),
+        ({"body": "replacement notes"}, "release body differs from generated changelog notes"),
+    ],
+)
+def test_installed_gate_rejects_changed_publication_metadata(
+    release_event: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    change: dict[str, str | bool | None],
+    diagnostic: str,
+) -> None:
+    """The shared gate checks title, notes, and immutable state."""
+    lookup = release_publishing.lookup_release
+    monkeypatch.setattr(release_publishing, "lookup_release", lambda *args: replace(lookup(*args), **change))
+    assert main(["--root", str(ROOT), "release", "gate", TAG]) == 1
+    assert diagnostic in capsys.readouterr().err
 
 
 @dataclass
@@ -238,6 +226,7 @@ class PublicationProvider:
     """Provider state and retained owner bytes for the final publication boundary."""
 
     accepted: Path
+    receipt: Path
     release: release_assets.GitHubRelease
     calls: list[str]
     failure: str = "none"
@@ -255,6 +244,8 @@ def sealed_publication(release_event: dict[str, Any], monkeypatch: pytest.Monkey
         for index, role in enumerate(release_candidate.ROLES, 1)
     ]
     target = release_assets.ReleaseTarget("acgetchell/delaunay", TAG, 42, SHA, TAG)
+    receipt = tmp_path / "target.json"
+    receipt.write_bytes(release_assets.serialize_release_target(target))
     original = release_candidate.DraftTransfer(target, "a" * 64, "b" * 64, release_candidate.OriginalAssets(*assets))
     attached = release_candidate.AssetAssertion(release_candidate.archive_name(TAG), 5, original.assets.archive.sha256)
     transfer = release_candidate.PublicationTransfer(original, attached)
@@ -270,9 +261,10 @@ def sealed_publication(release_event: dict[str, Any], monkeypatch: pytest.Monkey
         immutable=False,
         prerelease=False,
         title=TAG,
+        body=changelog.notes(POLICY, TAG)[0],
         assets=(*tuple((asset.name, asset.identifier, 100, asset.sha256) for _, asset in transfer.role_assertions()), (index.name, 6, 100, index.sha256)),
     )
-    state = PublicationProvider(accepted, release, [])
+    state = PublicationProvider(accepted, receipt, release, [])
     monkeypatch.setattr(release_publishing, "lookup_release", lambda *_args: state.release)
 
     def gate(name: str, result: Path, *_args: object) -> Path:
@@ -283,8 +275,8 @@ def sealed_publication(release_event: dict[str, Any], monkeypatch: pytest.Monkey
         return result
 
     monkeypatch.setattr(release_candidate, "verify_existing", lambda *args: gate("acceptance", accepted, *args))
-    monkeypatch.setattr(release_candidate, "preparation_target", lambda *args: gate("receipt", sealed, *args))
-    monkeypatch.setattr(release_candidate, "seal", lambda *args: gate("assets", sealed, *args))
+    monkeypatch.setattr(release_candidate, "preparation_target", lambda *args: gate("receipt", receipt, *args))
+    monkeypatch.setattr(release_candidate, "seal", lambda *args, **_kwargs: gate("assets", sealed, *args))
     monkeypatch.setattr(release_candidate, "shared_main", lambda *_args: pytest.fail("publication must not select a fresh draft by tag"))
     monkeypatch.setattr(release_candidate, "publish_release_asset", lambda *_args, **_kwargs: pytest.fail("publication must never repair attachments"))
 
@@ -314,6 +306,7 @@ def sealed_publication(release_event: dict[str, Any], monkeypatch: pytest.Monkey
         "none",
         "acceptance",
         "receipt",
+        "receipt-target",
         "assets",
         "draft",
         "asset",
@@ -332,6 +325,9 @@ def test_publish_requires_original_acceptance_receipt_and_assets(sealed_publicat
     state.failure = failure
     if failure == "draft":
         state.release = replace(state.release, identifier=43)
+    elif failure == "receipt-target":
+        original = release_assets.parse_release_target(state.receipt.read_bytes())
+        state.receipt.write_bytes(release_assets.serialize_release_target(replace(original, release_id=43)))
     elif failure == "asset":
         state.release = replace(state.release, assets=tuple((name, identifier + 10, size, digest) for name, identifier, size, digest in state.release.assets))
     elif failure == "missing-asset":
@@ -353,7 +349,9 @@ def test_publish_requires_original_acceptance_receipt_and_assets(sealed_publicat
             release_candidate.publish_draft(ROOT, tmp_path / "owner", "reviewed", TAG)
         assert state.calls.count("publish") == 1
     else:
-        with pytest.raises(ValueError, match=r"original evidence|reviewed release|asset identity|reviewed acceptance|required release asset"):
+        with pytest.raises(
+            ValueError, match=r"original evidence|authenticated draft receipt|reviewed release|asset identity|reviewed acceptance|required release asset"
+        ):
             release_candidate.publish_draft(ROOT, tmp_path / "owner", "reviewed", TAG)
         assert "publish" not in state.calls
 
@@ -392,60 +390,62 @@ def test_workflow_limits_credentials_and_verifies_clean_packages() -> None:
     assert "--all-features" in commands
     assert "--allow-dirty" not in commands
     assert "--no-verify" not in commands
-    gate_dependencies = {item["recipe"] for item in inspect_justfile(ROOT).recipes["release-gate"]["dependencies"]}
-    assert "_release-notes-check" in gate_dependencies
 
 
-def test_oidc_job_installs_only_minimal_locked_publication_tools() -> None:
-    """The credential-capable job excludes local code and managed development builds."""
+def test_registry_jobs_select_external_cargo_only_setup() -> None:
+    """Both sides of approval use the locked release-tool setup."""
     workflow = yaml.safe_load(WORKFLOW.read_bytes())
-    steps = workflow["jobs"]["publish"]["steps"]
-    rendered = yaml.safe_dump(steps)
-    assert "setup-just" not in rendered
-    assert "toolchain sync" not in rendered
-    assert "toolchain run" not in rendered
-    setup_uv = next(step for step in steps if step.get("uses", "").startswith("astral-sh/setup-uv@"))
-    shared_setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
-    assert setup_uv["uses"] == shared_setup["runs"]["steps"][0]["uses"]
-    assert setup_uv["with"] == {"version-file": "pyproject.toml", "enable-cache": False}
-    bootstrap = next(step for step in steps if step.get("name") == "Install locked publication tooling")
-    assert "uv sync --locked --managed-python --only-group tooling --no-install-project" in bootstrap["run"]
-    manifest = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert manifest["dependency-groups"]["tooling"] == ["research-repo-tools[python-tools]==0.2.8"]
+    for job in workflow["jobs"].values():
+        setup = next(step for step in job["steps"] if step.get("uses") == "$/.github/actions/setup-just")
+        assert setup["with"] == {"cache": "false", "release-only": "true"}
+        assert "release-dependency-builds" not in yaml.safe_dump(job)
 
 
-def test_oidc_rust_setup_exports_the_declared_minimal_toolchain(tmp_path: Path) -> None:
-    """Exercise channel selection and Actions environment output without installation."""
-    workflow = yaml.safe_load(WORKFLOW.read_bytes())
-    script = next(step["run"] for step in workflow["jobs"]["publish"]["steps"] if step.get("name") == "Install the declared minimal Rust toolchain")
-    output = tmp_path / "environment"
-    calls = tmp_path / "rustup-args"
-    runner = (
-        'uv() { [[ "$1 $2 $3 $4" == "run --locked --no-sync python" ]] || return 90; shift 4; '
-        f'{shlex.quote(Path(sys.executable).as_posix())} "$@"; }}\n'
-        f"rustup() {{ printf '%s\\n' \"$@\" > {shlex.quote(calls.as_posix())}; }}\n"
+def test_release_setup_exports_only_the_selected_toolchain(tmp_path: Path, native_console_scripts: Callable[[Path, str, dict[str, str]], Path]) -> None:
+    """Execute the release setup shell with only installer boundaries replaced."""
+    setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
+    script = next(step["run"] for step in setup["runs"]["steps"] if step.get("if") == "inputs.release-only == 'true'")
+    runner_os = "Windows" if os.name == "nt" else "macOS"
+    outside = native_console_scripts(
+        tmp_path,
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "def record():\n"
+        '    with Path(os.environ["TOOL_CALLS"]).open("a", encoding="utf-8") as log:\n'
+        '        print(" ".join(sys.argv[1:]), file=log)\n'
+        '    if sys.argv[2] == "export":\n'
+        '        Path(os.environ["PATH_OUTPUT"]).write_text(os.get_exec_path()[0], encoding="utf-8")\n',
+        {"research-repo-tools": "record"},
     )
-    result = run_command("bash", ["--noprofile", "--norc", "-euc", runner + script], cwd=ROOT, env={**os.environ, "GITHUB_ENV": output.as_posix()}, check=False)
+    path_output, calls = tmp_path / "path-output", tmp_path / "calls"
+    bootstrap = (
+        'uv() { [[ "$UV_PROJECT_ENVIRONMENT" == "$RUNNER_TEMP/release-tools" ]] && '
+        '[[ "$*" == "sync --locked --managed-python --no-default-groups --no-install-project" ]] && '
+        'environment="$FIXTURE_ENV"; }\n'
+    )
+    environment = os.environ | {
+        "RUNNER_TEMP": tmp_path.as_posix(),
+        "RUNNER_OS": runner_os,
+        "PATH_OUTPUT": path_output.as_posix(),
+        "TOOL_CALLS": calls.as_posix(),
+        "FIXTURE_ENV": outside.parent.as_posix(),
+    }
+    result = run_command("bash", ["-euc", bootstrap + script], cwd=ROOT, env=environment, check=False)
     assert result.returncode == 0, result.stderr
-    channel = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
-    assert calls.read_text(encoding="utf-8").splitlines() == ["toolchain", "install", channel, "--profile", "minimal", "--no-self-update"]
-    assert output.read_text(encoding="utf-8") == f"RUSTUP_TOOLCHAIN={channel}\n"
+    assert Path(path_output.read_text(encoding="utf-8").strip()).samefile(outside)
+    assert calls.read_text(encoding="utf-8").splitlines() == ["toolchain sync --tool cargo", "toolchain export --tool cargo"]
 
 
-@pytest.mark.parametrize("recipe", ["_release-notes-check", "release-verify"])
-def test_oidc_release_commands_cannot_resynchronize_dev(recipe: str) -> None:
-    """Real Just expansion must retain the minimal environment after setup."""
+def test_oidc_release_verification_uses_the_external_locked_cli() -> None:
+    """Real Just expansion preserves the external release environment."""
     workflow = yaml.safe_load(WORKFLOW.read_bytes())
-    commands = [line for step in workflow["jobs"]["publish"]["steps"] for line in step.get("run", "").splitlines()]
-    command = shlex.split(next(line for line in commands if line.endswith(f'{recipe} "$RELEASE_TAG"')))
-    assert command[:4] == ["just", "--set", "rrt", "uv run --locked --no-sync research-repo-tools"]
+    command = shlex.split(workflow["jobs"]["publish"]["steps"][-1]["run"])
     command[-1] = TAG
     command.insert(1, "--dry-run")
     result = run_command(command[0], command[1:], cwd=ROOT)
-    rendered = result.stdout + result.stderr
-    assert ("changelog notes" if recipe == "_release-notes-check" else "release verify") in rendered
-    assert "--group dev" not in rendered
-    assert "uv sync" not in rendered
+    assert (result.stdout + result.stderr).strip() == (
+        f"research-repo-tools toolchain run --tool cargo -- research-repo-tools release verify '{TAG}' --attempts 7 --interval 10"
+    )
 
 
 def test_account_payloads_match_workflow_identity_and_require_tag_review() -> None:
@@ -463,7 +463,6 @@ def test_account_payloads_match_workflow_identity_and_require_tag_review() -> No
     assert allowed["verified_allowed"] is False
     updates = tomllib.loads((ROOT / ".github/action-updates.toml").read_text(encoding="utf-8"))["actions"]
     assert "rust-lang/crates-io-auth-action" not in updates
-    assert "astral-sh/setup-uv" not in updates
     assert "acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml" not in updates
     auto_merge = (ROOT / ".github/workflows/dependabot-auto-merge.yml").read_text(encoding="utf-8")
     assert '".github/workflows/publish-crates.yml"' not in auto_merge
@@ -513,7 +512,7 @@ def test_preupload_shell_requires_evidence_and_proven_absence(tmp_path: Path, fa
     marker = tmp_path / "upload-reached"
     gate = "just() { return 1; }" if failure == "evidence" else "just() { return 0; }"
     registry_exit = expected_exit if failure in {"present", "unavailable"} else 0
-    runner = f"{gate}\nuv() {{ return {registry_exit}; }}\n"
+    runner = f"{gate}\nresearch-repo-tools() {{ return {registry_exit}; }}\n"
     result = run_command(
         "bash",
         ["--noprofile", "--norc", "-euc", runner + script + f"\ntouch {shlex.quote(marker.as_posix())}"],
@@ -527,21 +526,19 @@ def test_preupload_shell_requires_evidence_and_proven_absence(tmp_path: Path, fa
 @pytest.mark.parametrize(
     "failure_index",
     [
-        pytest.param(0, id="toolchain"),
-        pytest.param(1, id="metadata"),
-        pytest.param(2, id="default-package"),
-        pytest.param(3, id="all-features-package"),
+        pytest.param(0, id="metadata"),
+        pytest.param(1, id="default-package"),
+        pytest.param(2, id="all-features-package"),
         pytest.param(None, id="success"),
     ],
 )
 def test_packaging_stops_on_failure_and_completes_on_success(tmp_path: Path, failure_index: int | None) -> None:
     """Reach each packaging stage and preserve its failure without running later work."""
     expected_calls = [
-        "run --locked --no-sync --no-python-downloads research-repo-tools toolchain check",
-        "run --locked --no-sync --group dev research-repo-tools toolchain run -- research-repo-tools validation cargo-metadata --package delaunay",
-        "run --locked --no-sync --group dev research-repo-tools toolchain run -- cargo publish --locked --package delaunay --registry crates-io --dry-run",
+        "run --locked --no-sync research-repo-tools toolchain run --tool cargo -- research-repo-tools validation cargo-metadata --package delaunay",
+        "run --locked --no-sync research-repo-tools toolchain run --tool cargo -- cargo publish --locked --package delaunay --registry crates-io --dry-run",
         (
-            "run --locked --no-sync --group dev research-repo-tools toolchain run -- "
+            "run --locked --no-sync research-repo-tools toolchain run --tool cargo -- "
             "cargo publish --locked --package delaunay --registry crates-io --dry-run --all-features"
         ),
     ]

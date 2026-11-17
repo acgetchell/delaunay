@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 from research_repo_tools.cli import main
 from research_repo_tools.dependency_policy import load_policy
+from research_repo_tools.just_inspect import dry_run
 from research_repo_tools.process import run_command as run_safe_command
 
 import notebook_validation_rendering as validation_rendering
@@ -42,12 +43,12 @@ def write_stub(directory: Path, name: str, source: str) -> None:
 
 def test_published_pin_configuration_and_inventory() -> None:
     groups = MANIFEST["dependency-groups"]
-    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.2.8"]
+    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.2.9"]
     assert {"include-group": "tooling"} in groups["dev"]
-    assert version("research-repo-tools") == "0.2.8"
+    assert version("research-repo-tools") == "0.2.9"
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     package = next(item for item in lock["package"] if item["name"] == "research-repo-tools")
-    assert package["version"] == "0.2.8"
+    assert package["version"] == "0.2.9"
     assert package["source"] == {"registry": "https://pypi.org/simple"}
     policy = tomllib.loads((ROOT / "dependency-sources.toml").read_text(encoding="utf-8"))
     assert policy["sources"]["tooling"]["version"] == package["version"]
@@ -115,13 +116,14 @@ def test_release_preparation_fetches_the_declared_cargo_graphs(recording_recipes
 
     result, calls = invoke_recipe(recording_recipes, "release-dependency-builds")
     assert result.returncode == 0, result.stderr
-    managed = ["run", "--locked", "--no-sync", "--group", "dev", "research-repo-tools", "toolchain", "run", "--"]
+    selected = ["run", "--locked", "--no-sync", "research-repo-tools", "toolchain", "run", "--tool", "cargo", "--"]
     assert calls == [
         ["sync", "--locked", "--group", "dev"],
-        [*managed, "cargo", "fetch", "--locked"],
-        [*managed, "cargo", "fetch", "--locked", "--manifest-path", FIXTURE_MANIFEST],
-        [*managed, "research-repo-tools", "release", "dependency-builds"],
+        [*selected, "just", "release-fetch-dependencies"],
+        [*selected, "uv", "run", "--locked", "--no-sync", "research-repo-tools", "release", "dependency-builds"],
     ]
+    assert "cargo fetch --locked\n" in dry_run(ROOT, "release-fetch-dependencies").stderr
+    assert f"cargo fetch --locked --manifest-path {FIXTURE_MANIFEST}" in dry_run(ROOT, "release-fetch-dependencies").stderr
 
 
 @pytest.mark.parametrize("stale", [False, True])
@@ -259,14 +261,26 @@ def test_installed_review_discovers_consumer_instructions_and_propagates_failure
         "git",
         "import json, os, sys\nfrom pathlib import Path\n"
         "with Path(os.environ['GIT_LOG']).open('a') as stream: stream.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-        "print('a' * 40 if 'ls-remote' not in sys.argv else 'a' * 40 + '\\trefs/heads/main')\n",
+        "if 'ls-remote' in sys.argv:\n"
+        "    print('a' * 40 + '\\trefs/heads/main')\n"
+        "elif '--show-toplevel' in sys.argv:\n"
+        "    sys.stdout.buffer.write(os.fsencode(os.getcwd()) + b'\\n')\n"
+        "elif '--verify' in sys.argv or 'merge-base' in sys.argv:\n"
+        "    print('a' * 40)\n",
     )
     log = tmp_path / "review.json"
     monkeypatch.setenv("REVIEW_LOG", str(log))
     write_stub(
         tmp_path,
         "coderabbit",
-        f"import json, os, sys\nfrom pathlib import Path\nPath(os.environ['REVIEW_LOG']).write_text(json.dumps(sys.argv[1:]))\nsys.exit({status})\n",
+        "import json, os, sys\nfrom pathlib import Path\n"
+        "if sys.argv[1:] == ['--version']:\n"
+        "    print('0.7.7')\n"
+        "    sys.exit(0)\n"
+        "Path(os.environ['REVIEW_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
+        f"if {status} == 0:\n"
+        "    print(json.dumps({'type': 'complete', 'status': 'review_completed', 'findings': 0, 'reviewedFiles': ['AGENTS.md']}))\n"
+        f"sys.exit({status})\n",
     )
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
     options = ["--base", base] if base is not None else []
@@ -278,7 +292,8 @@ def test_installed_review_discovers_consumer_instructions_and_propagates_failure
         assert f"--base={base}" in arguments
     git_calls = [json.loads(line) for line in git_log.read_text(encoding="utf-8").splitlines()] if git_log.exists() else []
     assert any("ls-remote" in call for call in git_calls) == (base == "origin/main")
-    assert bool(git_calls) == (scope == "branch")
+    assert any("ls-files" in call and "--stage" in call for call in git_calls)
+    assert any("merge-base" in call for call in git_calls) == (scope == "branch")
     assert ("--uncommitted" in arguments) == (scope == "uncommitted")
 
 
@@ -375,7 +390,15 @@ def test_installed_review_rejects_stale_default_before_dispatch(tmp_path: Path, 
     write_stub(tmp_path, "git", "import sys\nprint('a' * 40 if 'ls-remote' not in sys.argv else 'b' * 40 + '\\trefs/heads/main')\n")
     marker = tmp_path / "started"
     monkeypatch.setenv("REVIEW_MARKER", str(marker))
-    write_stub(tmp_path, "coderabbit", "import os\nfrom pathlib import Path\nPath(os.environ['REVIEW_MARKER']).touch()\n")
+    write_stub(
+        tmp_path,
+        "coderabbit",
+        "import os, sys\nfrom pathlib import Path\n"
+        "if sys.argv[1:] == ['--version']:\n"
+        "    print('0.7.7')\n"
+        "    sys.exit(0)\n"
+        "Path(os.environ['REVIEW_MARKER']).touch()\n",
+    )
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
     assert main(["--root", str(ROOT), "review", "branch"]) == 1
     assert "git fetch origin" in capsys.readouterr().err

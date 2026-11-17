@@ -11,8 +11,8 @@ accepted archive without collecting timings. Review and publish the draft with
 The original acquisition and approval records live outside the checkout.
 Back up the owner directory printed by `performance-release`; Git commits and
 Actions artifacts do not replace that independent record. Final publication,
-native adoption evidence and the verified la-stack v0.5.3 comparison remain
-tracked in [v0.8.5 release tracker #696](https://github.com/acgetchell/delaunay/issues/696).
+native adoption and the live evidence handoff are tracked in
+[v0.8.5 release tracker #696](https://github.com/acgetchell/delaunay/issues/696).
 
 The changelog is generated for the target tag before the tag exists, so the
 release process does not require a temporary local tag.
@@ -30,6 +30,8 @@ reuses the declared citation date even after UTC midnight.
 ## Contents
 
 - [Reusable CI evidence](#reusable-ci-evidence)
+- [Release command alignment](#release-command-alignment)
+- [Validate shared-tooling adoption](#validate-shared-tooling-adoption)
 - [Prepare the environment](#prepare-the-environment)
 - [Step 1: Prepare the release PR](#step-1-prepare-the-release-pr)
 - [Step 2: Publish after the PR is merged](#step-2-publish-after-the-pr-is-merged)
@@ -39,7 +41,7 @@ reuses the declared citation date even after UTC midnight.
 
 ## Reusable CI evidence
 
-The published, locked `research-repo-tools==0.2.8` owns measurement, candidate,
+The published, locked `research-repo-tools==0.2.9` owns measurement, candidate,
 archive, signature and provider verification. Delaunay's adapters own its
 173-case scientific plan, independent local record selection, maintainer dispatch
 and Cargo reproduction.
@@ -85,6 +87,73 @@ Named selections are immutable review records, not a latest-success selector.
 Original local acquisition identity remains distinct from the final-main
 signature. No editable, sibling or Git dependency override supplies release
 authority.
+
+## Release command alignment
+
+The released [la-stack v0.5.3 guide](https://github.com/acgetchell/la-stack/blob/7165ed562f2e4611d201e574fc1f600a8ad8b33e/docs/RELEASING.md),
+[recipes](https://github.com/acgetchell/la-stack/blob/7165ed562f2e4611d201e574fc1f600a8ad8b33e/justfile)
+and [workflows](https://github.com/acgetchell/la-stack/tree/7165ed562f2e4611d201e574fc1f600a8ad8b33e/.github/workflows)
+define the comparison for [#693](https://github.com/acgetchell/delaunay/issues/693).
+The tag resolves to `7165ed562f2e4611d201e574fc1f600a8ad8b33e`. Its non-yanked
+registry checksum matches Delaunay's Cargo lock. The [release record](https://github.com/acgetchell/la-stack/issues/333)
+links the successful native and signed package-evidence run and records the
+remaining fresh-consumer failures from that release.
+
+- `update-version`, `changelog-release`, `release-version-check` and
+  `publish-check` synchronize release metadata and validate the candidate.
+  One acquisition supplies reports and the README. Delaunay retains its
+  scientific workload and default/all-feature Cargo package checks.
+- `release-evidence` inspects the original acquisition and signed final-main
+  evidence. `tag` revalidates the saved acceptance and writes the annotation
+  from the changelog section shown by `release-notes`. Delaunay binds the
+  signed Cargo archive digest before tagging.
+- A tag push prepares a draft with generated notes. `release-benchmarks TAG`
+  attaches the accepted archive without acquisition. RRT v0.2.9 authenticates
+  the draft handoff and journals the asset batch. Delaunay's dispatch command
+  stages those assets from the retained owner record.
+- `release-publish TAG` publishes the reviewed draft. `release-upload TAG`
+  freezes the same acceptance across `crates-io` approval and runs a nonbuilding
+  Cargo upload. Delaunay also proves matching-tool, byte-identical Cargo
+  reproduction before acquiring a registry token. `release-verify TAG` checks
+  the release and registry.
+
+## Validate shared-tooling adoption
+
+Complete shared-tooling adoption before preparing the consumer release. The
+RRT v0.2.9 command migration is owned by
+[#693](https://github.com/acgetchell/delaunay/issues/693); its published-package,
+native and operational acceptance belongs to
+[#696](https://github.com/acgetchell/delaunay/issues/696). The supplying release
+is tracked by [RRT #236](https://github.com/acgetchell/research-repo-tools/issues/236).
+The migration pin and the native and operational acceptance are tracked
+independently.
+
+Reconcile the manifest, lock, isolated runtime pins, Just recipes and composite
+actions against the published supplying package. A version bump does not rewrite
+existing workflow arguments. For source evidence verification, keep
+`tooling/release-evidence.toml` relative to the source `--root`; retain the
+external handoff copy for the isolated writer. Preserve path containment.
+
+Keep full contributor setup for local development. Release phases must select
+only their required tools, consistently through sync, check, export and run.
+Retain necessary native dependency preparation separately. Verification and
+recovery must not implicitly install unrelated tools, rebuild packages or acquire
+benchmarks. Preserve the explicit post-approval Cargo reproduction boundary.
+
+Execute the consumer's actual shell blocks and transitive recipes against the
+installed published package with inert provider boundaries. Require successful
+policy parsing and original handoff/journal recovery; retain failure sentinels
+for unintended setup, builds and acquisition. YAML presence checks alone do not
+establish that those commands work. Keep live permissions, tag-only writes and
+publication checks within their existing authorization boundaries.
+
+Record native checks and hosted cold/warm setup, operation and complete-job
+durations under #696 with source/package identities, runner, cache state,
+run/attempt, configured timeout and justified budget margin. Distinguish queue
+time and applicable approval waits from execution. Reuse eligible retained
+evidence only when its identity, context and freshness still match; command
+integration tests alone do not require another benchmark acquisition. Pending
+consumer validation does not block RRT publication.
 
 ## Prepare the environment
 
@@ -368,7 +437,7 @@ just release-evidence
 
 Wait for successful portable checks and native `CI` builds on Linux, macOS and Windows, plus Clippy
 and repository-rule SARIF checks, for this exact commit before proceeding.
-These retain the declared Rust 1.99.1 baseline, Delaunay's numerical and
+These retain the declared Rust 1.100.0 baseline, Delaunay's numerical and
 topological regressions, feature coverage, examples and benchmark compilation.
 The publishing policy in `pyproject.toml` binds all six check names to GitHub
 Actions app ID `15368`. CodeRabbit and human review remain protected-PR
@@ -404,9 +473,11 @@ test "$(git rev-parse "$TAG^{commit}")" = "$RELEASE_COMMIT"
 git --no-pager tag -l --format='%(contents)' "$TAG"
 ```
 
-`just tag` first runs `release-version-check`, then builds the annotation from
-the matching active or archived changelog section. For a changelog larger than
-125 kB, the annotation points to that section instead of embedding it.
+`just tag` runs `release-version-check` and revalidates the existing acceptance
+for the exact package tag before creating the annotation from its changelog
+section. If you reviewed a different named acceptance, pass the owner and
+selection as `just tag "$TAG" "$OWNER" NAME`. For a changelog larger than
+125 kB, the annotation points to the section.
 
 <a id="3-push-the-tag"></a>
 
@@ -435,9 +506,11 @@ checks. Its bounded verification job passes only inert notes, policy and native
 selection to an isolated writer. The writer has no checkout, project environment,
 registry token or OIDC permission.
 
-The writer creates or captures the stable draft through RRT's receipt protocol.
-Only the original tag-push attempt is eligible for automatic preparation.
-Keep its `draft-receipt.json`, `target.json` and immutable artifact locator.
+The writer creates or captures the stable draft through RRT's authenticated
+handoff. Only the original tag-push attempt is eligible for automatic preparation.
+Retain the original handoff artifact locator and complete `draft-state` artifact.
+The separately retained `draft-receipt.json` and `target.json` serve the attachment
+workflow's receipt lookup.
 A failed or uncertain creation requires inspection of that journal; rerunning
 a workflow does not authorize a second draft. Attachment retrieves the original
 receipt and requires its native selection to match the pre-tag acceptance.
@@ -528,8 +601,8 @@ runs even after an uncertain upload response.
 
 The separate main signer has attestation permissions only. Draft and attachment
 writers have no registry credentials; the upload job has no repository-write
-permission. Delaunay retains its stronger Cargo archive guarantee while #693's
-published-reference parity gate remains pending.
+permission. Delaunay retains its Cargo archive guarantee alongside the shared
+approval and upload flow.
 
 ### 8. Verify registry availability and downstream resolution
 
@@ -588,7 +661,9 @@ acquisition and published assets. The full reviewed digest is checked before
 approval and the exact resulting bytes are pinned afterward. Original records
 and published assets remain unchanged.
 
-An uncertain draft creation uses the original receipt's manual recovery protocol.
+For uncertain draft creation, use the original handoff and complete state
+directory with the shared authenticated recovery procedure.
+[RRT draft recovery](https://github.com/acgetchell/research-repo-tools/blob/v0.2.9/docs/PREPARING_DRAFTS.md)
 A published release with missing required assets cannot be repaired by attachment.
 
 If the crates.io upload fails or Cargo times out, inspect the original run and

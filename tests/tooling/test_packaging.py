@@ -197,7 +197,7 @@ def test_installed_package_without_extras_supports_imports_and_commands(tmp_path
     """The sdist-built wheel works with only its declared base dependencies."""
     repository = Path(__file__).parents[2]
     wheel_path, configuration = _build_support_wheel(repository, tmp_path)
-    assert "release_benchmarks" in configuration["tool"]["setuptools"]["py-modules"]
+    assert "release_candidate" in configuration["tool"]["setuptools"]["py-modules"]
     uv = shutil.which("uv")
     assert uv is not None
     consumer = tmp_path / "minimal-consumer"
@@ -229,7 +229,7 @@ def test_installed_notebook_extra_supports_default_lint_and_execute_modes(tmp_pa
     repository = Path(__file__).parents[2]
     wheel_path, configuration = _build_support_wheel(repository, tmp_path)
     assert set(configuration["project"]["optional-dependencies"]["notebooks"]) == {
-        "research-repo-tools[notebooks,python-tools]==0.2.8",
+        "research-repo-tools[notebooks,python-tools]==0.2.9",
     }
     with zipfile.ZipFile(wheel_path) as wheel:
         metadata_path = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))

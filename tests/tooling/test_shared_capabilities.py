@@ -231,7 +231,8 @@ def test_managed_release_credentials_are_scoped_to_supported_binary_sync() -> No
     steps = action["runs"]["steps"]
     authenticated = [step for step in steps if "GH_TOKEN" in step.get("env", {}) or "GITHUB_TOKEN" in step.get("env", {})]
     assert len(authenticated) == 1
-    assert authenticated[0]["run"] == ("uv run --locked --no-sync --no-python-downloads --no-env-file research-repo-tools toolchain sync-binaries")
+    assert authenticated[0]["name"] == "Install managed release binaries"
+    assert authenticated[0]["env"] == {"GH_TOKEN": "${{ github.token }}"}
     assert "prebuilt_tools" not in json.dumps(action)
     assert "uv sync --locked --managed-python --only-group tooling" in json.dumps(steps)
 

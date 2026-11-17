@@ -205,7 +205,7 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool declarations live in their authoritative consumer files: exact uv and Cargo
 tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
-in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.8` from PyPI
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.9` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
@@ -271,7 +271,7 @@ guide covers attested promotion of a temporary exact Git pin back to PyPI.
 `deps update-tools` is the separate
 legacy interface for user-installed tools; this repository uses managed TOML pins.
 
-[rrt-dependency-updates]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.8/docs/UPDATING_DEPENDENCIES.md
+[rrt-dependency-updates]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.9/docs/UPDATING_DEPENDENCIES.md
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
@@ -995,25 +995,29 @@ just citation-check
 ## GitHub Actions Validation
 
 `just github-actions-check` composes the strict selected-actions allowlist,
-`actionlint`, and Zizmor. The allowlist checks every workflow and nested local
-composite definition, including new files, through the installed shared parser.
+pin consistency, `actionlint`, and Zizmor. The allowlist checks every workflow
+and nested local composite definition, including new files, through the
+installed shared parser.
 
 Run with:
 
 ```bash
 just action-allowlist
+just action-pin-check
 just action-lint
 ```
 
 `just update-actions --dry-run` previews exact SHA and version-comment updates
-for workflow identities in `.github/action-updates.toml`. `--check` detects available updates without writing;
+for opted-in identities in `.github/action-updates.toml`. `--check` detects available updates without writing;
 omit the flag to apply them deliberately. This stage stays separate from
 `just update`. The publishing authentication action and privileged Dependabot
 workflow retain their dedicated review and are excluded from automatic updates.
-The upstream updater accepts workflow YAML only. setup-uv remains on the
-Dependabot path so its workflow and setup-composite references stay coupled.
-CodeQL uses an explicit action-release target because its latest GitHub release
-is a bundle tag that the shared updater rejects as a semantic version.
+The updater and offline pin check cover `.github/workflows` and the setup-just
+composite. Use `just update-actions` for `setup-uv` and CodeQL version updates.
+Advance the three CodeQL policy targets together to the reviewed action release.
+The checker requires a common CodeQL SHA, matching explicit targets, and
+consistent `setup-uv` pins across both locations. Dependabot's routine version
+updates exclude those four identities.
 
 `.github/settings/actions-selected.json` owns the explicit action identities and
 ref constraints. Both owner-exemption flags are false. Each approved CodeQL

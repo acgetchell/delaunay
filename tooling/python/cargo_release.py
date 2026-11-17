@@ -68,7 +68,7 @@ def create(root: Path, output: Path) -> None:
     metadata = parse_release_json(run_command("cargo", ["metadata", "--locked", "--no-deps", "--format-version", "1"], cwd=root).stdout)
     name = f"delaunay-{version}.crate"
     packages = Path(metadata["target_directory"]) / "package"
-    # Cargo 1.99.1 uses these two dry-run directories, not package/NAME.
+    # Cargo publish --dry-run retains the source and staged registry archives.
     source = packages / "tmp-crate" / name
     archive = source.read_bytes()
     if archive != (packages / "tmp-registry" / name).read_bytes():

@@ -34,50 +34,19 @@ jobs:
       - name: Install trusted package runner
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.7"
+          version: "0.13.8"
           enable-cache: false
           cache-python: false
       - name: Prepare read-only Cargo dependency inspection
         shell: bash
         run: |
           set -euo pipefail
-          toolchain="$(uvx --no-config --isolated --python 3.15 --from research-repo-tools==0.2.8 python -I -c \
+          toolchain="$(uvx --no-config --isolated --python 3.15 --from research-repo-tools==0.2.9 python -I -c \
             'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust-toolchain.toml").read_text())["toolchain"]["channel"])')"
           rustup toolchain install "$toolchain" --profile minimal --no-self-update
           printf 'RUSTUP_TOOLCHAIN=%s\n' "$toolchain" >> "$GITHUB_ENV"
           RUSTUP_TOOLCHAIN="$toolchain" cargo fetch --locked
           RUSTUP_TOOLCHAIN="$toolchain" cargo fetch --locked --manifest-path tests/fixtures/checkpoint_no_float_roundtrip/Cargo.toml
-      - name: Require protected main and native and SARIF checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: >-
-          uvx --no-config --isolated --no-cache --python 3.15
-          --from "research-repo-tools==0.2.8"
-          python -I "{0}"
-        run: |
-          import os
-          from pathlib import Path
-          from research_repo_tools.config import load
-          from research_repo_tools.process import run_command
-          from research_repo_tools.release_publishing import require_checks
-          from research_repo_tools.release_validation import api, parse_release_json
-          root = Path(os.environ["GITHUB_WORKSPACE"])
-          repository, commit = "acgetchell/delaunay", os.environ["GITHUB_SHA"]
-          metadata = api("", repository=repository)
-          branch = api("branches/main", repository=repository)
-          comparison = api(f"compare/{commit}...main", repository=repository)
-          if (metadata.get("default_branch") != "main" or branch.get("protected") is not True
-              or comparison.get("status") not in {"ahead", "identical"}):
-              raise ValueError("release source must belong to protected default main")
-          settings = load(root=root)
-          if settings.publishing is None:
-              raise ValueError("draft preparation requires the publishing check policy")
-          checks = parse_release_json(run_command(
-              "gh", ["api", "--paginate", "--slurp",
-                     f"repos/{repository}/commits/{commit}/check-runs?filter=latest&per_page=100"],
-              cwd=root,
-          ).stdout)
-          require_checks(checks, commit, settings.publishing.required_checks)
       - name: Verify tagged source and freeze native evidence and notes
         id: source
         env:
@@ -91,24 +60,20 @@ jobs:
           commit=$(git --no-pager rev-parse "$GITHUB_REF^{commit}")
           [[ "$commit" == "$GITHUB_SHA" && "$(git --no-pager rev-parse HEAD)" == "$commit" ]]
           git --no-pager merge-base --is-ancestor "$commit" origin/main
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch')" == main ]]
           mkdir "$RUNNER_TEMP/handoff"
-          cp tooling/release-evidence.toml "$RUNNER_TEMP/handoff/evidence.toml"
           runtime=(uvx --no-config --isolated --no-cache --python 3.15
-            --from 'research-repo-tools==0.2.8'
-            python -I -c 'import sys; from research_repo_tools.cli import main; sys.exit(main())')
-          "${runtime[@]}" --root "$GITHUB_WORKSPACE" release check "$RELEASE_TAG"
-          "${runtime[@]}" --root "$GITHUB_WORKSPACE" release evidence verify \
-            "$RUNNER_TEMP/handoff/evidence.toml" --checkout "$GITHUB_WORKSPACE" \
-            --commit "$commit" --version "${RELEASE_TAG#v}" \
-            --output "$RUNNER_TEMP/handoff/selection.json"
-          "${runtime[@]}" --root "$GITHUB_WORKSPACE" changelog notes "$RELEASE_TAG" > "$RUNNER_TEMP/handoff/notes.md"
-          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+            --from 'research-repo-tools==0.2.9' python -I -m research_repo_tools)
+          "${runtime[@]}" --root "$GITHUB_WORKSPACE" release assets plan \
+            tooling/release-evidence.toml --repository "$GITHUB_REPOSITORY" \
+            --event "$GITHUB_EVENT_NAME" --tag "$RELEASE_TAG" --commit "$commit" \
+            --output "$RUNNER_TEMP/handoff/handoff.json" --github-output "$GITHUB_OUTPUT"
       - name: Retain inert verified handoff
         id: handoff
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: draft-handoff-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/handoff/*
+          path: ${{ runner.temp }}/handoff/handoff.json
           if-no-files-found: error
           retention-days: 30
 
@@ -118,13 +83,14 @@ jobs:
     timeout-minutes: 15
     permissions:
       actions: read
+      checks: read
       contents: write
     steps:
       # No checkout, local action, project environment or handoff code executes here.
       - name: Install trusted package runner
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.7"
+          version: "0.13.8"
           enable-cache: false
           cache-python: false
       - name: Authenticate handoff and prepare the unpublished draft
@@ -139,17 +105,13 @@ jobs:
         # Run Python from the runner's script file, avoiding actionlint #651's stdin deadlock.
         shell: >-
           uvx --no-config --isolated --no-cache --python 3.15
-          --from "research-repo-tools==0.2.8"
+          --from "research-repo-tools==0.2.9"
           python -I "{0}"
         run: |
           import os
-          from functools import partial
           from pathlib import Path
-          from research_repo_tools.files import replace_many
-          from research_repo_tools.release_assets import serialize_release_target
-          from research_repo_tools.release_drafts import prepare_release_draft
-          from research_repo_tools.release_interfaces import load_evidence_policy
-          from research_repo_tools.release_validation import api, download_artifact, read_pages
+          from research_repo_tools.draft_workflow import DraftHandoffArtifact, prepare_authenticated_draft
+          from research_repo_tools.release_receipts import TagPushPolicy, TagSource
 
           root = Path.cwd()
           repository = os.environ["GITHUB_REPOSITORY"]
@@ -162,69 +124,32 @@ jobs:
               or os.environ["GITHUB_REF"] != "refs/tags/" + os.environ["RELEASE_TAG"]
               or os.environ["GITHUB_SHA"] != os.environ["RELEASE_COMMIT"]):
               raise ValueError("draft preparation requires the original exact tag push")
-          identifier = int(os.environ["HANDOFF_ID"])
-          artifact = api(f"actions/artifacts/{identifier}", repository=repository)
-          producer = artifact.get("workflow_run", {})
-          if not (
-              type(artifact.get("id")) is int and artifact["id"] == identifier
-              and artifact.get("expired") is False
-              and artifact.get("name") == f"draft-handoff-{run}-{attempt}"
-              and artifact.get("digest") == "sha256:" + os.environ["HANDOFF_SHA256"]
-              and type(producer.get("id")) is int and producer["id"] == run
-              and producer.get("head_sha") == os.environ["GITHUB_SHA"]
-          ):
-              raise ValueError("handoff artifact/run/digest identity differs")
-          current = api(f"actions/runs/{run}", repository=repository)
-          workflow = current.get("workflow_id")
-          if (type(current.get("id")) is not int or current["id"] != run
-              or type(workflow) is not int or workflow <= 0
-              or type(current.get("run_attempt")) is not int or current["run_attempt"] != attempt
-              or current.get("path") not in {
-                  ".github/workflows/prepare-release.yml",
-                  ".github/workflows/prepare-release.yml@" + os.environ["GITHUB_REF"],
-                  ".github/workflows/prepare-release.yml@" + os.environ["RELEASE_TAG"],
-              }
-              or current.get("event") != "push"
-              or current.get("head_branch") != os.environ["RELEASE_TAG"]
-              or current.get("head_sha") != os.environ["GITHUB_SHA"]):
-              raise ValueError("handoff producer attempt or event changed")
-          # Unfiltered history avoids the filtered workflow-run result cap.
-          history = read_pages(partial(api, repository=repository),
-                               f"actions/workflows/{workflow}/runs", "workflow_runs")
-          same_tag, seen = [], set()
-          for previous in history:
-              if (type(previous.get("id")) is not int or previous["id"] <= 0
-                  or type(previous.get("workflow_id")) is not int or previous["workflow_id"] != workflow
-                  or not isinstance(previous.get("event"), str)
-                  or not isinstance(previous.get("head_branch"), str)):
-                  raise ValueError("workflow history identity is incomplete")
-              if previous["id"] in seen:
-                  raise ValueError("workflow history contains duplicate runs")
-              seen.add(previous["id"])
-              if previous["event"] == "push" and previous["head_branch"] == os.environ["RELEASE_TAG"]:
-                  same_tag.append(previous["id"])
-          if same_tag != [run]:
-              raise ValueError("tag has prior or unproven preparation intent; recover the original journal")
-          handoff = root / "handoff"
-          download_artifact(repository, artifact, handoff, ("evidence.toml", "selection.json", "notes.md"))
-          latest = api(f"actions/runs/{run}", repository=repository)
-          if any(type(latest.get(key)) is not type(current.get(key)) or latest.get(key) != current.get(key)
-                 for key in ("id", "workflow_id", "run_attempt", "event", "head_branch", "head_sha", "path")):
-              raise ValueError("handoff producer changed during download")
-          target = prepare_release_draft(
-              root, repository, os.environ["RELEASE_TAG"], os.environ["RELEASE_COMMIT"],
-              policy=load_evidence_policy(handoff / "evidence.toml"),
-              expected=(handoff / "selection.json").read_bytes(), title=os.environ["RELEASE_TAG"],
-              notes=(handoff / "notes.md").read_bytes(), receipt=root / "draft-receipt.json", approve=True,
+          policy = TagPushPolicy(
+              repository, ".github/workflows/prepare-release.yml", "Prepare GitHub release",
+              (("verify", ("Verify tagged source and freeze native evidence and notes", "Retain inert verified handoff")),),
+              artifact_prefix="draft-handoff",
+              runner_labels=(("verify", ("ubuntu-latest",)),),
           )
-          replace_many({root / "target.json": serialize_release_target(target)})
+          prepare_authenticated_draft(
+              root, policy, TagSource(os.environ["GITHUB_REF"], os.environ["RELEASE_COMMIT"]),
+              DraftHandoffArtifact(run, 1, int(os.environ["HANDOFF_ID"]), os.environ["HANDOFF_SHA256"]),
+              output=root / "draft-state", executing_run_id=run, executing_attempt=attempt, approve=True,
+          )
       - name: Retain journal even after an unconfirmed creation
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: draft-receipt-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/draft-receipt.json
-            ${{ runner.temp }}/target.json
+            ${{ runner.temp }}/draft-state/draft-receipt.json
+            ${{ runner.temp }}/draft-state/target.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Retain complete authenticated preparation state
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: draft-state-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/draft-state/*
           if-no-files-found: ignore
           retention-days: 30

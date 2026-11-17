@@ -135,7 +135,7 @@ Add the crate to your project:
 cargo add delaunay
 ```
 
-- Rust 1.99.1 or newer. The minimum supported version is declared in
+- Rust 1.100.0 or newer. The minimum supported version is declared in
   `Cargo.toml`, while `rust-toolchain.toml` pins the exact repository toolchain.
 - `f64` coordinates for caller-facing construction, predicate, validation, and generator APIs.
 

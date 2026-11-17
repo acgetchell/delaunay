@@ -46,7 +46,7 @@ from research_repo_tools.criterion import (
 )
 from research_repo_tools.criterion_baselines import SavedSamplePlan, validate_saved_sample
 from research_repo_tools.criterion_inventory import DiscoveryCommand, DiscoveryPlan, discover_inventory, parse_inventory, serialize_inventory
-from research_repo_tools.evidence import Evidence, fingerprint_files, load_evidence, serialize_evidence
+from research_repo_tools.evidence import Evidence, load_evidence, serialize_evidence
 from research_repo_tools.files import publish_directory, replace_many
 from research_repo_tools.host_metadata import capture_host, parse_host
 from research_repo_tools.measurement import MeasurementConfig, capture_provenance, measure_checkout
@@ -81,8 +81,6 @@ from release_candidate import read_published_archive
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    from research_repo_tools.criterion_inventory import CriterionInventory
 
 logger = logging.getLogger(__name__)
 
@@ -2928,58 +2926,6 @@ def _criterion_sample_digest(criterion_dir: Path, sample_name: str) -> str:
     return digest.hexdigest()
 
 
-def _criterion_dependency_version(checkout: Path) -> str:
-    """Return the Criterion version selected in Cargo.lock."""
-    cargo_lock = checkout / "Cargo.lock"
-    data = tomllib.loads(_read_text(cargo_lock))
-    packages = data.get("package")
-    if not isinstance(packages, list):
-        msg = f"could not find package entries in {cargo_lock}"
-        raise TypeError(msg)
-    versions = {
-        package.get("version")
-        for package in packages
-        if isinstance(package, dict) and package.get("name") == "criterion" and isinstance(package.get("version"), str)
-    }
-    if len(versions) != 1:
-        msg = f"expected exactly one Criterion version in {cargo_lock}, found {sorted(versions)}"
-        raise ValueError(msg)
-    return cast("str", versions.pop())
-
-
-def _comparison_targets_for_suite(suite: str, targets: tuple[str, ...] | None) -> tuple[str, ...]:
-    """Validate and return an ordered target plan for provenance comparison."""
-    requested = BENCH_TARGET_SUITES.get(suite)
-    if requested is None:
-        msg = f"unsupported benchmark suite: {suite}"
-        raise ValueError(msg)
-    if targets is None:
-        return requested
-    ordered = tuple(target for target in requested if target in set(targets))
-    if not ordered or targets != ordered:
-        msg = f"comparison targets must be a non-empty canonical subset of suite {suite!r}: {targets!r}"
-        raise ValueError(msg)
-    return targets
-
-
-def _benchmark_harness_files(
-    checkout: Path,
-    suite: str,
-    comparison_targets: tuple[str, ...] | None = None,
-) -> tuple[Path, ...]:
-    """Return deterministic benchmark harness inputs for one suite."""
-    targets = _comparison_targets_for_suite(suite, comparison_targets)
-    relative_paths = [Path("benches") / f"{target}.rs" for target in targets]
-    common_dir = checkout / "benches" / "common"
-    if common_dir.is_dir():
-        relative_paths.extend(path.relative_to(checkout) for path in sorted(common_dir.rglob("*.rs")))
-    files = tuple(checkout / relative for relative in relative_paths if (checkout / relative).is_file())
-    if not files:
-        msg = f"no benchmark harness files found in {checkout}"
-        raise FileNotFoundError(msg)
-    return files
-
-
 def _path_content_digest(checkout: Path, paths: tuple[Path, ...]) -> bytes:
     """Hash relative paths and contents into a deterministic identity."""
     digest = hashlib.sha256()
@@ -2989,15 +2935,6 @@ def _path_content_digest(checkout: Path, paths: tuple[Path, ...]) -> bytes:
         digest.update(path.read_bytes())
         digest.update(b"\0")
     return digest.digest()
-
-
-def _benchmark_harness_digest(
-    checkout: Path,
-    suite: str,
-    comparison_targets: tuple[str, ...] | None = None,
-) -> str:
-    """Hash benchmark paths and contents into a deterministic harness identity."""
-    return _path_content_digest(checkout, _benchmark_harness_files(checkout, suite, comparison_targets)).hex()
 
 
 def _benchmark_identity_environment() -> list[tuple[str, str]]:
@@ -3062,41 +2999,14 @@ def _benchmark_configuration_digest(checkout: Path) -> str:
     return digest.hexdigest()
 
 
-def _measurement_plan_digest(
-    checkout: Path,
-    suite: str,
-    comparison_targets: tuple[str, ...] | None = None,
-    *,
-    inventory: CriterionInventory | None = None,
-) -> str:
-    """Hash the normalized benchmark method independently of measured source."""
-    targets = _comparison_targets_for_suite(suite, comparison_targets)
-    policy = None
-    policy_path = checkout / "target" / "criterion" / MEASUREMENT_POLICY_FILE
-    if inventory is not None or policy_path.is_file():
-        if inventory is None:
-            policy = parse_policy(policy_path.read_bytes())
-            inventory = parse_inventory((policy_path.parent / MEASUREMENT_INVENTORY_FILE).read_bytes())
-        else:
-            policy = _sampling_policy(inventory.expected)
-        selected_ids = tuple(name for target, names in inventory.suites if target in targets for name in names)
-        policy = replace(policy, expected=selected_ids, sample_count=None, sample_counts=tuple((name, policy.count_for(name)) for name in selected_ids))
-    if suite != "release-signal":
-        present = set(_bench_targets_for_suite(checkout, suite))
-        targets = tuple(target for target in targets if target in present)
-    return _sampling_plan_digest(targets, suite=suite, policy=policy)
-
-
 def _sampling_plan_digest(
     targets: tuple[str, ...],
     *,
-    suite: str | None = None,
     cargo_profile: str = BENCHMARK_BUILD_FLAVOR,
     policy: CompletePolicy | None = None,
 ) -> str:
     """Bind the selected method and policy without reading a previous run's files."""
-    if suite is None:
-        suite = next((name for name, planned in BENCH_TARGET_SUITES.items() if planned == targets), "selected-targets")
+    suite = next((name for name, planned in BENCH_TARGET_SUITES.items() if planned == targets), "selected-targets")
     if suite == "release-signal":
         target_set = set(targets)
         measurements = tuple(measurement for measurement in RELEASE_SIGNAL_MEASUREMENT_PLAN if measurement.target in target_set)
@@ -3146,25 +3056,6 @@ def _source_state(checkout: Path, *, version: str, ref: str) -> SourceState:
     )
 
 
-def _toolchain_state(
-    checkout: Path,
-    suite: str,
-    comparison_targets: tuple[str, ...] | None = None,
-    *,
-    inventory: CriterionInventory | None = None,
-) -> ToolchainState:
-    """Capture the Rust, Criterion, lockfile, and harness configuration."""
-    return ToolchainState(
-        rustc=_run_tool_output("rustc", ["--version"], cwd=checkout, env=_benchmark_env(checkout)),
-        criterion_version=_criterion_dependency_version(checkout),
-        cargo_profile=BENCHMARK_BUILD_FLAVOR,
-        cargo_lock_sha256=_sha256_file(checkout / "Cargo.lock"),
-        harness_sha256=_benchmark_harness_digest(checkout, suite, comparison_targets),
-        configuration_sha256=_benchmark_configuration_digest(checkout),
-        measurement_plan_sha256=_measurement_plan_digest(checkout, suite, comparison_targets, inventory=inventory),
-    )
-
-
 def _recorded_host_identity(repo_root: Path) -> HostIdentity:
     """Capture the current host for local measurement or publication."""
     host = capture_host(repo_root)
@@ -3174,13 +3065,6 @@ def _recorded_host_identity(repo_root: Path) -> HostIdentity:
         operating_system=host.os or "",
         architecture=host.architecture or "",
     )
-
-
-def _measurement_host(evidence: Evidence) -> HostIdentity:
-    """Use the host captured around this revision's measurement, not a later probe."""
-    source = dict(evidence.sources)["measurement"]
-    host = parse_host(dict(source.context)["host"].encode("utf-8"))
-    return HostIdentity(status="recorded", cpu=host.cpu or "", operating_system=host.os or "", architecture=host.architecture or "")
 
 
 def _cargo_manifest_bench_targets(worktree: Path) -> set[str]:
@@ -3211,139 +3095,6 @@ def _bench_targets_for_suite(worktree: Path, suite: str) -> tuple[str, ...]:
     if not present:
         return requested
     return tuple(target for target in requested if target in present)
-
-
-def _source_state_payload(source: SourceState) -> dict[str, object]:
-    """Return the release-archive JSON shape for source evidence."""
-    return {
-        "version": source.version,
-        "commit": source.commit,
-        "ref": source.ref,
-        "revision_timestamp": source.revision_timestamp,
-        "git_clean": source.git_clean,
-        "source_state_sha256": source.source_state_sha256,
-        "limitation": source.limitation,
-    }
-
-
-def _toolchain_state_payload(toolchain: ToolchainState) -> dict[str, str | None]:
-    """Return the release-archive JSON shape for toolchain evidence."""
-    return {
-        "rustc": toolchain.rustc,
-        "criterion_version": toolchain.criterion_version,
-        "cargo_profile": toolchain.cargo_profile,
-        "cargo_lock_sha256": toolchain.cargo_lock_sha256,
-        "harness_sha256": toolchain.harness_sha256,
-        "configuration_sha256": toolchain.configuration_sha256,
-        "measurement_plan_sha256": toolchain.measurement_plan_sha256,
-        "limitation": toolchain.limitation,
-    }
-
-
-def _host_identity_payload(host: HostIdentity) -> dict[str, str]:
-    """Return the release-archive JSON shape for host evidence."""
-    return {
-        "status": host.status,
-        "cpu": host.cpu,
-        "operating_system": host.operating_system,
-        "architecture": host.architecture,
-        "reason": host.reason,
-    }
-
-
-def _validate_release_measurement_command(metadata: Mapping[str, str]) -> None:
-    """Bind release metadata to the captured sampler's profile and full target plan."""
-    msg = "release metadata requires a captured perf sample-suite command for every release-signal target"
-    try:
-        command = json.loads(metadata.get("command", "null"))
-    except json.JSONDecodeError as error:
-        raise ValueError(msg) from error
-    if (
-        not isinstance(command, list)
-        or len(command) != 10 + len(RELEASE_SIGNAL_BENCH_TARGETS)
-        or any(not isinstance(part, str) or not part for part in command)
-        or command[2:6] != ["sample-suite", "--profile", BENCHMARK_BUILD_FLAVOR, "--bench-timeout"]
-        or command[7] != "--criterion-dir"
-        or command[9:] != ["--targets", *RELEASE_SIGNAL_BENCH_TARGETS]
-        or not command[6].isascii()
-        or not command[6].isdecimal()
-        or int(command[6]) <= 0
-    ):
-        raise ValueError(msg)
-
-
-def write_release_benchmark_metadata(*, repo_root: Path, tag: str, criterion_dir: Path, output: Path) -> None:
-    """Write versioned measurement provenance inside a release benchmark archive."""
-    resolved_criterion = criterion_dir.resolve(strict=False)
-    resolved_output = output.resolve(strict=False)
-    if resolved_output == resolved_criterion or resolved_output.is_relative_to(resolved_criterion):
-        msg = "release metadata output must be outside the Criterion directory it binds"
-        raise ValueError(msg)
-    normalized_tag = normalize_release_tag(tag)
-    observed_tag = _current_package_tag(repo_root)
-    if normalized_tag != observed_tag:
-        msg = f"release tag {normalized_tag} does not match package version {observed_tag}"
-        raise ValueError(msg)
-    source = _source_state(repo_root, version=observed_tag, ref=normalized_tag)
-    expected_commit = _expected_tag_commit(repo_root, normalized_tag)
-    if source.commit != expected_commit:
-        msg = f"release benchmark checkout commit {source.commit} does not match tag {normalized_tag} commit {expected_commit}"
-        raise ValueError(msg)
-    if source.git_clean is not True:
-        msg = f"release benchmark checkout for {normalized_tag} must be clean before metadata is written"
-        raise ValueError(msg)
-    clean_source_digest = hashlib.sha256(f"commit {expected_commit}\n".encode()).hexdigest()
-    if source.source_state_sha256 != clean_source_digest:
-        msg = f"release benchmark checkout source-state digest is inconsistent with clean tag {normalized_tag}"
-        raise ValueError(msg)
-    measurement = _load_fresh_measurement(criterion_dir)
-    inventory = parse_inventory((criterion_dir / MEASUREMENT_INVENTORY_FILE).read_bytes())
-    toolchain = _toolchain_state(repo_root, "release-signal", inventory=inventory)
-    measured_source = measurement.sources[0][1]
-    measured_metadata = dict(measured_source.context)
-    _validate_release_measurement_command(measured_metadata)
-    if (
-        measured_source.revision != source.commit
-        or measured_metadata.get("release") != observed_tag
-        or measured_metadata.get("delaunay.sample") != "new"
-        or json.loads(measured_metadata["tool.rustc"]) != toolchain.rustc
-        or measured_metadata.get("dependency.criterion") != toolchain.criterion_version
-    ):
-        msg = "release metadata differs from the captured measurement identity"
-        raise ValueError(msg)
-    host = _measurement_host(measurement)
-    if {name for name, _ in inventory.suites} != set(RELEASE_SIGNAL_BENCH_TARGETS):
-        msg = "release archive requires every release-signal target"
-        raise ValueError(msg)
-    sources = tuple(sorted((path.relative_to(repo_root) for pattern in MEASUREMENT_SOURCE_PATTERNS for path in repo_root.glob(pattern)), key=Path.as_posix))
-    harness = tuple(
-        sorted((path.relative_to(repo_root) for path in _benchmark_harness_files_for_targets(repo_root, RELEASE_SIGNAL_BENCH_TARGETS)), key=Path.as_posix),
-    )
-    if (
-        measured_metadata.get("fingerprint-schema") != "research-repo-tools/files/v1"
-        or json.loads(measured_metadata["source-inventory"]) != [path.as_posix() for path in sources]
-        or json.loads(measured_metadata["harness-inventory"]) != [path.as_posix() for path in harness]
-        or measured_source.source_sha256 != fingerprint_files(repo_root, sources)
-        or measured_source.harness_sha256 != fingerprint_files(repo_root, harness)
-    ):
-        msg = "release measurement source or harness differs from the clean tag checkout"
-        raise ValueError(msg)
-    if (
-        measured_metadata.get("delaunay.configuration-sha256") != toolchain.configuration_sha256
-        or measured_metadata.get("delaunay.measurement-plan-sha256") != toolchain.measurement_plan_sha256
-    ):
-        msg = "release configuration or measurement plan differs from the captured measurement identity"
-        raise ValueError(msg)
-    payload = {
-        "schema_version": RELEASE_ASSET_METADATA_SCHEMA_VERSION,
-        "source": _source_state_payload(source),
-        "measurement_commands": [list(command) for command in RELEASE_ASSET_MEASUREMENT_COMMANDS],
-        "completed_targets": list(RELEASE_SIGNAL_BENCH_TARGETS),
-        "toolchain": _toolchain_state_payload(toolchain),
-        "measurement_host": _host_identity_payload(host),
-        "criterion": {"content_sha256": _directory_digest(criterion_dir), "sample_name": "new"},
-    }
-    _write_text_atomic(output, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def _metadata_object(data: Mapping[str, object], field: str, *, source: Path) -> Mapping[str, object]:
@@ -4045,13 +3796,8 @@ def _add_performance_summary_subcommands(subparsers: argparse._SubParsersAction[
     _add_bench_timeout_arg(perf_summary_parser)
 
 
-def _add_release_performance_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Add the scientific single-run and historical-asset adapter commands."""
-    metadata_parser = subparsers.add_parser("create-release-benchmark-metadata", help="Write Delaunay release archive metadata")
-    metadata_parser.add_argument("--tag", required=True)
-    metadata_parser.add_argument("--criterion-dir", type=Path, required=True)
-    metadata_parser.add_argument("--output", type=Path, required=True)
-    _add_project_root_arg(metadata_parser)
+def _add_historical_asset_subcommand(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Add the historical-asset adapter command."""
     assets_parser = subparsers.add_parser("performance-github-assets", help="Inspect historical Delaunay release assets without acquiring new measurements")
     assets_parser.add_argument("current_tag", nargs="?")
     assets_parser.add_argument("baseline_tag", nargs="?")
@@ -4077,7 +3823,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
     _add_bench_compare_subcommand(subparsers)
     _add_release_signal_subcommand(subparsers)
     _add_performance_summary_subcommands(subparsers)
-    _add_release_performance_subcommands(subparsers)
+    _add_historical_asset_subcommand(subparsers)
 
     return parser
 
@@ -4190,21 +3936,6 @@ def _performance_request_options(
     )
 
 
-def _cmd_create_release_benchmark_metadata(args: argparse.Namespace, project_root: Path) -> None:
-    """Write the measurement sidecar consumed by GitHub-asset comparisons."""
-    try:
-        write_release_benchmark_metadata(
-            repo_root=project_root,
-            tag=args.tag,
-            criterion_dir=_path_from_root(project_root, args.criterion_dir),
-            output=_path_from_root(project_root, args.output),
-        )
-    except _RECOVERABLE_CLI_ERRORS as exc:
-        _print_benchmark_message(f"create-release-benchmark-metadata: {format_exception_diagnostics(exc)}", error=True)
-        sys.exit(1)
-    sys.exit(0)
-
-
 def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path) -> None:
     explicit_pair = args.current_tag is not None or args.baseline_tag is not None
     try:
@@ -4227,19 +3958,6 @@ def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path)
     _print_benchmark_message(f"Retained artifact bundle: {_artifact_paths_for_output(output).payload} and {_artifact_paths_for_output(output).provenance}")
     _print_benchmark_message(f"Current performance report: {report_id.current_tag} vs {report_id.baseline_tag}")
     sys.exit(0)
-
-
-def execute_release_performance_commands(args: argparse.Namespace, project_root: Path) -> None:
-    """Execute release performance report commands."""
-    handlers = {
-        "create-release-benchmark-metadata": _cmd_create_release_benchmark_metadata,
-        "performance-github-assets": _cmd_performance_github_assets,
-    }
-    handler = handlers.get(args.command)
-    if handler is None:
-        msg = f"Unknown release performance command: {args.command}"
-        raise ValueError(msg)
-    handler(args, project_root)
 
 
 def execute_performance_summary_commands(args: argparse.Namespace, project_root: Path) -> None:
@@ -4269,8 +3987,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
         "bench-compare": _cmd_bench_compare,
         "generate-summary": execute_performance_summary_commands,
         "run-release-signal": execute_performance_summary_commands,
-        "create-release-benchmark-metadata": execute_release_performance_commands,
-        "performance-github-assets": execute_release_performance_commands,
+        "performance-github-assets": _cmd_performance_github_assets,
     }
     handler = handlers.get(args.command)
     if handler is None:

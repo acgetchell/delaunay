@@ -22,12 +22,11 @@ import tarfile
 import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from unittest.mock import Mock, patch
 
 import pytest
-from research_repo_tools import measurement as shared_measurement
 from research_repo_tools.complete_runs import serialize_policy
 from research_repo_tools.criterion import SAMPLE_SCHEMA, Sample, read_estimate, serialize_sample
 from research_repo_tools.criterion_inventory import CriterionInventory, serialize_inventory
@@ -593,8 +592,9 @@ def test_benchmark_abort_prints_underlying_error_without_subscriber(tmp_path: Pa
     assert result.stderr == "benchmark failed: fixture contract failed\n"
 
 
-def test_release_measurement_plan_digest_binds_per_target_sampling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    full_sampling_digest = benchmark_utils._measurement_plan_digest(tmp_path, "release-signal")
+def test_release_measurement_plan_digest_binds_per_target_sampling(monkeypatch: pytest.MonkeyPatch) -> None:
+    targets = benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS
+    full_sampling_digest = benchmark_utils._sampling_plan_digest(targets)
     first, *remaining = benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
     monkeypatch.setattr(
         benchmark_utils,
@@ -609,50 +609,7 @@ def test_release_measurement_plan_digest_binds_per_target_sampling(tmp_path: Pat
         ),
     )
 
-    assert benchmark_utils._measurement_plan_digest(tmp_path, "release-signal") != full_sampling_digest
-
-
-def test_release_transition_digests_only_the_targets_shared_by_both_revisions(tmp_path: Path) -> None:
-    """A newly added harness must not alter provenance for the historical shared plan."""
-    current = tmp_path / "current"
-    baseline = tmp_path / "baseline"
-    for checkout in (current, baseline):
-        benches = checkout / "benches"
-        benches.mkdir(parents=True)
-        (benches / "ci_performance_suite.rs").write_text("fn shared() {}\n", encoding=UTF8)
-    (current / "benches" / "realization_validation.rs").write_text("fn added() {}\n", encoding=UTF8)
-    shared_targets = ("ci_performance_suite",)
-    for checkout in (current, baseline):
-        suites = (("ci_performance_suite", ("validation/case",)),)
-        if checkout == current:
-            suites += (("realization_validation", ("realization_validation/case",)),)
-        inventory = CriterionInventory(suites)
-        criterion = checkout / "target/criterion"
-        criterion.mkdir(parents=True)
-        (criterion / benchmark_utils.MEASUREMENT_INVENTORY_FILE).write_bytes(serialize_inventory(inventory))
-        (criterion / benchmark_utils.MEASUREMENT_POLICY_FILE).write_bytes(serialize_policy(benchmark_utils._sampling_policy(inventory.expected)))
-        assert benchmark_utils._measurement_plan_digest(
-            checkout, "release-signal", shared_targets, inventory=inventory
-        ) == benchmark_utils._measurement_plan_digest(checkout, "release-signal", shared_targets)
-
-    assert benchmark_utils._benchmark_harness_digest(
-        current,
-        "release-signal",
-        shared_targets,
-    ) == benchmark_utils._benchmark_harness_digest(
-        baseline,
-        "release-signal",
-        shared_targets,
-    )
-    assert benchmark_utils._measurement_plan_digest(
-        current,
-        "release-signal",
-        shared_targets,
-    ) == benchmark_utils._measurement_plan_digest(
-        baseline,
-        "release-signal",
-        shared_targets,
-    )
+    assert benchmark_utils._sampling_plan_digest(targets) != full_sampling_digest
 
 
 def test_measurement_child_routes_cargo_and_scientific_diagnostics_to_private_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1272,287 +1229,6 @@ def test_versioned_release_asset_rejects_placeholder_recorded_host(tmp_path: Pat
             extracted_root=extracted,
             archive=archive,
             acquisition_command=("gh", "release", "download", "v0.8.0"),
-        )
-
-
-def write_complete_release_samples(tmp_path: Path) -> tuple[Path, CriterionInventory]:
-    """Write raw cases with independent counts for every release-signal target."""
-    ids = ("validation/validate_3d/750", "random/insphere", "locate/no_hint/3d/case")
-    for name in ids:
-        write_named_estimate(tmp_path, tuple(name.split("/")), "new", 1_000_000.0)
-    criterion = tmp_path / "criterion"
-    inventory = CriterionInventory(tuple((target, (name,)) for target, name in zip(benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS, ids, strict=True)))
-    policy = benchmark_utils._sampling_policy(inventory.expected)
-    for name, count in zip(ids, (15, 100, 10), strict=True):
-        directory = criterion / name / "new"
-        (directory / "sample.json").write_text(json.dumps({"iters": [1] * count, "times": [100] * count}), encoding=UTF8)
-        estimates = json.loads((directory / "estimates.json").read_bytes())
-        estimates["mean"] = estimates["median"]
-        (directory / "estimates.json").write_text(json.dumps(estimates), encoding=UTF8)
-    (criterion / benchmark_utils.MEASUREMENT_INVENTORY_FILE).write_bytes(serialize_inventory(inventory))
-    (criterion / benchmark_utils.MEASUREMENT_POLICY_FILE).write_bytes(serialize_policy(policy))
-    return criterion, inventory
-
-
-def write_release_measurement_evidence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    tag: str,
-    cargo_profile: str = "perf",
-) -> tuple[Path, performance_artifacts.ToolchainState]:
-    """Retain release evidence while modeling only Git and native tool observations."""
-    (tmp_path / "Cargo.toml").write_text(f'[package]\nversion = "{tag.removeprefix("v")}"\n', encoding=UTF8)
-    source_paths = tuple(Path(name) for name in ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "src/lib.rs"))
-    harness_paths = (*(Path(f"benches/{target}.rs") for target in benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS), *source_paths[:3])
-    for path in set(source_paths + harness_paths) - {Path("Cargo.toml")}:
-        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / path).write_text("// measured input\n", encoding=UTF8)
-    criterion, inventory = write_complete_release_samples(tmp_path)
-    policy = benchmark_utils._sampling_policy(inventory.expected)
-    commit = "a" * 40
-    source = replace(
-        retained_performance_bundle().context.current_source,
-        version=tag,
-        ref=tag,
-        git_clean=True,
-        source_state_sha256=hashlib.sha256(f"commit {commit}\n".encode()).hexdigest(),
-    )
-    toolchain = retained_performance_bundle().context.current_toolchain
-    monkeypatch.setattr(benchmark_utils, "_source_state", lambda *_args, **_kwargs: source)
-    monkeypatch.setattr(benchmark_utils, "_expected_tag_commit", lambda *_args, **_kwargs: commit)
-    monkeypatch.setattr(
-        benchmark_utils,
-        "_toolchain_state",
-        lambda *_args, **_kwargs: replace(
-            toolchain,
-            configuration_sha256=benchmark_utils._benchmark_configuration_digest(tmp_path),
-            measurement_plan_sha256=benchmark_utils._measurement_plan_digest(tmp_path, "release-signal", inventory=inventory),
-        ),
-    )
-    sample = Sample(tuple((name, read_estimate(criterion / name / "new/estimates.json")) for name in inventory.expected))
-    assert toolchain.criterion_version is not None
-    (tmp_path / "Cargo.lock").write_text(f'[[package]]\nname = "criterion"\nversion = "{toolchain.criterion_version}"\n', encoding=UTF8)
-    configuration_digest = benchmark_utils._benchmark_configuration_digest(tmp_path)
-    plan_digest = benchmark_utils._sampling_plan_digest(benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS, cargo_profile=cargo_profile, policy=policy)
-    toolchain = replace(
-        toolchain,
-        configuration_sha256=configuration_digest,
-        measurement_plan_sha256=plan_digest,
-    )
-    monkeypatch.setattr(shared_measurement, "resolve_revision", lambda *_args: commit)
-    monkeypatch.setattr(
-        shared_measurement,
-        "capture_host",
-        lambda *_args, **_kwargs: HostMetadata("Test OS", "test", "Test CPU", 4, 8, 4096, (("rustc", toolchain.rustc),)),
-    )
-    captured = shared_measurement.capture_provenance(
-        tmp_path,
-        shared_measurement.MeasurementConfig(
-            command=(
-                sys.executable,
-                str(Path(benchmark_utils.__file__).resolve()),
-                "sample-suite",
-                "--profile",
-                cargo_profile,
-                "--bench-timeout",
-                "7200",
-                "--criterion-dir",
-                str(criterion),
-                "--targets",
-                *benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS,
-            ),
-            sources=tuple(path.as_posix() for path in source_paths),
-            harness=tuple(path.as_posix() for path in harness_paths),
-            dependencies=(("criterion", "Cargo.lock"),),
-            context=(
-                ("delaunay.configuration-sha256", configuration_digest),
-                ("delaunay.measurement-plan-sha256", plan_digest),
-                ("delaunay.inventory", json.dumps(json.loads(serialize_inventory(inventory)))),
-                ("delaunay.sampling-policy", serialize_policy(policy).decode()),
-                ("delaunay.scientific-preflight", "passed"),
-                ("delaunay.sample", "new"),
-                ("delaunay.raw-sample-sha256", benchmark_utils._criterion_sample_digest(criterion, "new")),
-            ),
-        ),
-        tag,
-        mode="release",
-    )
-    measurement = Evidence(
-        serialize_sample(sample),
-        SAMPLE_SCHEMA,
-        (("measurement", captured),),
-    )
-    sample_payload, sample_manifest = serialize_evidence(measurement)
-    (criterion / "delaunay-sample.json").write_bytes(sample_payload)
-    (criterion / "delaunay-evidence.json").write_bytes(sample_manifest)
-    return criterion, toolchain
-
-
-@pytest.mark.parametrize("tag", ["v0.8.0", "v0.8.0+build.7"])
-@pytest.mark.parametrize("changed_input", [None, "src/lib.rs", "benches/ci_performance_suite.rs", "src/added.rs", "benches/common/added.rs"])
-@pytest.mark.parametrize("execution_case", [("native", "perf"), ("windows", "perf"), ("native", "release"), ("windows", "release")])
-def test_write_release_benchmark_metadata_binds_measurement_provenance(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    tag: str,
-    changed_input: str | None,
-    execution_case: tuple[str, str],
-) -> None:
-    path_ordering, cargo_profile = execution_case
-    if path_ordering == "windows":
-        monkeypatch.setattr(type(tmp_path), "__lt__", lambda first, second: PureWindowsPath(first.as_posix()) < PureWindowsPath(second.as_posix()))
-    criterion, toolchain = write_release_measurement_evidence(tmp_path, monkeypatch, tag, cargo_profile)
-    output = tmp_path / "metadata.json"
-
-    if cargo_profile != "perf":
-        output.write_bytes(b"previous release metadata\n")
-        with pytest.raises(ValueError, match="captured perf sample-suite command"):
-            benchmark_utils.write_release_benchmark_metadata(repo_root=tmp_path, tag=tag, criterion_dir=criterion, output=output)
-        assert output.read_bytes() == b"previous release metadata\n"
-        return
-
-    if changed_input is not None:
-        changed_path = tmp_path / changed_input
-        changed_path.parent.mkdir(parents=True, exist_ok=True)
-        changed_path.write_text("// restored clean tag differs from measured bytes\n", encoding=UTF8)
-        with pytest.raises(ValueError, match="source or harness differs"):
-            benchmark_utils.write_release_benchmark_metadata(repo_root=tmp_path, tag=tag, criterion_dir=criterion, output=output)
-        assert not output.exists()
-        return
-
-    benchmark_utils.write_release_benchmark_metadata(
-        repo_root=tmp_path,
-        tag=tag,
-        criterion_dir=tmp_path / "criterion",
-        output=output,
-    )
-
-    metadata = json.loads(output.read_text(encoding=UTF8))
-    assert metadata["schema_version"] == benchmark_utils.RELEASE_ASSET_METADATA_SCHEMA_VERSION
-    assert metadata["source"]["version"] == tag
-    assert metadata["source"]["ref"] == tag
-    assert metadata["toolchain"]["cargo_profile"] == "perf"
-    assert metadata["toolchain"]["configuration_sha256"] == toolchain.configuration_sha256
-    assert metadata["toolchain"]["measurement_plan_sha256"] == toolchain.measurement_plan_sha256
-    assert metadata["measurement_host"]["cpu"] == "Test CPU"
-    assert metadata["measurement_commands"] == [list(command) for command in benchmark_utils.RELEASE_ASSET_MEASUREMENT_COMMANDS]
-    assert metadata["completed_targets"] == list(benchmark_utils.RELEASE_SIGNAL_BENCH_TARGETS)
-    assert metadata["criterion"] == {
-        "content_sha256": benchmark_utils._directory_digest(tmp_path / "criterion"),
-        "sample_name": "new",
-    }
-
-
-@pytest.mark.parametrize(
-    "mutation", ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS", "CARGO_PROFILE_PERF_OPT_LEVEL", ".cargo/config.toml", "measurement-plan"]
-)
-def test_release_metadata_rejects_configuration_changes_after_measurement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str) -> None:
-    """Recomputed configuration must never relabel the original observations."""
-    if mutation not in {".cargo/config.toml", "measurement-plan"}:
-        monkeypatch.delenv(mutation, raising=False)
-    criterion, _toolchain = write_release_measurement_evidence(tmp_path, monkeypatch, "v0.8.0")
-    if mutation == ".cargo/config.toml":
-        config = tmp_path / mutation
-        config.parent.mkdir()
-        config.write_text('[build]\nrustflags = ["-C", "opt-level=1"]\n', encoding=UTF8)
-    elif mutation == "measurement-plan":
-        first, *remaining = benchmark_utils.RELEASE_SIGNAL_MEASUREMENT_PLAN
-        monkeypatch.setattr(benchmark_utils, "RELEASE_SIGNAL_MEASUREMENT_PLAN", (replace(first, sampling_mode="reduced"), *remaining))
-    else:
-        monkeypatch.setenv(mutation, "1" if mutation == "CARGO_PROFILE_PERF_OPT_LEVEL" else "-Copt-level=1")
-    output = tmp_path / "metadata.json"
-    output.write_bytes(b"previous release metadata\r\n")
-
-    with pytest.raises(ValueError, match="configuration or measurement plan differs from the captured"):
-        benchmark_utils.write_release_benchmark_metadata(repo_root=tmp_path, tag="v0.8.0", criterion_dir=criterion, output=output)
-
-    assert output.read_bytes() == b"previous release metadata\r\n"
-
-
-@pytest.mark.parametrize("missing_key", ["delaunay.configuration-sha256", "delaunay.measurement-plan-sha256"])
-def test_release_metadata_requires_captured_configuration_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_key: str) -> None:
-    """Legacy fresh evidence cannot acquire a missing identity during publication."""
-    criterion, _toolchain = write_release_measurement_evidence(tmp_path, monkeypatch, "v0.8.0")
-    measurement = benchmark_utils._load_fresh_measurement(criterion)
-    name, source = measurement.sources[0]
-    source = replace(source, context=tuple((key, value) for key, value in source.context if key != missing_key))
-    payload, manifest = serialize_evidence(replace(measurement, sources=((name, source),)))
-    (criterion / "delaunay-sample.json").write_bytes(payload)
-    (criterion / "delaunay-evidence.json").write_bytes(manifest)
-    output = tmp_path / "metadata.json"
-
-    with pytest.raises(ValueError, match="configuration or measurement plan differs from the captured"):
-        benchmark_utils.write_release_benchmark_metadata(repo_root=tmp_path, tag="v0.8.0", criterion_dir=criterion, output=output)
-
-    assert not output.exists()
-
-
-@pytest.mark.parametrize(
-    ("source", "message"),
-    [
-        (
-            replace(
-                retained_performance_bundle().context.current_source,
-                ref="v0.8.0",
-                commit="b" * 40,
-                git_clean=True,
-                source_state_sha256=hashlib.sha256(("commit " + "b" * 40 + "\n").encode()).hexdigest(),
-            ),
-            "does not match tag",
-        ),
-        (
-            replace(
-                retained_performance_bundle().context.current_source,
-                ref="v0.8.0",
-                git_clean=False,
-                source_state_sha256=hashlib.sha256(("commit " + "a" * 40 + "\n").encode()).hexdigest(),
-            ),
-            "must be clean",
-        ),
-        (
-            replace(
-                retained_performance_bundle().context.current_source,
-                ref="v0.8.0",
-                git_clean=True,
-                source_state_sha256="c" * 64,
-            ),
-            "source-state digest",
-        ),
-    ],
-)
-def test_write_release_benchmark_metadata_rejects_non_tag_source_before_writing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    source: performance_artifacts.SourceState,
-    message: str,
-) -> None:
-    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.0"\n', encoding=UTF8)
-    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
-    monkeypatch.setattr(benchmark_utils, "_source_state", lambda *_args, **_kwargs: source)
-    monkeypatch.setattr(benchmark_utils, "_expected_tag_commit", lambda *_args, **_kwargs: "a" * 40)
-    output = tmp_path / "metadata.json"
-
-    with pytest.raises(ValueError, match=message):
-        benchmark_utils.write_release_benchmark_metadata(
-            repo_root=tmp_path,
-            tag="v0.8.0",
-            criterion_dir=tmp_path / "criterion",
-            output=output,
-        )
-
-    assert not output.exists()
-
-
-def test_write_release_benchmark_metadata_rejects_output_inside_criterion(tmp_path: Path) -> None:
-    criterion_dir = tmp_path / "criterion"
-    criterion_dir.mkdir()
-
-    with pytest.raises(ValueError, match="outside the Criterion directory"):
-        benchmark_utils.write_release_benchmark_metadata(
-            repo_root=tmp_path,
-            tag="v0.8.0",
-            criterion_dir=criterion_dir,
-            output=criterion_dir / "metadata.json",
         )
 
 

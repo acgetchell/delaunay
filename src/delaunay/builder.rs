@@ -3060,13 +3060,12 @@ where
         let mut candidates_by_symbolic: FastHashMap<SymbolicSignature<D>, PeriodicCandidate<D>> =
             FastHashMap::default();
         for (ck, _) in full_dt.simplices() {
-            let Some(lifted_vertices) = normalize_simplex_lifted(ck) else {
+            let Some(lifted_ordered) = normalize_simplex_lifted(ck) else {
                 continue;
             };
             let in_domain = simplex_circumcenter_in_fundamental_domain(ck).unwrap_or(false);
-            let mut symbolic_signature = lifted_vertices.clone();
+            let mut symbolic_signature = lifted_ordered.clone();
             symbolic_signature.sort_unstable();
-            let lifted_ordered = lifted_vertices.clone();
             let mut periodic_facets: Vec<OrientedPeriodicFacet> = Vec::with_capacity(D + 1);
             for facet_idx in 0..=D {
                 let facet_key = Self::derive_periodic_facet_key(&lifted_ordered, facet_idx)?;

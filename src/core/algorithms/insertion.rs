@@ -2864,9 +2864,8 @@ where
     }
 
     #[cfg(debug_assertions)]
-    let conflict_set: FastHashSet<SimplexKey> = conflict_simplices
-        .map(|simplices| simplices.iter().copied().collect())
-        .unwrap_or_default();
+    let conflict_set: FastHashSet<SimplexKey> =
+        conflict_simplices.map_or_default(|simplices| simplices.iter().copied().collect());
     #[cfg(debug_assertions)]
     let new_simplices_set: FastHashSet<SimplexKey> = new_simplices.iter().copied().collect();
 
@@ -4397,11 +4396,7 @@ fn boundary_edge_split_facet_matches<U, V, const D: usize>(
         Orientation::DEGENERATE
     );
 
-    if !is_collinear {
-        return Ok(false);
-    }
-
-    Ok(true)
+    Ok(is_collinear)
 }
 
 /// Find all boundary facets visible from a point.

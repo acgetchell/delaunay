@@ -14,6 +14,16 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    # Maintainers update these coupled pins together with just update-actions.
+    ignore:
+      - dependency-name: "astral-sh/setup-uv"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "github/codeql-action/analyze"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "github/codeql-action/init"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "github/codeql-action/upload-sarif"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
     # Group version and security updates separately
     groups:
       github-actions:
