@@ -1,6 +1,7 @@
 """Regression tests for the public Just recipe surface."""
 
 import json
+import os
 import re
 import shlex
 import shutil
@@ -149,8 +150,9 @@ def test_feature_lane_reaches_ci_without_default_or_slow_test_runs() -> None:
     assert "slow-tests" not in rendered
     assert "--all-features" not in rendered
 
-    ci = dry_run(REPO_ROOT, "ci").stderr
     # Each target lane appears once in the aggregate, including its multiline filter.
+    # Render serially so the Python lane cannot split the Rust command block.
+    ci = dry_run(REPO_ROOT, "ci", env=os.environ | {"JUST_JOBS": "1"}).stderr
     for recipe in ("test-unit-features", "test-doc-features", "test-allocation"):
         commands = dry_run(REPO_ROOT, recipe).stderr
         commands = "\n".join(line for line in commands.splitlines() if "toolchain check" not in line)
@@ -534,13 +536,9 @@ def test_cargo_tool_guards_reuse_pinned_helper() -> None:
         "_ensure-cargo-edit",
         "_ensure-cargo-llvm-cov",
         "_ensure-cargo-machete",
-        "_ensure-dprint",
         "_ensure-git-cliff",
         "_ensure-nextest",
-        "_ensure-rumdl",
         "_ensure-samply",
-        "_ensure-taplo",
-        "_ensure-typos",
         "_ensure-zizmor",
     )
 

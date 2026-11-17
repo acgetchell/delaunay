@@ -12,7 +12,8 @@ perf_delaunay_binary := "target/perf/delaunay" + binary_extension
 # Invoke the locked shared CLI; managed execution verifies declared tools first.
 rrt := "uv run --locked --group dev research-repo-tools"
 # Cargo execution must not resynchronize Python while the local CI lanes overlap.
-managed := "uv run --locked --no-sync --group dev research-repo-tools toolchain run --"
+managed_run := "uv run --locked --no-sync --group dev research-repo-tools toolchain run"
+managed := managed_run + " --"
 # Hosted release jobs override these with their external, locked runtime.
 release_tool := "uv run --locked --no-sync research-repo-tools"
 release_python := "uv run --locked --no-sync python -I"
@@ -357,7 +358,7 @@ fmt:
 # Check Rust source formatting without modifying files.
 [group('validation')]
 fmt-check:
-    {{ managed }} cargo fmt --all -- --check
+    {{ managed_run }} --tool cargo -- cargo fmt --all -- --check
 
 # Check the external Actions allowlist, workflow syntax, and security audits.
 [group('validation')]
@@ -383,14 +384,14 @@ justfile-fmt-check:
 
 # Check Markdown formatting and raw line length.
 [group('validation')]
-markdown-check: _ensure-rumdl
+markdown-check:
     {{ rrt }} files check-lines
-    {{ managed }} research-repo-tools files run --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' -- rumdl check
+    {{ managed_run }} --tool rumdl -- research-repo-tools files run --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' -- rumdl check
 
 # Apply automatic Markdown fixes.
 [group('validation')]
-markdown-fix: _ensure-rumdl
-    {{ managed }} research-repo-tools files run --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' -- rumdl check --fix
+markdown-fix:
+    {{ managed_run }} --tool rumdl -- research-repo-tools files run --include '*.md' --exclude CHANGELOG.md --exclude 'docs/archive/**' --exclude 'docs/archives/changelog/**' -- rumdl check --fix
 
 # Launch configured JupyterLab with private session caches.
 [group('notebooks')]
@@ -951,8 +952,8 @@ shell-lint: _ensure-shellcheck
 
 # Spell check (typos)
 [group('validation')]
-spell-check: _ensure-typos
-    {{ managed }} research-repo-tools files run --exclude typos.toml -- typos --config typos.toml --force-exclude --exclude typos.toml --
+spell-check:
+    {{ managed_run }} --tool typos-cli -- research-repo-tools files run --exclude typos.toml -- typos --config typos.toml --force-exclude --exclude typos.toml --
 
 # Deliberately refresh the slow notebook-backed spherical README hero.
 [group('notebooks')]
@@ -1072,18 +1073,18 @@ toml-check: toml-parse-check toml-lint toml-fmt-check
 
 # Format tracked TOML files with Taplo.
 [group('validation')]
-toml-fix: _ensure-taplo
-    {{ managed }} research-repo-tools files run --include '*.toml' -- taplo fmt
+toml-fix:
+    {{ managed_run }} --tool taplo-cli -- research-repo-tools files run --include '*.toml' -- taplo fmt
 
 # Check tracked TOML formatting with Taplo.
 [group('validation')]
-toml-fmt-check: _ensure-taplo
-    {{ managed }} research-repo-tools files run --include '*.toml' -- taplo fmt --check
+toml-fmt-check:
+    {{ managed_run }} --tool taplo-cli -- research-repo-tools files run --include '*.toml' -- taplo fmt --check
 
 # Lint tracked TOML files with Taplo.
 [group('validation')]
-toml-lint: _ensure-taplo
-    {{ managed }} research-repo-tools files run --include '*.toml' -- taplo lint
+toml-lint:
+    {{ managed_run }} --tool taplo-cli -- research-repo-tools files run --include '*.toml' -- taplo lint
 
 # Check that tracked TOML files parse cleanly.
 [group('validation')]
@@ -1235,13 +1236,13 @@ yaml-check: yaml-fmt-check yaml-lint
 
 # Format tracked YAML/CFF files with dprint.
 [group('validation')]
-yaml-fix: _ensure-dprint
-    {{ managed }} research-repo-tools files run --include '*.yml' --include '*.yaml' --include CITATION.cff -- dprint fmt --incremental=false
+yaml-fix:
+    {{ managed_run }} --tool dprint -- research-repo-tools files run --include '*.yml' --include '*.yaml' --include CITATION.cff -- dprint fmt --incremental=false
 
 # Check tracked YAML/CFF formatting with dprint.
 [group('validation')]
-yaml-fmt-check: _ensure-dprint
-    {{ managed }} research-repo-tools files run --include '*.yml' --include '*.yaml' --include CITATION.cff -- dprint check --incremental=false
+yaml-fmt-check:
+    {{ managed_run }} --tool dprint -- research-repo-tools files run --include '*.yml' --include '*.yaml' --include CITATION.cff -- dprint check --incremental=false
 
 # Lint tracked YAML/CFF files with yamllint.
 [group('validation')]

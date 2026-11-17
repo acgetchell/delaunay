@@ -11,6 +11,9 @@ inputs:
   cache-scope:
     description: Consumer stage owning this compilation cache.
     default: shared
+  portable-only:
+    description: Install only the tooling for the Linux portable checks.
+    default: "false"
   release-only:
     description: Install locked release tooling outside the checkout and select only Cargo.
     default: "false"
@@ -39,7 +42,7 @@ runs:
       with:
         path: ${{ runner.os == 'Windows' && 'C:/rrt-build' || format('{0}/rrt-cargo-build', runner.temp) }}
         key: >-
-          cargo-build-v1-${{ runner.os }}-${{ runner.arch }}-${{
+          cargo-build-v1-${{ inputs.portable-only == 'true' && 'portable-' || '' }}${{ runner.os }}-${{ runner.arch }}-${{
             hashFiles('pyproject.toml', 'rust-toolchain.toml', 'uv.lock', 'Cargo.lock', '.python-version')
           }}
 
@@ -54,16 +57,22 @@ runs:
       env:
         # Only the release API lookup receives this token; child processes do not.
         GH_TOKEN: ${{ github.token }}
+        PORTABLE_ONLY: ${{ inputs.portable-only }}
       run: |
         set -euo pipefail
-        args=(run --locked --no-sync --no-python-downloads --no-env-file research-repo-tools toolchain sync-binaries)
+        args=(run --locked --no-sync --no-python-downloads --no-env-file research-repo-tools toolchain)
+        if [[ "$PORTABLE_ONLY" == "true" ]]; then
+          args+=(sync --tool dprint --tool rumdl)
+        else
+          args+=(sync-binaries)
+        fi
         if ! uv "${args[@]}"; then
           echo "::warning::Retrying managed release binary installation once"
           uv "${args[@]}"
         fi
 
     - name: Install declared tools from the locked package
-      if: inputs.release-only != 'true'
+      if: inputs.release-only != 'true' && inputs.portable-only != 'true'
       shell: bash
       env:
         RESEARCH_REPO_TOOLS_CARGO_BUILD_HOME: ${{ runner.os == 'Windows' && 'C:/rrt-build' || format('{0}/rrt-cargo-build', runner.temp) }}
@@ -80,6 +89,20 @@ runs:
         uv run --locked --no-sync --no-python-downloads research-repo-tools semgrep setup
         uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain export
         uv run --locked --no-sync --no-python-downloads research-repo-tools --version
+
+    - name: Install and export portable validation tools
+      if: inputs.release-only != 'true' && inputs.portable-only == 'true'
+      shell: bash
+      env:
+        RESEARCH_REPO_TOOLS_CARGO_BUILD_HOME: ${{ runner.temp }}/rrt-cargo-build
+      run: |
+        set -euo pipefail
+        cargo_tools=(--tool taplo-cli --tool typos-cli --tool zizmor)
+        uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain sync "${cargo_tools[@]}"
+        uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain run --tool cargo -- rustup component add rustfmt
+        uv sync --locked --managed-python --group dev
+        uv run --locked --no-sync --no-python-downloads research-repo-tools semgrep setup
+        uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain export "${cargo_tools[@]}" --tool dprint --tool rumdl
 
     - name: Install locked release tools and export the Cargo selection
       if: inputs.release-only == 'true'

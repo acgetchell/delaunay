@@ -142,8 +142,10 @@ def test_native_matrix_dispatches_every_stage_after_cache_preparation() -> None:
 
 def test_cache_owners_keep_tool_preparation_and_native_stage_outputs_separate() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_bytes())["jobs"]
+    portable = next(step for step in jobs["portable"]["steps"] if step.get("uses") == "$/.github/actions/setup-just")
     prepare = next(step for step in jobs["prepare"]["steps"] if step.get("uses") == "$/.github/actions/setup-just")
     native = next(step for step in jobs["native"]["steps"] if step.get("uses") == "$/.github/actions/setup-just")
+    assert portable["with"] == {"portable-only": "true", "consumer-cache": "false"}
     assert prepare["with"]["consumer-cache"] == "false"
     assert native["with"]["cache-scope"] == "${{ matrix.stage }}"
     setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
@@ -152,6 +154,7 @@ def test_cache_owners_keep_tool_preparation_and_native_stage_outputs_separate() 
     assert managed["if"] == "inputs.cache == 'true' && inputs.release-only != 'true'"
     assert "rrt-build" in managed["with"]["path"]
     assert "restore-keys" not in managed["with"]
+    assert "inputs.portable-only == 'true' && 'portable-' || ''" in managed["with"]["key"]
     for required in ("runner.os", "runner.arch", "pyproject.toml", "rust-toolchain.toml", "uv.lock", "Cargo.lock"):
         assert required in managed["with"]["key"]
     consumer = caches["Cache consumer Rust builds"]
@@ -167,7 +170,8 @@ def test_cache_owners_keep_tool_preparation_and_native_stage_outputs_separate() 
 
 
 @pytest.mark.parametrize("failures", [0, 1, 2])
-def test_binary_setup_retries_once_and_propagates_failure(failures: int) -> None:
+@pytest.mark.parametrize(("portable", "selection"), [("false", "sync-binaries"), ("true", "sync --tool dprint --tool rumdl")])
+def test_binary_setup_retries_once_and_propagates_failure(failures: int, portable: str, selection: str) -> None:
     """Execute the managed binary step with an installer that fails on demand."""
     setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
     step = next(step for step in setup["runs"]["steps"] if step["name"] == "Install managed release binaries")
@@ -179,10 +183,35 @@ uv() {{
     return 0
 }}
 """
-    result = run_command("bash", ["-euc", runner + step["run"]], check=False)
+    result = run_command("bash", ["-euc", runner + step["run"]], env=os.environ | {"PORTABLE_ONLY": portable}, check=False)
     assert result.returncode == (17 if failures == 2 else 0), result.stderr
-    command = "run --locked --no-sync --no-python-downloads --no-env-file research-repo-tools toolchain sync-binaries"
+    command = f"run --locked --no-sync --no-python-downloads --no-env-file research-repo-tools toolchain {selection}"
     assert [line for line in result.stdout.splitlines() if line.startswith("run ")] == [command] * (1 if failures == 0 else 2)
+
+
+def test_portable_setup_matches_the_managed_checks() -> None:
+    setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
+    steps = {step["name"]: step for step in setup["runs"]["steps"]}
+    full = steps["Install declared tools from the locked package"]
+    portable = steps["Install and export portable validation tools"]
+    assert full["if"] == "inputs.release-only != 'true' && inputs.portable-only != 'true'"
+    assert portable["if"] == "inputs.release-only != 'true' && inputs.portable-only == 'true'"
+    observed = run_command("bash", ["-euc", "uv() { printf '%s\\n' \"$*\"; }\n" + portable["run"]])
+    operations = [line.split(" research-repo-tools ", 1)[-1] for line in observed.stdout.splitlines()]
+    commands = dry_run(ROOT, "ci-portable").stderr
+    toolchain = [line.split(" toolchain ", 1)[1] for line in commands.splitlines() if " toolchain " in line]
+    assert all(line.startswith("run --tool ") for line in toolchain)
+    tools = {shlex.split(line)[2] for line in toolchain}
+    assert tools == {"cargo", "dprint", "rumdl", "taplo-cli", "typos-cli"}
+    assert "research-repo-tools zizmor check" in commands
+    cargo_tools = "--tool taplo-cli --tool typos-cli --tool zizmor"
+    assert operations == [
+        f"toolchain sync {cargo_tools}",
+        "toolchain run --tool cargo -- rustup component add rustfmt",
+        "sync --locked --managed-python --group dev",
+        "semgrep setup",
+        f"toolchain export {cargo_tools} --tool dprint --tool rumdl",
+    ]
 
 
 @pytest.mark.parametrize(("runner_os", "fallback"), [("Windows", "false"), ("Linux", "unset")])
