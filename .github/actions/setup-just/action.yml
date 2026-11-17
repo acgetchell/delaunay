@@ -30,7 +30,9 @@ runs:
       run: |
         $ErrorActionPreference = "Stop"
         $env:RESEARCH_REPO_TOOLS_HOME = "C:/rrt"
-        uv run --locked --managed-python --only-group tooling research-repo-tools ci export RESEARCH_REPO_TOOLS_HOME
+        # Cargo exhausted its retries on HTTP/2 framing errors on the hosted Windows runner.
+        $env:CARGO_HTTP_MULTIPLEXING = "false"
+        uv run --locked --managed-python --only-group tooling research-repo-tools ci export RESEARCH_REPO_TOOLS_HOME CARGO_HTTP_MULTIPLEXING
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     - name: Cache managed Cargo compilation
@@ -54,7 +56,13 @@ runs:
       env:
         # Only the release API lookup receives this token; child processes do not.
         GH_TOKEN: ${{ github.token }}
-      run: uv run --locked --no-sync --no-python-downloads --no-env-file research-repo-tools toolchain sync-binaries
+      run: |
+        set -euo pipefail
+        args=(run --locked --no-sync --no-python-downloads --no-env-file research-repo-tools toolchain sync-binaries)
+        if ! uv "${args[@]}"; then
+          echo "::warning::Retrying managed release binary installation once"
+          uv "${args[@]}"
+        fi
 
     - name: Install declared tools from the locked package
       if: inputs.release-only != 'true'

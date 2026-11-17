@@ -199,16 +199,26 @@ def test_wrong_release_identity_or_missing_asset_blocks_gate(release_event: dict
 
 
 @pytest.mark.parametrize(
-    ("changed", "value"),
-    [("immutable", False), ("immutable", None), ("title", "replacement title"), ("body", "replacement notes")],
+    ("change", "diagnostic"),
+    [
+        ({"immutable": False}, "published release must be immutable"),
+        ({"immutable": None}, "GitHub release lifecycle fields differ or are malformed"),
+        ({"title": "replacement title"}, "release title differs from the declared tag title"),
+        ({"body": "replacement notes"}, "release body differs from generated changelog notes"),
+    ],
 )
 def test_installed_gate_rejects_changed_publication_metadata(
-    release_event: dict[str, Any], monkeypatch: pytest.MonkeyPatch, changed: str, value: str | bool | None
+    release_event: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    change: dict[str, str | bool | None],
+    diagnostic: str,
 ) -> None:
     """The shared gate checks title, notes, and immutable state."""
     lookup = release_publishing.lookup_release
-    monkeypatch.setattr(release_publishing, "lookup_release", lambda *args: replace(lookup(*args), **{changed: value}))
+    monkeypatch.setattr(release_publishing, "lookup_release", lambda *args: replace(lookup(*args), **change))
     assert main(["--root", str(ROOT), "release", "gate", TAG]) == 1
+    assert diagnostic in capsys.readouterr().err
 
 
 @dataclass

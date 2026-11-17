@@ -128,7 +128,9 @@ only managed Cargo compilation output through RRT v0.2.8's supported build
 directory. That cache is keyed by OS, architecture and consumer tool/dependency
 declarations, without a broad restore prefix or installed executable cache.
 Windows retains the short `C:/rrt` installation and `C:/rrt-build` compilation
-roots. A cache miss rebuilds tools without removing a validator.
+roots and uses HTTP/1.1 for Cargo registry traffic after hosted HTTP/2 framing
+errors. Managed binary installation retries once after a failed attempt. A
+cache miss rebuilds tools without removing a validator.
 
 Preparation does not save consumer `target/` outputs. Each native stage owns a
 distinct consumer compilation cache, keyed by stage, OS, architecture, Rust

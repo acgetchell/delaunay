@@ -166,6 +166,25 @@ def test_cache_owners_keep_tool_preparation_and_native_stage_outputs_separate() 
     assert package["with"] == {"cache": "false", "release-only": "true"}
 
 
+@pytest.mark.parametrize("failures", [0, 1, 2])
+def test_binary_setup_retries_once_and_propagates_failure(failures: int) -> None:
+    """Execute the managed binary step with an installer that fails on demand."""
+    setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
+    step = next(step for step in setup["runs"]["steps"] if step["name"] == "Install managed release binaries")
+    runner = f"""attempts=0
+uv() {{
+    attempts=$((attempts + 1))
+    printf '%s\\n' "$*"
+    if (( attempts <= {failures} )); then return 17; fi
+    return 0
+}}
+"""
+    result = run_command("bash", ["-euc", runner + step["run"]], check=False)
+    assert result.returncode == (17 if failures == 2 else 0), result.stderr
+    command = "run --locked --no-sync --no-python-downloads --no-env-file research-repo-tools toolchain sync-binaries"
+    assert [line for line in result.stdout.splitlines() if line.startswith("run ")] == [command] * (1 if failures == 0 else 2)
+
+
 def reachable(recipes: dict[str, dict[str, Any]], name: str) -> set[str]:
     """Follow real Just dependencies without parsing recipe text."""
     return {name}.union(*(reachable(recipes, item["recipe"]) for item in recipes[name]["dependencies"]))
