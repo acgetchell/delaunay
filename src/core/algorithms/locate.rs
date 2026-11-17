@@ -2748,16 +2748,13 @@ mod tests {
                 "isolated conflict search failed\n{stdout}\n{}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            let Some((_, neighbors)) = stdout
+            let boundary = stdout
                 .lines()
                 .find(|line| line.contains("find_conflict_region: BFS boundary (non-conflict)"))
-                .and_then(|line| line.split_once("neighbors="))
-            else {
-                panic!("missing boundary diagnostic in {stdout}");
-            };
+                .and_then(|line| line.split_once("neighbors="));
             assert!(
-                neighbors.contains("Some("),
-                "missing shared neighbor: {neighbors}"
+                boundary.is_some_and(|(_, neighbors)| neighbors.contains("Some(")),
+                "boundary diagnostic did not report a shared neighbor\n{stdout}"
             );
             return;
         }

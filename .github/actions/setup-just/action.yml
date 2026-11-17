@@ -30,9 +30,7 @@ runs:
       run: |
         $ErrorActionPreference = "Stop"
         $env:RESEARCH_REPO_TOOLS_HOME = "C:/rrt"
-        # Cargo exhausted its retries on HTTP/2 framing errors on the hosted Windows runner.
-        $env:CARGO_HTTP_MULTIPLEXING = "false"
-        uv run --locked --managed-python --only-group tooling research-repo-tools ci export RESEARCH_REPO_TOOLS_HOME CARGO_HTTP_MULTIPLEXING
+        uv run --locked --managed-python --only-group tooling research-repo-tools ci export RESEARCH_REPO_TOOLS_HOME
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     - name: Cache managed Cargo compilation
@@ -71,7 +69,13 @@ runs:
         RESEARCH_REPO_TOOLS_CARGO_BUILD_HOME: ${{ runner.os == 'Windows' && 'C:/rrt-build' || format('{0}/rrt-cargo-build', runner.temp) }}
       run: |
         set -euo pipefail
-        uv run --locked --managed-python --only-group tooling research-repo-tools toolchain sync
+        (
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # Use HTTP/1.1 for managed Cargo tool installation after hosted HTTP/2 framing errors.
+            export CARGO_HTTP_MULTIPLEXING=false
+          fi
+          uv run --locked --managed-python --only-group tooling research-repo-tools toolchain sync
+        )
         uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain run -- uv sync --locked --managed-python --group dev --group notebooks
         uv run --locked --no-sync --no-python-downloads research-repo-tools semgrep setup
         uv run --locked --no-sync --no-python-downloads research-repo-tools toolchain export
@@ -86,7 +90,7 @@ runs:
         UV_PROJECT_ENVIRONMENT="$environment" uv sync --locked --managed-python --no-default-groups --no-install-project
         bin="$environment/bin"
         if [[ "$RUNNER_OS" == "Windows" ]]; then
-            bin="$environment/Scripts"
+            bin="$(cygpath -u "$environment/Scripts")"
         fi
         "$bin/research-repo-tools" toolchain sync --tool cargo
         PATH="$bin:$PATH" "$bin/research-repo-tools" toolchain export --tool cargo

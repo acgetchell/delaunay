@@ -185,6 +185,23 @@ uv() {{
     assert [line for line in result.stdout.splitlines() if line.startswith("run ")] == [command] * (1 if failures == 0 else 2)
 
 
+@pytest.mark.parametrize(("runner_os", "fallback"), [("Windows", "false"), ("Linux", "unset")])
+def test_cargo_http_fallback_is_scoped_to_managed_tool_installation(runner_os: str, fallback: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Execute setup and observe the Cargo override for each tooling command."""
+    setup = yaml.safe_load((ROOT / ".github/actions/setup-just/action.yml").read_bytes())
+    step = next(step for step in setup["runs"]["steps"] if step["name"] == "Install declared tools from the locked package")
+    runner = """uv() {
+    printf '%s %s\\n' "${CARGO_HTTP_MULTIPLEXING-unset}" "$*"
+}
+"""
+    monkeypatch.setenv("RUNNER_OS", runner_os)
+    monkeypatch.delenv("CARGO_HTTP_MULTIPLEXING", raising=False)
+    result = run_command("bash", ["-euc", runner + step["run"]])
+    calls = [line.split(maxsplit=1) for line in result.stdout.splitlines()]
+    assert calls[0] == [fallback, "run --locked --managed-python --only-group tooling research-repo-tools toolchain sync"]
+    assert {value for value, _ in calls[1:]} == {"unset"}
+
+
 def reachable(recipes: dict[str, dict[str, Any]], name: str) -> set[str]:
     """Follow real Just dependencies without parsing recipe text."""
     return {name}.union(*(reachable(recipes, item["recipe"]) for item in recipes[name]["dependencies"]))
