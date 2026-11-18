@@ -449,9 +449,13 @@ These references support abstract and geometric simplicial complexes, affine/geo
 realizations, and the topology-only manifold / PL-manifold validation logic in this library
 (facet degree, closed-boundary checks, and links of simplices).
 
+- Ambjørn, J., and Loll, R. "Non-perturbative Lorentzian Quantum Gravity, Causality and Topology Change."
+  *Nuclear Physics B* 536 (1998): 407–434. [§2](https://arxiv.org/abs/hep-th/9805108)
+  supplies the marked cylinder strip counts used to test explicit triangle gluings.
 - Dey, T. K., and Wang, Y. *Computational Topology for Data Analysis*. Cambridge University Press, 2022.
 - Edelsbrunner, H., and Harer, J. *Computational Topology: An Introduction*. AMS, 2010.
 - Hatcher, A. *Algebraic Topology*. Cambridge University Press, 2002.
+  §2.1 describes Δ-complex gluings, including multiple edges with shared endpoints.
 - <a id="lickorish1999"></a> Lickorish, W. B. R. "Simplicial Moves on Complexes and Manifolds." <!-- markdownlint-disable-line MD033 -->
   *Geometry & Topology Monographs* 2 (1999): 299-320.
   [§2](https://arxiv.org/html/math/9911256v1) defines simplex/complex joins,

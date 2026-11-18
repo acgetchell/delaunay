@@ -278,6 +278,8 @@ diagnostic, and `just run` workflows execute with the repository lockfile.
   `TopologyKind`.
 - `traits/global_topology_model.rs` - internal dimension-generic, `f64`-coordinate
   `GlobalTopologyModel<D>` trait and concrete topology models.
+- `triangle_gluing.rs` - intrinsically validated 2D triangle gluings with
+  independent edge identities, reversible edits, and versioned persistence.
 
 Proof-owner dependencies should remain
 `core::tds <- triangulation <- delaunay`; lower proof layers must not import

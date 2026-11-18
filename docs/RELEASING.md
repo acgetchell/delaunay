@@ -95,7 +95,10 @@ The released [la-stack v0.5.3 guide](https://github.com/acgetchell/la-stack/blob
 and [workflows](https://github.com/acgetchell/la-stack/tree/7165ed562f2e4611d201e574fc1f600a8ad8b33e/.github/workflows)
 define the comparison for [#693](https://github.com/acgetchell/delaunay/issues/693).
 The tag resolves to `7165ed562f2e4611d201e574fc1f600a8ad8b33e`. Its non-yanked
-registry checksum matches Delaunay's Cargo lock. The [release record](https://github.com/acgetchell/la-stack/issues/333)
+registry checksum matches the lockfile at the original Delaunay adoption
+revision [#699](https://github.com/acgetchell/delaunay/pull/699). The current
+Cargo lockfiles resolve [la-stack 0.5.4](https://crates.io/crates/la-stack/0.5.4).
+The [v0.5.3 release record](https://github.com/acgetchell/la-stack/issues/333)
 links the successful native and signed package-evidence run and records the
 remaining fresh-consumer failures from that release.
 
