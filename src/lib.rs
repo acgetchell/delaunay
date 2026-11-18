@@ -2426,7 +2426,7 @@ pub mod prelude {
 
     /// Topology validation & analysis utilities.
     pub mod topology {
-        /// Intrinsic 2D surfaces built from directed triangle and edge records.
+        /// Construct, edit, and check intrinsically glued 2D surfaces.
         pub mod triangle_gluing {
             pub use crate::topology::triangle_gluing::{
                 CellId, Cells, Component, Edge, EdgeId, EdgeUse, Edit, Triangle, TriangleGluing,

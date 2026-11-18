@@ -1,24 +1,31 @@
 //! Intrinsic 2D surfaces assembled from explicitly glued triangles.
 //!
 //! Each edge has a caller-chosen identity, so two edges can join the same
-//! vertices. A triangle specifies a directed cycle of three edge uses.
-//! Valid surfaces have one or two triangles per edge and a single path or
-//! cycle in every vertex link. Coordinates and geometric predicates are
-//! outside this representation.
+//! vertices. Paired sides use the same edge identity and specify their
+//! directions independently. Each triangle specifies a cycle of three side
+//! occurrences. Corners may identify after gluing, and the two ends of a
+//! loop edge remain distinct in its vertex link. Valid surfaces have one
+//! or two side uses per edge and a single path or cycle in every vertex link.
+//! Coordinates and geometric predicates are outside this representation.
 //!
 //! The [topology references] describe the PL vertex-link criterion and
 //! the Δ-complex construction behind this representation.
 //!
 //! [topology references]: https://github.com/acgetchell/delaunay/blob/main/REFERENCES.md#topological-manifolds-realizations-and-pl-topology-levels-3-4-validation
 
-use super::characteristics::{FVector, euler_characteristic};
-use super::traits::TopologyError;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+#![forbid(unsafe_code)]
+
+use super::characteristics::euler::euler_characteristic_wide;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use thiserror::Error;
 
+// =============================================================================
+// ERRORS
+// =============================================================================
+
 /// A rejected construction or edit of a triangle gluing.
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TriangleGluingError {
     /// Two records claim the same identity within one cell kind.
@@ -41,12 +48,6 @@ pub enum TriangleGluingError {
         /// Missing endpoint.
         vertex: VertexId,
     },
-    /// The two endpoints of an edge coincide.
-    #[error("edge {edge:?} has identical endpoints")]
-    LoopEdge {
-        /// Edge with coincident endpoints.
-        edge: EdgeId,
-    },
     /// A triangle references an absent edge.
     #[error("triangle {triangle:?} references missing edge {edge:?}")]
     MissingEdge {
@@ -55,38 +56,65 @@ pub enum TriangleGluingError {
         /// Missing edge.
         edge: EdgeId,
     },
-    /// The directed sides of a triangle fail to form a cycle.
-    #[error("triangle {triangle:?} has sides that do not form a directed cycle")]
-    OpenTriangle {
+    /// Two consecutive directed sides fail to meet at their shared corner.
+    #[error(
+        "triangle {triangle:?}: edge {preceding:?} ends at {end:?}, but edge {following:?} starts at {start:?}"
+    )]
+    TriangleBoundaryMismatch {
         /// Triangle with inconsistent sides.
         triangle: TriangleId,
+        /// Edge occurrence ending at the corner.
+        preceding: EdgeId,
+        /// Edge occurrence starting at the corner.
+        following: EdgeId,
+        /// End vertex of the preceding directed edge.
+        end: VertexId,
+        /// Start vertex of the following directed edge.
+        start: VertexId,
     },
-    /// An edge has no incident triangle or has more than two.
-    #[error("edge {edge:?} has {incidence} incident triangles, expected one or two")]
+    /// An edge has no incident side use or has more than two.
+    #[error("edge {edge:?} has {incidence} incident sides, expected one or two")]
     EdgeIncidence {
         /// Edge with invalid incidence.
         edge: EdgeId,
         /// Actual number of uses.
         incidence: usize,
     },
-    /// A vertex has no incident triangle or has a disconnected link.
+    /// A listed vertex has no incident triangle.
+    #[error("vertex {vertex:?} is isolated")]
+    IsolatedVertex {
+        /// Vertex without an incident triangle.
+        vertex: VertexId,
+    },
+    /// An incident vertex has a disconnected link.
     #[error("vertex {vertex:?} has {components} link components, expected one")]
-    VertexLink {
+    DisconnectedVertexLink {
         /// Vertex with an invalid neighborhood.
         vertex: VertexId,
         /// Number of connected components in its link.
         components: usize,
     },
+    /// A component admits no consistent orientation of its triangle sides.
+    #[error("component containing triangle {triangle:?} is nonorientable")]
+    NonOrientable {
+        /// Smallest triangle ID in the component.
+        triangle: TriangleId,
+    },
     /// A component's Euler characteristic exceeds the supported range.
-    #[error("component containing {triangle:?} has an unrepresentable Euler characteristic")]
-    EulerCharacteristic {
+    #[error(
+        "component containing {triangle:?} has Euler characteristic {value}, outside the isize range"
+    )]
+    EulerCharacteristicOutOfRange {
         /// A triangle identifying the component.
         triangle: TriangleId,
-        /// Numerical error with the exact value.
-        #[source]
-        source: Box<TopologyError>,
+        /// Exact alternating sum of the cell counts.
+        value: i128,
     },
 }
+
+// =============================================================================
+// CELL RECORDS
+// =============================================================================
 
 /// A stable vertex identity within a gluing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -120,7 +148,7 @@ pub enum CellId {
 pub struct Edge {
     /// Identity of this edge occurrence.
     pub id: EdgeId,
-    /// Distinct endpoints in reference order.
+    /// Endpoints in reference order. Both ends may use the same vertex ID.
     pub endpoints: [VertexId; 2],
 }
 
@@ -138,7 +166,7 @@ pub struct EdgeUse {
 pub struct Triangle {
     /// Identity of this triangle.
     pub id: TriangleId,
-    /// Sides forming a directed cycle through three distinct vertices.
+    /// Directed side occurrences in boundary order. IDs may repeat after gluing.
     pub sides: [EdgeUse; 3],
 }
 
@@ -183,12 +211,17 @@ pub struct Component {
     pub euler_characteristic: isize,
 }
 
+// =============================================================================
+// VALIDATED OWNER
+// =============================================================================
+
 /// A validated disjoint union of compact triangulated 2D manifolds with boundary.
 ///
-/// The empty gluing is valid. Nonempty gluings may contain parallel edges
-/// and nonorientable components. Identities are supplied by the caller and
-/// persist through edits and serialization. Serde uses a versioned envelope
-/// and validates the cell records again during deserialization.
+/// The empty gluing is valid. Nonempty gluings may contain loop edges, parallel
+/// edges, and nonorientable components. Specify paired triangle sides with
+/// the same edge ID and give identified corners the same vertex ID. Those
+/// caller-supplied identities persist through edits and serialization. Serde
+/// uses a versioned envelope and revalidates the cells during deserialization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TriangleGluing {
     cells: Cells,
@@ -268,6 +301,32 @@ impl TriangleGluing {
         self.components.as_slice()
     }
 
+    /// Requires every component to admit a coherent intrinsic orientation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TriangleGluingError::NonOrientable`] for the first
+    /// nonorientable component, in component order.
+    ///
+    /// ```rust
+    /// use delaunay::prelude::topology::triangle_gluing::{Cells, TriangleGluing, TriangleGluingError};
+    /// # fn main() -> Result<(), TriangleGluingError> {
+    /// let surface = TriangleGluing::try_new(Cells::default())?;
+    /// surface.validate_orientability()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn validate_orientability(&self) -> Result<(), TriangleGluingError> {
+        for component in &self.components {
+            if !component.orientable {
+                return Err(TriangleGluingError::NonOrientable {
+                    triangle: component.triangles[0],
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Validates a replacement and commits it atomically, returning its inverse.
     ///
     /// This checks the entire candidate surface. Each listed removal must
@@ -317,7 +376,26 @@ impl TriangleGluing {
     }
 }
 
-type EdgeIncidence = BTreeMap<EdgeId, Vec<(TriangleId, bool)>>;
+// =============================================================================
+// CELL AND TOPOLOGY VALIDATION
+// =============================================================================
+
+/// One triangle-side occurrence, including self-pairings within a triangle.
+#[derive(Clone, Copy)]
+struct IncidentSide {
+    triangle: TriangleId,
+    index: usize,
+    reversed: bool,
+}
+
+/// A link vertex distinguishes the two ends of an edge even on a loop.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct EdgeEnd {
+    edge: EdgeId,
+    at_end: bool,
+}
+
+type EdgeIncidence = BTreeMap<EdgeId, Vec<IncidentSide>>;
 type Adjacency<K> = BTreeMap<K, Vec<K>>;
 
 /// Canonicalizes records so equality and persistence depend on cell identities.
@@ -333,7 +411,7 @@ fn sort_unique<T>(records: &mut [T], id: impl Fn(&T) -> CellId) -> Result<(), Tr
 }
 
 /// Applies exact replacements to detached, sorted cell records.
-fn replace_cells<T: Copy + Eq>(
+fn replace_cells<T: Copy + PartialEq>(
     records: &mut Vec<T>,
     remove: &[T],
     insert: &[T],
@@ -363,10 +441,6 @@ fn replace_cells<T: Copy + Eq>(
 fn validate_cells(cells: &Cells) -> Result<EdgeIncidence, TriangleGluingError> {
     let mut incidence = EdgeIncidence::new();
     for edge in &cells.edges {
-        let [first, second] = edge.endpoints;
-        if first == second {
-            return Err(TriangleGluingError::LoopEdge { edge: edge.id });
-        }
         for vertex in edge.endpoints {
             if cells.vertices.binary_search(&vertex).is_err() {
                 return Err(TriangleGluingError::MissingVertex {
@@ -378,19 +452,26 @@ fn validate_cells(cells: &Cells) -> Result<EdgeIncidence, TriangleGluingError> {
         incidence.insert(edge.id, Vec::new());
     }
 
-    let mut links: BTreeMap<VertexId, Adjacency<EdgeId>> = BTreeMap::new();
+    let mut links: BTreeMap<VertexId, Adjacency<EdgeEnd>> = BTreeMap::new();
     for triangle in &cells.triangles {
         let vertices = triangle_vertices(&cells.edges, triangle)?;
         for (index, side) in triangle.sides.iter().enumerate() {
-            incidence
-                .entry(side.edge)
-                .or_default()
-                .push((triangle.id, side.reversed));
-            let previous = triangle.sides[(index + 2) % 3].edge;
+            incidence.entry(side.edge).or_default().push(IncidentSide {
+                triangle: triangle.id,
+                index,
+                reversed: side.reversed,
+            });
+            let previous = triangle.sides[(index + 2) % 3];
             connect(
                 links.entry(vertices[index]).or_default(),
-                previous,
-                side.edge,
+                EdgeEnd {
+                    edge: previous.edge,
+                    at_end: !previous.reversed,
+                },
+                EdgeEnd {
+                    edge: side.edge,
+                    at_end: side.reversed,
+                },
             );
         }
     }
@@ -403,11 +484,14 @@ fn validate_cells(cells: &Cells) -> Result<EdgeIncidence, TriangleGluingError> {
         }
     }
     for &vertex in &cells.vertices {
-        // A link node is an edge occurrence at this vertex. Its degree equals
-        // the edge incidence, so a connected link is a path or cycle.
-        let components = links.get(&vertex).map_or(0, component_count);
+        // Each edge end has degree equal to the edge's side incidence, so a
+        // connected link is a path or cycle, including a one-node cycle.
+        let link = links
+            .get(&vertex)
+            .ok_or(TriangleGluingError::IsolatedVertex { vertex })?;
+        let components = component_count(link);
         if components != 1 {
-            return Err(TriangleGluingError::VertexLink { vertex, components });
+            return Err(TriangleGluingError::DisconnectedVertexLink { vertex, components });
         }
     }
     Ok(incidence)
@@ -433,15 +517,21 @@ fn triangle_vertices(
             }
             Ok(endpoints)
         });
-    let [a, b] = first?;
-    let [next_b, c] = second?;
-    let [next_c, next_a] = third?;
-    if [a, b, c] != [next_a, next_b, next_c] {
-        return Err(TriangleGluingError::OpenTriangle {
-            triangle: triangle.id,
-        });
+    let endpoints = [first?, second?, third?];
+    for (index, &[_, end]) in endpoints.iter().enumerate() {
+        let next = (index + 1) % endpoints.len();
+        let [start, _] = endpoints[next];
+        if end != start {
+            return Err(TriangleGluingError::TriangleBoundaryMismatch {
+                triangle: triangle.id,
+                preceding: triangle.sides[index].edge,
+                following: triangle.sides[next].edge,
+                end,
+                start,
+            });
+        }
     }
-    Ok([a, b, c])
+    Ok(endpoints.map(|[start, _]| start))
 }
 
 /// Records both directions of an undirected adjacency, preserving multiplicity.
@@ -492,7 +582,7 @@ fn summarize_components(
         let mut orientable = true;
         while let Some((id, flip)) = pending.pop() {
             members.push(id);
-            for side in triangles[&id].sides {
+            for (index, side) in triangles[&id].sides.iter().enumerate() {
                 let uses = &incidence[&side.edge];
                 if seen_edges.insert(side.edge) {
                     let [first, second] = edges[&side.edge].endpoints;
@@ -501,17 +591,17 @@ fn summarize_components(
                         connect(&mut boundary, first, second);
                     }
                 }
-                for &(neighbor, reversed) in uses {
-                    if neighbor == id {
+                for &incident in uses {
+                    if incident.triangle == id && incident.index == index {
                         continue;
                     }
                     // Equal reference directions require exactly one face flip.
-                    let required = flip ^ (side.reversed == reversed);
-                    match orientation.entry(neighbor) {
+                    let required = flip ^ (side.reversed == incident.reversed);
+                    match orientation.entry(incident.triangle) {
                         Entry::Occupied(assigned) => orientable &= *assigned.get() == required,
                         Entry::Vacant(unassigned) => {
                             unassigned.insert(required);
-                            pending.push((neighbor, required));
+                            pending.push((incident.triangle, required));
                         }
                     }
                 }
@@ -520,12 +610,12 @@ fn summarize_components(
         members.sort_unstable();
         let vertex_count = vertices.len();
         let edge_count = seen_edges.len();
-        let euler_characteristic = euler_characteristic(&FVector {
-            by_dim: vec![vertex_count, edge_count, members.len()],
-        })
-        .map_err(|source| TriangleGluingError::EulerCharacteristic {
-            triangle: seed,
-            source: Box::new(source),
+        let value = euler_characteristic_wide(&[vertex_count, edge_count, members.len()]);
+        let euler_characteristic = isize::try_from(value).map_err(|_| {
+            TriangleGluingError::EulerCharacteristicOutOfRange {
+                triangle: seed,
+                value,
+            }
         })?;
         components.push(Component {
             triangles: members,
@@ -538,6 +628,10 @@ fn summarize_components(
     }
     Ok(components)
 }
+
+// =============================================================================
+// SERIALIZATION
+// =============================================================================
 
 const SCHEMA_VERSION: u32 = 1;
 
@@ -569,10 +663,247 @@ impl<'de> Deserialize<'de> for TriangleGluing {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let wire = GluingWire::deserialize(deserializer)?;
         if wire.schema_version != SCHEMA_VERSION {
-            return Err(serde::de::Error::custom(
-                "unsupported triangle gluing schema version",
-            ));
+            return Err(de::Error::custom(format_args!(
+                "unsupported triangle gluing schema version {}, expected {SCHEMA_VERSION}",
+                wire.schema_version,
+            )));
         }
-        Self::try_new(wire.cells).map_err(serde::de::Error::custom)
+        Self::try_new(wire.cells).map_err(de::Error::custom)
+    }
+}
+
+// =============================================================================
+// TESTS
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edge(id: u64, endpoints: [u64; 2]) -> Edge {
+        Edge {
+            id: EdgeId(id),
+            endpoints: endpoints.map(VertexId),
+        }
+    }
+
+    const fn side(id: u64, reversed: bool) -> EdgeUse {
+        EdgeUse {
+            edge: EdgeId(id),
+            reversed,
+        }
+    }
+
+    fn disk() -> Cells {
+        Cells {
+            vertices: (0..4).map(VertexId).collect(),
+            edges: vec![
+                edge(0, [0, 1]),
+                edge(1, [1, 2]),
+                edge(2, [2, 3]),
+                edge(3, [3, 0]),
+                edge(4, [0, 2]),
+            ],
+            triangles: vec![
+                Triangle {
+                    id: TriangleId(0),
+                    sides: [side(0, false), side(1, false), side(4, true)],
+                },
+                Triangle {
+                    id: TriangleId(1),
+                    sides: [side(4, false), side(2, false), side(3, false)],
+                },
+            ],
+        }
+    }
+
+    /// A Möbius band from one triangle with two sides paired in the same direction.
+    fn self_glued_band() -> Cells {
+        Cells {
+            vertices: vec![VertexId(0)],
+            edges: vec![edge(0, [0, 0]), edge(1, [0, 0])],
+            triangles: vec![Triangle {
+                id: TriangleId(0),
+                sides: [side(0, false), side(0, false), side(1, false)],
+            }],
+        }
+    }
+
+    #[test]
+    fn canonicalizes_each_cell_kind_by_identity() {
+        let expected = disk();
+        let mut cells = expected.clone();
+        cells.vertices.reverse();
+        cells.edges.reverse();
+        cells.triangles.reverse();
+
+        let gluing = TriangleGluing::try_new(cells).expect("square disk");
+        assert_eq!(gluing.cells(), &expected);
+        assert_eq!(
+            gluing.components()[0].triangles,
+            [TriangleId(0), TriangleId(1)]
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ids_even_with_different_records() {
+        let disk = disk();
+        let mut vertices = disk.clone();
+        vertices.vertices.push(VertexId(0));
+        assert_eq!(
+            TriangleGluing::try_new(vertices),
+            Err(TriangleGluingError::DuplicateCell {
+                cell: CellId::Vertex(VertexId(0)),
+            })
+        );
+
+        let mut edges = disk.clone();
+        edges.edges.push(edge(0, [0, 2]));
+        assert_eq!(
+            TriangleGluing::try_new(edges),
+            Err(TriangleGluingError::DuplicateCell {
+                cell: CellId::Edge(EdgeId(0)),
+            })
+        );
+
+        let mut triangles = disk;
+        triangles.triangles.push(Triangle {
+            id: TriangleId(0),
+            sides: triangles.triangles[1].sides,
+        });
+        assert_eq!(
+            TriangleGluing::try_new(triangles),
+            Err(TriangleGluingError::DuplicateCell {
+                cell: CellId::Triangle(TriangleId(0)),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_an_isolated_vertex() {
+        let mut cells = disk();
+        cells.vertices.push(VertexId(9));
+        assert_eq!(
+            TriangleGluing::try_new(cells),
+            Err(TriangleGluingError::IsolatedVertex {
+                vertex: VertexId(9),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_missing_references_and_unused_edges() {
+        let disk = disk();
+        let mut missing_vertex = disk.clone();
+        missing_vertex.edges[0].endpoints[1] = VertexId(99);
+        assert_eq!(
+            TriangleGluing::try_new(missing_vertex),
+            Err(TriangleGluingError::MissingVertex {
+                edge: EdgeId(0),
+                vertex: VertexId(99),
+            })
+        );
+
+        let mut missing_edge = disk.clone();
+        missing_edge.edges.remove(0);
+        assert_eq!(
+            TriangleGluing::try_new(missing_edge),
+            Err(TriangleGluingError::MissingEdge {
+                triangle: TriangleId(0),
+                edge: EdgeId(0),
+            })
+        );
+
+        let mut unused_edge = disk;
+        unused_edge.edges.push(edge(99, [0, 1]));
+        assert_eq!(
+            TriangleGluing::try_new(unused_edge),
+            Err(TriangleGluingError::EdgeIncidence {
+                edge: EdgeId(99),
+                incidence: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn self_paired_sides_constrain_orientation_and_allow_a_loop_boundary() {
+        let gluing = TriangleGluing::try_new(self_glued_band()).expect("Möbius band");
+        assert_eq!(
+            gluing.components(),
+            &[Component {
+                triangles: vec![TriangleId(0)],
+                vertex_count: 1,
+                edge_count: 2,
+                boundary_count: 1,
+                orientable: false,
+                euler_characteristic: 0,
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_disconnected_link_at_identified_loop_endpoints() {
+        let mut cells = self_glued_band();
+        cells.edges.extend([edge(2, [0, 0]), edge(3, [0, 0])]);
+        cells.triangles.push(Triangle {
+            id: TriangleId(1),
+            sides: [side(2, false), side(2, false), side(3, false)],
+        });
+        assert_eq!(
+            TriangleGluing::try_new(cells),
+            Err(TriangleGluingError::DisconnectedVertexLink {
+                vertex: VertexId(0),
+                components: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn failed_edit_preserves_owner_after_staging_removals() {
+        let mut gluing = TriangleGluing::try_new(disk()).expect("square disk");
+        let original = gluing.clone();
+        let edit = Edit {
+            remove: Cells {
+                vertices: vec![VertexId(3)],
+                edges: vec![edge(3, [3, 0])],
+                ..Cells::default()
+            },
+            insert: Cells {
+                edges: vec![edge(1, [0, 2])],
+                ..Cells::default()
+            },
+        };
+        assert_eq!(
+            gluing.try_apply(edit),
+            Err(TriangleGluingError::DuplicateCell {
+                cell: CellId::Edge(EdgeId(1)),
+            })
+        );
+        assert_eq!(gluing, original);
+    }
+
+    #[test]
+    fn missing_triangle_removal_preserves_owner() {
+        let mut gluing = TriangleGluing::try_new(disk()).expect("square disk");
+        let original = gluing.clone();
+        let missing = Triangle {
+            id: TriangleId(99),
+            ..original.cells().triangles[0]
+        };
+        let edit = Edit {
+            remove: Cells {
+                edges: vec![edge(3, [3, 0])],
+                triangles: vec![missing],
+                ..Cells::default()
+            },
+            ..Edit::default()
+        };
+        assert_eq!(
+            gluing.try_apply(edit),
+            Err(TriangleGluingError::EditMismatch {
+                cell: CellId::Triangle(missing.id),
+            })
+        );
+        assert_eq!(gluing, original);
     }
 }

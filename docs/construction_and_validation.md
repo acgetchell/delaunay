@@ -562,13 +562,20 @@ establish its realization proof independently.
 
 ### Abstract triangle gluings
 
-`delaunay::topology::triangle_gluing::TriangleGluing` owns a separate intrinsic
-2D surface contract. Use it when two edges can share both endpoints. The
-caller supplies vertex, edge, and triangle IDs and a directed cycle of edge
-uses for each triangle. Every edge joins distinct vertices and has one or
-two triangle uses. At each vertex, adjacency between incident edge IDs must
-form a single path or cycle. Component summaries report boundary circles,
-orientability, and Euler characteristic using edge occurrence counts.
+Use `delaunay::prelude::topology::triangle_gluing` for intrinsic 2D surfaces
+with explicitly paired sides. The caller supplies vertex, edge, and triangle
+IDs and a directed cycle of side uses for each triangle. To wrap two sides,
+assign them the same edge ID and assign the identified corners the same
+vertex IDs. Use different edge IDs for distinct edges with the same endpoints.
+This supports the square torus with two triangles, three edges, and one
+vertex. Both ends of each loop edge remain distinct in the vertex link.
+
+Each edge has one or two incident side uses. At each vertex, adjacency
+between the incident edge ends must form a single path or cycle. Component
+summaries report boundary circles, orientability, and Euler characteristic
+using edge occurrence counts. A twisted identification can produce a valid
+Möbius band. Use `validate_orientability()` to require the intrinsic
+orientation condition and obtain a typed error for a nonorientable component.
 
 Apply a local replacement by supplying its exact removed and inserted cell
 records. The owner validates the full candidate before publishing it and

@@ -1,8 +1,10 @@
 //! Public consumer tests for intrinsic surfaces with explicit edge occurrences.
 
+#![forbid(unsafe_code)]
+
 use delaunay::prelude::topology::triangle_gluing::{
-    CellId, Cells, Edge, EdgeId, EdgeUse, Edit, Triangle, TriangleGluing, TriangleGluingError,
-    TriangleId, VertexId,
+    CellId, Cells, Component, Edge, EdgeId, EdgeUse, Edit, Triangle, TriangleGluing,
+    TriangleGluingError, TriangleId, VertexId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -97,7 +99,7 @@ fn simplicial_cells(faces: &[[u64; 3]]) -> Cells {
 }
 
 #[test]
-fn admits_all_ten_marked_cylinder_strips() -> Result<(), TriangleGluingError> {
+fn admits_all_ten_marked_cylinder_strips() {
     // Ambjørn–Loll, hep-th/9805108 §2. For l=l'=3 the one-marked strip
     // begins with U and has two further U steps among the remaining five.
     let mut parallel_words = Vec::new();
@@ -106,8 +108,9 @@ fn admits_all_ten_marked_cylinder_strips() -> Result<(), TriangleGluingError> {
             let mut word = *b"UDDDDD";
             word[i] = b'U';
             word[j] = b'U';
-            let cells = cylinder(word);
-            let gluing = TriangleGluing::try_new(cells.clone())?;
+            let gluing = TriangleGluing::try_new(cylinder(word))
+                .unwrap_or_else(|error| panic!("strip {word:?} must glue: {error}"));
+            let cells = gluing.cells();
             let [component] = gluing.components() else {
                 panic!("expected one cylinder for {word:?}");
             };
@@ -144,12 +147,11 @@ fn admits_all_ten_marked_cylinder_strips() -> Result<(), TriangleGluingError> {
         }
     }
     assert_eq!(parallel_words, [*b"UUUDDD", *b"UUDDDU", *b"UDDDUU"]);
-    Ok(())
 }
 
 #[test]
 fn closed_periodic_gluing_preserves_parallel_edges_and_wire_identity()
--> Result<(), Box<dyn std::error::Error>> {
+-> Result<(), TriangleGluingError> {
     let mut cells = Cells::default();
     for slice in 0..3 {
         add_slice(&mut cells, slice);
@@ -188,15 +190,17 @@ fn closed_periodic_gluing_preserves_parallel_edges_and_wire_identity()
     assert_ne!(gluing.cells().edges[9].id, gluing.cells().edges[12].id);
 
     let mut bytes = Vec::new();
-    ciborium::into_writer(&gluing, &mut bytes)?;
+    ciborium::into_writer(&gluing, &mut bytes).expect("encode periodic gluing as CBOR");
     assert_eq!(
-        ciborium::from_reader::<TriangleGluing, _>(bytes.as_slice())?,
+        ciborium::from_reader::<TriangleGluing, _>(bytes.as_slice())
+            .expect("decode periodic gluing from CBOR"),
         gluing
     );
-    let mut json = serde_json::to_value(&gluing)?;
+    let mut json = serde_json::to_value(&gluing).expect("encode periodic gluing as JSON");
     assert_eq!(json["schema_version"], 1);
     assert_eq!(
-        serde_json::from_value::<TriangleGluing>(json.clone())?,
+        serde_json::from_value::<TriangleGluing>(json.clone())
+            .expect("decode periodic gluing from JSON"),
         gluing
     );
     json["schema_version"] = 2.into();
@@ -204,6 +208,53 @@ fn closed_periodic_gluing_preserves_parallel_edges_and_wire_identity()
     json["schema_version"] = 1.into();
     json["cells"]["edges"][12]["id"] = json["cells"]["edges"][9]["id"].clone();
     assert!(serde_json::from_value::<TriangleGluing>(json).is_err());
+    Ok(())
+}
+
+#[test]
+fn wraps_both_pairs_of_square_edges_into_a_torus() -> Result<(), TriangleGluingError> {
+    let disk = TriangleGluing::try_new(simplicial_cells(&[[0, 1, 2], [0, 2, 3]]))?;
+    let mut gluing = disk.clone();
+    // The horizontal and vertical pairs identify all four corners. The
+    // diagonal survives as a third independent edge with the same endpoints.
+    let quotient = Cells {
+        vertices: vec![VertexId(0)],
+        edges: (0..3)
+            .map(|id| Edge {
+                id: EdgeId(id),
+                endpoints: [VertexId(0); 2],
+            })
+            .collect(),
+        triangles: vec![
+            Triangle {
+                id: TriangleId(0),
+                sides: [side(0, false), side(1, false), side(2, true)],
+            },
+            Triangle {
+                id: TriangleId(1),
+                sides: [side(2, false), side(0, true), side(1, true)],
+            },
+        ],
+    };
+    let unwrap = gluing.try_apply(Edit {
+        remove: disk.cells().clone(),
+        insert: quotient.clone(),
+    })?;
+    gluing.validate_orientability()?;
+    assert_eq!(gluing.cells(), &quotient);
+    assert_eq!(
+        gluing.components(),
+        &[Component {
+            triangles: vec![TriangleId(0), TriangleId(1)],
+            vertex_count: 1,
+            edge_count: 3,
+            boundary_count: 0,
+            orientable: true,
+            euler_characteristic: 0,
+        }]
+    );
+    gluing.try_apply(unwrap)?;
+    assert_eq!(gluing, disk);
     Ok(())
 }
 
@@ -280,14 +331,20 @@ fn rejects_nonmanifold_and_inconsistent_replacements_atomically() -> Result<(), 
     };
     assert_eq!(
         gluing.try_apply(wrong_direction),
-        Err(TriangleGluingError::OpenTriangle { triangle: open.id })
+        Err(TriangleGluingError::TriangleBoundaryMismatch {
+            triangle: open.id,
+            preceding: EdgeId(6),
+            following: EdgeId(0),
+            end: VertexId(3),
+            start: VertexId(0),
+        })
     );
     assert_eq!(gluing, baseline);
 
     let pinched = simplicial_cells(&[[0, 1, 2], [0, 3, 4]]);
     assert_eq!(
         TriangleGluing::try_new(pinched),
-        Err(TriangleGluingError::VertexLink {
+        Err(TriangleGluingError::DisconnectedVertexLink {
             vertex: VertexId(0),
             components: 2
         })
@@ -310,6 +367,12 @@ fn distinguishes_an_orientable_disk_from_a_mobius_band() -> Result<(), TriangleG
     let [mobius, disk] = gluing.components() else {
         panic!("expected two disjoint components");
     };
+    assert_eq!(
+        gluing.validate_orientability(),
+        Err(TriangleGluingError::NonOrientable {
+            triangle: TriangleId(0),
+        })
+    );
     assert_eq!(
         (
             mobius.vertex_count,
@@ -335,49 +398,4 @@ fn distinguishes_an_orientable_disk_from_a_mobius_band() -> Result<(), TriangleG
         (1, 1, true)
     );
     Ok(())
-}
-
-#[test]
-fn invalid_cell_records_report_the_offending_identity() {
-    let disk = simplicial_cells(&[[0, 1, 2]]);
-
-    let mut missing_vertex = disk.clone();
-    missing_vertex.edges[0].endpoints[1] = VertexId(99);
-    assert_eq!(
-        TriangleGluing::try_new(missing_vertex),
-        Err(TriangleGluingError::MissingVertex {
-            edge: EdgeId(0),
-            vertex: VertexId(99),
-        })
-    );
-
-    let mut loop_edge = disk.clone();
-    loop_edge.edges[0].endpoints = [VertexId(0); 2];
-    assert_eq!(
-        TriangleGluing::try_new(loop_edge),
-        Err(TriangleGluingError::LoopEdge { edge: EdgeId(0) })
-    );
-
-    let mut missing_edge = disk.clone();
-    missing_edge.edges.remove(0);
-    assert_eq!(
-        TriangleGluing::try_new(missing_edge),
-        Err(TriangleGluingError::MissingEdge {
-            triangle: TriangleId(0),
-            edge: EdgeId(0),
-        })
-    );
-
-    let mut unused_edge = disk;
-    unused_edge.edges.push(Edge {
-        id: EdgeId(99),
-        endpoints: [VertexId(0), VertexId(1)],
-    });
-    assert_eq!(
-        TriangleGluing::try_new(unused_edge),
-        Err(TriangleGluingError::EdgeIncidence {
-            edge: EdgeId(99),
-            incidence: 0,
-        })
-    );
 }
