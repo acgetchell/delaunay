@@ -527,6 +527,64 @@ of the explicit conversion boundaries when a Delaunay owner is required.
 Malformed storage, invalid intrinsic topology, and invalid realization remain
 structured reconstruction errors.
 
+### Topology-specific proof contracts
+
+The published owner carries the proof for its geometry. A reusable internal
+Level 5 certificate also binds the checked owner identity, generation, and
+global topology. The refinement terminal checks those bindings and the
+predicate family before reuse.
+
+- **Euclidean.** Reconstruction crosses `TriangulationBuilder` to establish
+  the requested intrinsic topology and nondegenerate affine realization.
+  Strict `DelaunayRefinementBuilder` then checks empty circumspheres before
+  returning `DelaunayTriangulation`.
+- **Toroidal image quotient.** The image cover supplies candidates. The
+  quotient pairs lifted facets by translation-normalized signatures and proves
+  its own topology and lifted realization through `TriangulationBuilder`.
+  Image-quotient provenance records how it was built. The same refinement
+  terminal checks quotient flip predicates in the lifted chart before
+  returning `DelaunayTriangulation`.
+- **Spherical prototype (`S^2` and `S^3`).** `SphericalDelaunayBuilder`
+  establishes point and simplex validity, closed intrinsic manifold topology,
+  and nondegenerate center-separated simplices from the ambient convex hull.
+  Each simplex must support the point set with the center on the interior
+  side, certifying the empty-cap predicate. `SphericalDelaunayTriangulation`
+  retains the hull-construction provenance.
+
+For affine and periodic workflows that need only Levels 1–4, use
+`Triangulation`; topology surgery also has unpublished draft storage. The
+toroidal terminal returns the Levels 1–4 owner before refinement, so it needs
+no structural-only Delaunay wrapper. Any future spherical construction path
+must establish full intrinsic sphere topology, a nonoverlapping geodesic
+realization, and the spherical empty-cap predicate before publication. A path
+that does not construct the boundary of a hull enclosing the center must
+establish its realization proof independently.
+
+### Abstract triangle gluings
+
+Use `delaunay::prelude::topology::triangle_gluing` for intrinsic 2D surfaces
+with explicitly paired sides. The caller supplies vertex, edge, and triangle
+IDs and a directed cycle of side uses for each triangle. To wrap two sides,
+assign them the same edge ID and assign the identified corners the same
+vertex IDs. Use different edge IDs for distinct edges with the same endpoints.
+This supports the square torus with two triangles, three edges, and one
+vertex. Both ends of each loop edge remain distinct in the vertex link.
+
+Each edge has one or two incident side uses. At each vertex, adjacency
+between the incident edge ends must form a single path or cycle. Component
+summaries report boundary circles, orientability, and Euler characteristic
+using edge occurrence counts. A twisted identification can produce a valid
+Möbius band. Use `validate_orientability()` to require the intrinsic
+orientation condition and obtain a typed error for a nonorientable component.
+
+Apply a local replacement by supplying its exact removed and inserted cell
+records. The owner validates the full candidate before publishing it and
+returns the inverse replacement. Existing IDs survive the edit and the
+versioned serialization round trip. This contract is intrinsic, so a
+realization or a CDT foliation and probability law belongs to the caller.
+See the [topology references](../REFERENCES.md#topological-manifolds-realizations-and-pl-topology-levels-3-4-validation)
+for the link criterion and the marked cylinder strip fixture.
+
 ---
 
 ## Error Types by Layer

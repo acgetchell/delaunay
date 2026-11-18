@@ -27,6 +27,7 @@ they exercise.
 | Read-only traversal, adjacency, ridge views, simplex barycenters, convex hulls, and comparison helpers | `use delaunay::prelude::query::*` |
 | Point location and conflict-region algorithms | `use delaunay::prelude::algorithms::*` |
 | Topological space helpers, topology traits, spherical point/metric backends, and lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
+| Construct, edit, or inspect intrinsic triangle gluings with parallel edges | `use delaunay::prelude::topology::triangle_gluing::*` |
 | Low-level topology validation, Euler characteristic helpers, manifold validators, and ridge queries | `use delaunay::prelude::topology::validation::*` |
 
 The triangulation, Delaunayize, and validation preludes re-export

@@ -633,7 +633,7 @@ pub fn count_boundary_simplices<U, V, const D: usize>(
 /// # }
 /// ```
 pub fn euler_characteristic(counts: &FVector) -> Result<isize, TopologyError> {
-    let value = euler_characteristic_wide(counts);
+    let value = euler_characteristic_wide(&counts.by_dim);
     isize::try_from(value).map_err(|_| TopologyError::EulerCharacteristicOutOfRange {
         value: Box::new(value),
     })
@@ -642,11 +642,10 @@ pub fn euler_characteristic(counts: &FVector) -> Result<isize, TopologyError> {
 /// Accumulates arbitrary face counts without losing cancellation.
 ///
 /// On Rust's 16-, 32-, and 64-bit targets, each term has at most 64 bits and an
-/// allocated `Vec<usize>` has fewer than 2^63 entries. Even the sum of their
+/// `[usize]` slice has fewer than 2^63 entries. Even the sum of their
 /// absolute values therefore fits in `i128`.
-fn euler_characteristic_wide(counts: &FVector) -> i128 {
+pub(in crate::topology) fn euler_characteristic_wide(counts: &[usize]) -> i128 {
     counts
-        .by_dim
         .iter()
         .enumerate()
         .map(|(k, &f_k)| {
@@ -688,11 +687,7 @@ pub(crate) fn triangulated_surface_euler_characteristic(
         }
     }
 
-    let counts = FVector {
-        by_dim: vec![vertices.len(), edges.len(), face_count],
-    };
-
-    euler_characteristic_wide(&counts)
+    euler_characteristic_wide(&[vertices.len(), edges.len(), face_count])
 }
 
 pub(crate) fn triangulated_surface_boundary_component_count(

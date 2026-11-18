@@ -1315,6 +1315,8 @@ pub mod topology {
         pub use toroidal::{LiftedLinkEdge, LiftedVertexId, ToroidalSpace};
     }
 
+    pub mod triangle_gluing;
+
     // Re-export commonly used types
     pub use crate::TopologyGuarantee;
     pub use characteristics::*;
@@ -2424,6 +2426,14 @@ pub mod prelude {
 
     /// Topology validation & analysis utilities.
     pub mod topology {
+        /// Construct, edit, and check intrinsically glued 2D surfaces.
+        pub mod triangle_gluing {
+            pub use crate::topology::triangle_gluing::{
+                CellId, Cells, Component, Edge, EdgeId, EdgeUse, Edit, Triangle, TriangleGluing,
+                TriangleGluingError, TriangleId, VertexId,
+            };
+        }
+
         /// Topology validation utilities.
         pub mod validation {
             pub use crate::topology::TopologyGuarantee;
