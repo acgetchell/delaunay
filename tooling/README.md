@@ -62,8 +62,7 @@ The [adoption inventory](../docs/dev/tooling_adoption.md) records retired helper
 consumer validation and platform evidence.
 
 Paired acquisition and publication declarations are `measurement-release-signal.toml`,
-`measurement-release-signal-v082.toml`, `measurement-topology.toml`,
-`performance-release.toml`, `performance-report.toml`
+`measurement-topology.toml`, `performance-release.toml`, `performance-report.toml`
 and `performance-publication.toml`. The Just recipes call installed commands
 using these declarations. See the [performance ownership boundary](../docs/dev/tooling_adoption.md#declarative-independent-performance-adoption)
 for the single-checkout and historical-asset adapters that remain.

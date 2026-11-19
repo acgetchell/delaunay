@@ -712,14 +712,12 @@ and `performance-promote` retry retention/rendering without collecting timings.
 selection. `just performance-readme` updates the README and selected CSV. `just performance-doc`
 rerenders the retained current complete run without timing. Explicit new scratch
 pairs can be promoted with `--payload PATH --manifest PATH`. Commands use the
-six consumer declarations under `tooling/`; the paired workflows do not fetch
-tags or change Git state by default.
+consumer declarations under `tooling/`. The paired workflows do not fetch tags
+or change Git state by default.
 
-The default declaration matches the v0.8.3+ native inventory. Explicit comparisons
-against v0.8.2 use `tooling/measurement-release-signal-v082.toml`, preserving its
-different locate IDs as absolute union rows. Strict release promotion rejects
-that incompatible comparison. Prepare regular releases after advancing the
-package version beyond the latest published release.
+The release-signal declaration matches the v0.8.3+ native inventory. Prepare
+regular releases after advancing the package version beyond the latest
+published release.
 
 New report history lives under `docs/performance-runs/` with current report
 `docs/performance_current.md`. Existing `docs/performance.md`, prior archives

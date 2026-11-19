@@ -91,14 +91,10 @@ just performance-doc --payload target/bench-reports/performance.run.json \
   --manifest target/bench-reports/performance.evidence.json
 ```
 
-The default paired declaration uses one common harness with the v0.8.3+ case contract, including
-the current location query IDs. To acquire an original v0.8.2 baseline, select
-`tooling/measurement-release-signal-v082.toml` in the explicit `performance measure`
-command. It preserves that baseline's 20 different locate IDs and all original
-counts, retaining union coverage and suppressing incompatible ratios. Its
-absolute evidence cannot pass strict release/README promotion. The regular
-prepared release workflow assumes the package version has been advanced beyond
-the latest published release, as described in the release guide.
+The paired release-signal declaration uses one common harness with the v0.8.3+
+case contract, including the current location query IDs. The prepared release
+workflow assumes the package version has been advanced beyond the latest
+published release, as described in the release guide.
 
 Single-checkout `bench-latest`, saved-baseline, summary and tagged-archive paths
 retain the Delaunay adapter: the published complete-run acquisition command

@@ -164,6 +164,8 @@ Commit-message rules that affect generated changelog text live in
 
 ## Crates.io Documentation
 
-Finish packaged documentation before acquiring release benchmarks and creating
-the release tag. crates.io keeps published archives immutable. Later changes to
-the packaged README or rustdoc require a new crate version.
+Finish all packaged documentation before acquiring release benchmarks except
+the generated README performance snapshot. Publish that snapshot after
+acquisition with [`just performance-readme`](../RELEASING.md#5-publish-the-readme-performance-snapshot)
+before creating the release tag. crates.io keeps published archives immutable.
+Later changes to the packaged README or rustdoc require a new crate version.

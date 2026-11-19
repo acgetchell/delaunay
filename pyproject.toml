@@ -64,7 +64,6 @@ py-modules = [
 [tool.setuptools.data-files]
 "share/delaunay/tooling" = [
     "tooling/measurement-release-signal.toml",
-    "tooling/measurement-release-signal-v082.toml",
     "tooling/measurement-topology.toml",
     "tooling/performance-publication.toml",
     "tooling/performance-release.toml",

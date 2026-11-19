@@ -175,7 +175,8 @@ measured workflow; keep those checks outside the Criterion-measured closure
 unless validation itself is the behavior being measured.
 
 Use the [validation matrix](commands.md#validation-command-selection) for
-local handoff checks. Every initial or corrective PR push requires the
+local handoff checks. Run `just perf-large-scale-smoke` before pushing
+performance-sensitive Rust changes. Every initial or corrective PR push requires the
 [full push gate](commands.md#local-coderabbit-review), including `just ci`.
 
 ## Reporting

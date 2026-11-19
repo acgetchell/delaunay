@@ -379,22 +379,22 @@ evidence is acquired and promoted.
 
 <!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->
 
-Complete run: `e736ac85e7715c81afbcb0d20ea925347408d86095c8e0af19f8fc4cf8aa5c90`.
+Complete run: `4045fd56b9eeb632ab730c4e1700eed87c897425fc4c5579c204a97c2ea0024d`.
 
 Trial 1 of this complete run (separate trial; no pooled significance claim).
 
-Selected trial run (CSV/plot identity): `f81814aac77fcecc0b5461ff262e59502f6da9186e34e4d88724dccfdd41d96f`. Statistic: median. Unit: ns. Confidence level: 95%.
+Selected trial run (CSV/plot identity): `d982cc4c205ebfd51df77d4cd14a0bca4b0cdb55448b17d1eaf2d918516dc3e0`. Statistic: median. Unit: ns. Confidence level: 95%.
 
 - Baseline v0.8.4: baseline phase, v0.8.4, revision 0ae37e2b7aed0559c97c5aa8a46871e7383c0f60.
-- Current v0.8.5: current phase, v0.8.5 working-tree snapshot based on commit e5cf33dbe4ef9cf98b0d8f88aac6d571d3e86a3d; measured source SHA-256
-  1356fc3fc0082582ac9ed4deddfe3fc3d94e643cb5c1e43d589ba807d56c37c0.
+- Current v0.8.5: current phase, v0.8.5 working-tree snapshot based on commit 526566589d899eeb5b5cd04cd9523ff1fa766188; measured source SHA-256
+  7ef0dbfee443eb33ef5ae6c03159d77093e482e1cd8f20fe276405a15f9aa0a9.
 
 | Case | Baseline v0.8.4 | Current v0.8.5 | Baseline / current |
 | --- | --- | --- | --- |
-| 2D construction (500 vertices) | 4.70807e+07<br>[4.70218e+07, 4.73022e+07] | 4.58772e+07<br>[4.57603e+07, 4.65144e+07] | 1.02623 |
-| 3D construction (100 vertices) | 3.84446e+07<br>[3.79665e+07, 3.88517e+07] | 3.82393e+07<br>[3.81591e+07, 3.83073e+07] | 1.00537 |
-| 4D construction (30 vertices) | 1.01916e+08<br>[1.01262e+08, 1.03409e+08] | 9.91059e+07<br>[9.82692e+07, 1.00005e+08] | 1.02835 |
-| 5D construction (12 vertices) | 2.19239e+07<br>[2.18716e+07, 2.21519e+07] | 2.18773e+07<br>[2.17847e+07, 2.20563e+07] | 1.00213 |
+| 2D construction (500 vertices) | 4.70189e+07<br>[4.69742e+07, 4.71633e+07] | 4.6485e+07<br>[4.64085e+07, 4.65877e+07] | 1.01149 |
+| 3D construction (100 vertices) | 3.81963e+07<br>[3.8082e+07, 3.83753e+07] | 3.81808e+07<br>[3.81274e+07, 3.83228e+07] | 1.00041 |
+| 4D construction (30 vertices) | 9.93606e+07<br>[9.93009e+07, 9.94318e+07] | 1.02849e+08<br>[1.0157e+08, 1.03622e+08] | 0.966087 |
+| 5D construction (12 vertices) | 2.27595e+07<br>[2.25598e+07, 2.30618e+07] | 2.24918e+07<br>[2.23805e+07, 2.25379e+07] | 1.0119 |
 
 Intervals are recorded marginal timing intervals; ratios are point estimates, with no ratio intervals or significance claims.
 Ratio is numerator time / denominator time; greater than one means less denominator time.
@@ -410,10 +410,10 @@ Selection coverage:
 - [Selected timings CSV](https://github.com/acgetchell/delaunay/blob/v0.8.5/docs/assets/bench/release-performance.csv)
 
 [rrt-performance-link-1]:
-  <https://github.com/acgetchell/delaunay/blob/v0.8.5/docs/performance-runs/runs/e736ac85e7715c81afbcb0d20ea925347408d86095c8e0af19f8fc4cf8aa5c90/run.json>
+  <https://github.com/acgetchell/delaunay/blob/v0.8.5/docs/performance-runs/runs/4045fd56b9eeb632ab730c4e1700eed87c897425fc4c5579c204a97c2ea0024d/run.json>
 
 [rrt-performance-link-2]:
-  <https://github.com/acgetchell/delaunay/blob/v0.8.5/docs/performance-runs/runs/e736ac85e7715c81afbcb0d20ea925347408d86095c8e0af19f8fc4cf8aa5c90/evidence.json>
+  <https://github.com/acgetchell/delaunay/blob/v0.8.5/docs/performance-runs/runs/4045fd56b9eeb632ab730c4e1700eed87c897425fc4c5579c204a97c2ea0024d/evidence.json>
 
 <!-- PERFORMANCE_RELEASE_TABLE:END -->
 
