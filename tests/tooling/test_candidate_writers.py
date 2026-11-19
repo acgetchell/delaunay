@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import json
+import os
 import runpy
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,9 @@ from typing import Any
 import pytest
 import yaml
 from research_repo_tools import draft_workflow, release_receipts, release_validation
+from research_repo_tools.cli import main
 from research_repo_tools.evidence import deterministic_json
+from research_repo_tools.process import run_command
 from research_repo_tools.release_assets import ReleaseTarget
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +38,7 @@ def handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "VALIDATED_ATTEMPT": "1",
         "HANDOFF_ID": "456",
         "HANDOFF_SHA256": "b" * 64,
+        "RUNNER_TEMP": tmp_path.as_posix(),
         "ARTIFACT_ID": "456",
         "ARTIFACT_DIGEST": "b" * 64,
         "PACKAGE_NAME": "delaunay-0.8.5.crate",
@@ -151,7 +155,9 @@ def handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("failure", ["none", "attempt", "digest", "artifact-id", "commit", "history", "rerun"])
-def test_original_draft_writer_authenticates_handoff(handoff: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+def test_original_draft_writer_authenticates_handoff(
+    handoff: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], failure: str
+) -> None:
     """Only the original tag push and immutable producer handoff may prepare a draft."""
     if failure == "attempt":
         monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
@@ -165,10 +171,20 @@ def test_original_draft_writer_authenticates_handoff(handoff: dict[str, Any], tm
         handoff["rerun"] = True
     workflow = yaml.safe_load((ROOT / ".github/workflows/prepare-release.yml").read_bytes())
     step = next(step for step in workflow["jobs"]["prepare"]["steps"] if "run" in step)
-    script = tmp_path / "writer.py"
-    script.write_text(step["run"], encoding="utf-8")
+    bootstrap = """uvx() { printf '%s\\n' "$@"; }\n"""
+    result = run_command("bash", ["-euc", bootstrap + step["run"]], cwd=tmp_path, env=os.environ.copy(), check=False)
+    if failure == "attempt":
+        assert result.returncode == 1
+        assert "requires the original exact tag push" in result.stderr
+        assert not (tmp_path / "handoff-policy.toml").exists()
+        return
+    assert result.returncode == 0, result.stderr
+    args = result.stdout.splitlines()
+    prefix = "--no-config --isolated --no-cache --python 3.15 --from research-repo-tools==0.3.0 python -I -m research_repo_tools"
+    assert args[:11] == prefix.split()
+    status = main(args[11:])
     if failure == "none":
-        runpy.run_path(str(script), run_name="__main__")
+        assert status == 0, capsys.readouterr().err
         assert handoff["calls"] == ["download", "prepare"]
         output = tmp_path / "draft-state"
         assert json.loads((output / "target.json").read_bytes())["release_id"] == 42
@@ -176,8 +192,9 @@ def test_original_draft_writer_authenticates_handoff(handoff: dict[str, Any], tm
         assert (output / "producer.json").is_file()
         assert json.loads((output / "handoff.json").read_bytes())["selection"] == {"original": "native selection"}
     else:
-        with pytest.raises(ValueError, match=r"original exact tag push|original tag-push run|artifact ID|authoritative SHA-256"):
-            runpy.run_path(str(script), run_name="__main__")
+        assert status == 1
+        diagnostic = capsys.readouterr().err
+        assert any(message in diagnostic for message in ("original tag-push run", "artifact ID", "authoritative SHA-256"))
         assert "prepare" not in handoff["calls"]
         assert not (tmp_path / "draft-state").exists()
 

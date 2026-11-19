@@ -513,8 +513,8 @@ tooling = ">=3.15"
 [package.metadata]
 requires-dist = [
     { name = "packaging", specifier = ">=26.3" },
-    { name = "research-repo-tools", specifier = "==0.2.9" },
-    { name = "research-repo-tools", extras = ["notebooks", "python-tools"], marker = "extra == 'notebooks'", specifier = "==0.2.9" },
+    { name = "research-repo-tools", specifier = "==0.3.0" },
+    { name = "research-repo-tools", extras = ["notebooks", "python-tools"], marker = "extra == 'notebooks'", specifier = "==0.3.0" },
 ]
 provides-extras = ["notebooks"]
 
@@ -530,8 +530,8 @@ build = [
 dev = [
     { name = "actionlint-py", marker = "python_full_version >= '3.15'", specifier = ">=1.7.12.25" },
     { name = "pyyaml", marker = "python_full_version >= '3.15'", specifier = ">=6.0.3" },
-    { name = "research-repo-tools", extras = ["python-tools"], marker = "python_full_version >= '3.15'", specifier = "==0.2.9" },
-    { name = "research-repo-tools", extras = ["python-tools", "semgrep"], marker = "python_full_version >= '3.15'", specifier = "==0.2.9" },
+    { name = "research-repo-tools", extras = ["python-tools"], marker = "python_full_version >= '3.15'", specifier = "==0.3.0" },
+    { name = "research-repo-tools", extras = ["python-tools", "semgrep"], marker = "python_full_version >= '3.15'", specifier = "==0.3.0" },
     { name = "shellcheck-py", marker = "python_full_version >= '3.15'", specifier = ">=0.11.0.1" },
     { name = "shfmt-py", marker = "python_full_version >= '3.15'", specifier = ">=4.2.0" },
     { name = "yamllint", marker = "python_full_version >= '3.15'", specifier = ">=1.38.0" },
@@ -546,9 +546,9 @@ notebooks = [
     { name = "numpy", marker = "python_full_version >= '3.15'", specifier = ">=2.5.4" },
     { name = "plotly", marker = "python_full_version >= '3.15'", specifier = ">=7.1.0" },
     { name = "polars", marker = "python_full_version >= '3.15'", specifier = ">=2.0.0" },
-    { name = "research-repo-tools", extras = ["notebooks", "python-tools"], marker = "python_full_version >= '3.15'", specifier = "==0.2.9" },
+    { name = "research-repo-tools", extras = ["notebooks", "python-tools"], marker = "python_full_version >= '3.15'", specifier = "==0.3.0" },
 ]
-tooling = [{ name = "research-repo-tools", extras = ["python-tools"], marker = "python_full_version >= '3.15'", specifier = "==0.2.9" }]
+tooling = [{ name = "research-repo-tools", extras = ["python-tools"], marker = "python_full_version >= '3.15'", specifier = "==0.3.0" }]
 
 [[package]]
 name = "exceptiongroup"
@@ -1947,16 +1947,16 @@ wheels = [
 
 [[package]]
 name = "research-repo-tools"
-version = "0.2.9"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging" },
     { name = "pyyaml" },
     { name = "rust-just" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/47/f7/9f382b8d14fa3d37be4f8323f32a7a0c5ecaa2094de65aa9b2477cde4c3d/research_repo_tools-0.2.9.tar.gz", hash = "sha256:e115f5425996337275345b9ddd117f82f5c179b3fcd2fcaf3aeb04650343e9c7", size = 1597302, upload-time = "2026-11-16T17:32:48.987Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/fb/c94323c20809eec0cd945c07deb19eea0d59fda804de548ac9ee6b677fa6/research_repo_tools-0.3.0.tar.gz", hash = "sha256:43c64bc1b3c727914a98f0d86361805502d801bb15f63b9aec31a31c49ca565e", size = 1610073, upload-time = "2026-11-19T04:26:13.128Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/9b/8835593f20750ed4bc857ee0076297696cdd8772107beae4a5f9627e6943/research_repo_tools-0.2.9-py3-none-any.whl", hash = "sha256:6cc53318bf2cecafe2594993efa540d3e7f704d38e5a56e6e5d7f2e7e5103e5e", size = 676507, upload-time = "2026-11-16T17:32:47.313Z" },
+    { url = "https://files.pythonhosted.org/packages/42/47/23198b9d0feed97902fea7fdc51bc19b5dd6e2d12222c0a8c3749c01709c/research_repo_tools-0.3.0-py3-none-any.whl", hash = "sha256:ef0691e0eb8009da2c0fc23990532ac9c8f16fd7451725011495b4d096663be3", size = 680413, upload-time = "2026-11-19T04:26:11.709Z" },
 ]
 
 [package.optional-dependencies]
@@ -2226,11 +2226,11 @@ wheels = [
 
 [[package]]
 name = "soupsieve"
-version = "4.1.1"
+version = "4.1.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1f/52/ee5646b65d98a252e807ccc37725363942372a4113072e0bce7ed22f8b84/soupsieve-4.1.1.tar.gz", hash = "sha256:b296bd2d2f65b1a78149f3d7bf6736a147d2c9e2dfbde0e4404639d748a02e03", size = 169784, upload-time = "2026-11-14T17:23:32.467Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/35/bf779c1cc376bc216a2d94e3b3d9ee48347296af29bedfc6caaf96bc132f/soupsieve-4.1.2.tar.gz", hash = "sha256:c6539a2638f26991463527337e39d630e3cbb86d024f52282a510535b8a7e09f", size = 178884, upload-time = "2026-11-18T17:21:03.858Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/65/7fae69a095696195334a934eab23aeb12e2715e6c3f08025d2f91942750e/soupsieve-4.1.1-py3-none-any.whl", hash = "sha256:8ff3422dab0b720fb667ee79864d80531a0e57994a13eb701697719ffcb751f6", size = 55089, upload-time = "2026-11-14T17:23:31.001Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/33/f5082b3c480db024453077592057200955aed2a376327b8921d553404ca7/soupsieve-4.1.2-py3-none-any.whl", hash = "sha256:96b4115212a3abee1f572d62da706cca090b088cb5effa278db5702122e63a2c", size = 59295, upload-time = "2026-11-18T17:21:02.593Z" },
 ]
 
 [[package]]

@@ -281,7 +281,7 @@ def test_isolated_native_cli_uses_signed_evidence_without_a_tag(
     (root / "justfile").write_text(
         "[positional-arguments]\n"
         '[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", '
-        '"--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.2.9", "python", "-I")]\n'
+        '"--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.3.0", "python", "-I")]\n'
         "native-evidence *args:\n"
         "    import sys\n"
         "    from pathlib import Path\n"
@@ -302,7 +302,7 @@ def test_isolated_native_cli_uses_signed_evidence_without_a_tag(
         "import json, os, subprocess, sys\nfrom pathlib import Path\n"
         "def uvx_main():\n"
         '    assert sys.argv[1:12] == ["--no-config", "--isolated", "--managed-python", "--python", "3.15", '
-        '"--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.2.9", "python", "-I"]\n'
+        '"--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.3.0", "python", "-I"]\n'
         '    return subprocess.run([os.environ["FIXTURE_PYTHON"], *sys.argv[11:]], check=False).returncode\n'
         "def uv_main():\n"
         '    if sys.argv[1:] == ["--version"]:\n'

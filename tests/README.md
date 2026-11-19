@@ -339,9 +339,13 @@ Proptest automatically captures minimal failing test cases in `.proptest-regress
 `tests/` directory. These files serve as regression test suites:
 
 - **Purpose**: Minimal failing cases that are re-run first to guard against regressions
+
 - **Version Control**: Always commit these files so CI and all developers validate past failures
+
 - **Automatic Updates**: Tests automatically update these files when new failures are discovered
+
 - **Do Not Hand-Edit**: Let proptest manage these files; manual edits may break the format
+
 - **Reproduction**: To debug a failure, copy the seed from test output:
 
   ```bash
@@ -349,7 +353,9 @@ Proptest automatically captures minimal failing test cases in `.proptest-regress
   ```
 
 - **Performance Note**: Regression cases run before random cases; many entries can slow tests
+
 - **Filtering**: Use test filters to narrow scope when iterating on specific properties
+
 - **Maintenance**: It's acceptable to prune obsolete entries in follow-up PRs (keep diffs focused)
 
 **Current Proptest Regression Files:**

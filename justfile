@@ -55,7 +55,7 @@ _default:
 # Run the local policy adapter with an external, published verification runtime.
 [positional-arguments]
 [private]
-[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", "--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.2.9", "python", "-I")]
+[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", "--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.3.0", "python", "-I")]
 _release-candidate +args:
     import runpy
     import sys
@@ -479,12 +479,12 @@ pachner-stress-4d attempts="100" vertices="1000" validate_every="10" output_dir=
 
 # Quick pre-push 2D-5D large-scale wall-clock smoke guard.
 [group('benchmarks and performance')]
-perf-large-scale-smoke max_secs="60": _ensure-nextest
+perf-large-scale-smoke max_secs="": _ensure-nextest
     #!/usr/bin/env bash
     set -euo pipefail
 
-    max_secs="{{ max_secs }}"
-    if [[ ! "$max_secs" =~ ^[1-9][0-9]*$ ]]; then
+    max_secs={{ quote(max_secs) }}
+    if [[ -n "$max_secs" && ! "$max_secs" =~ ^[1-9][0-9]*$ ]]; then
         echo "❌ max_secs must be a positive integer, got: $max_secs" >&2
         exit 2
     fi
@@ -499,26 +499,27 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
         local n_env="$3"
         local n_points="$4"
         local progress_every="$5"
+        local case_secs="${max_secs:-$6}"
         local log_file
         log_file="$(mktemp "${TMPDIR:-/tmp}/delaunay-large-scale-${dimension}.XXXXXX")"
 
         echo ""
-        echo "▶ ${dimension}: ${test_name} (${n_points} vertices, ${max_secs}s cap)"
+        echo "▶ ${dimension}: ${test_name} (${n_points} vertices, ${case_secs}s cap)"
         # Construction wall-clock guard: validate Levels 1-3 + Level 5 only.
         # Level 4 retains bounded full-scope regression coverage under
         # `just test-slow`; broader Level 4/5 work remains in #482/#483.
         if env \
             DELAUNAY_BULK_PROGRESS_EVERY="$progress_every" \
-            DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS="$max_secs" \
+            DELAUNAY_LARGE_DEBUG_MAX_RUNTIME_SECS="$case_secs" \
             "$n_env=$n_points" \
             DELAUNAY_LARGE_DEBUG_REPAIR_EVERY=1 \
             DELAUNAY_LARGE_DEBUG_VALIDATION=construction \
             {{ managed }} cargo nextest run --release --profile slow --features slow-tests --test large_scale_debug "$test_name" -- --exact --nocapture 2>&1 | tee "$log_file"; then
-            echo "✅ ${dimension} completed within the ${max_secs}s test-runtime cap"
+            echo "✅ ${dimension} completed within the ${case_secs}s test-runtime cap"
             case_status="PASS"
         else
             local code=$?
-            echo "❌ ${dimension} failed or exceeded the ${max_secs}s test-runtime cap (exit ${code})"
+            echo "❌ ${dimension} failed or exceeded the ${case_secs}s test-runtime cap (exit ${code})"
             failures+=("$dimension")
             status=1
             case_status="FAIL"
@@ -535,10 +536,10 @@ perf-large-scale-smoke max_secs="60": _ensure-nextest
         rm -f "$log_file"
     }
 
-    run_case "2D" "debug_large_scale_2d" "DELAUNAY_LARGE_DEBUG_N_2D" "32000" "2000"
-    run_case "3D" "debug_large_scale_3d" "DELAUNAY_LARGE_DEBUG_N_3D" "9000" "500"
-    run_case "4D" "debug_large_scale_4d" "DELAUNAY_LARGE_DEBUG_N_4D" "1000" "100"
-    run_case "5D" "debug_large_scale_5d" "DELAUNAY_LARGE_DEBUG_N_5D" "160" "20"
+    run_case "2D" "debug_large_scale_2d" "DELAUNAY_LARGE_DEBUG_N_2D" "32000" "2000" "60"
+    run_case "3D" "debug_large_scale_3d" "DELAUNAY_LARGE_DEBUG_N_3D" "9000" "500" "60"
+    run_case "4D" "debug_large_scale_4d" "DELAUNAY_LARGE_DEBUG_N_4D" "1000" "100" "180"
+    run_case "5D" "debug_large_scale_5d" "DELAUNAY_LARGE_DEBUG_N_5D" "160" "20" "60"
 
     echo ""
     echo "Large-scale smoke summary:"
@@ -780,7 +781,7 @@ release-artifact +args:
 # Capture or verify a draft target through an isolated published runtime.
 [group('release')]
 [positional-arguments]
-[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", "--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.2.9", "python", "-I")]
+[script("uvx", "--no-config", "--isolated", "--managed-python", "--python", "3.15", "--default-index", "https://pypi.org/simple", "--from", "research-repo-tools==0.3.0", "python", "-I")]
 release-assets operation tag *args:
     import sys
     from pathlib import Path

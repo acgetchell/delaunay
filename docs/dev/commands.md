@@ -205,7 +205,7 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool declarations live in their authoritative consumer files: exact uv and Cargo
 tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
-in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.9` from PyPI
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.3.0` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
@@ -236,6 +236,8 @@ the locked dev/notebook environment once before any checks or parallel lanes.
 `just tools-export` exports verified paths to GitHub Actions.
 
 `just tools-python-check` checks inherited Ruff, ty and pytest pins explicitly.
+Check the shared tool version selected for this checkout with
+`uv run --locked --group dev research-repo-tools --version`.
 `just tools-sync-binaries` repairs only declared release binaries, including
 prebuilt dprint and rumdl. `just tools-clean` previews obsolete managed installs;
 include other consumers with `--keep-root PATH`, and use `--apply` only after
@@ -271,7 +273,7 @@ guide covers attested promotion of a temporary exact Git pin back to PyPI.
 `deps update-tools` is the separate
 legacy interface for user-installed tools; this repository uses managed TOML pins.
 
-[rrt-dependency-updates]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.9/docs/UPDATING_DEPENDENCIES.md
+[rrt-dependency-updates]: https://github.com/acgetchell/research-repo-tools/blob/v0.3.0/docs/UPDATING_DEPENDENCIES.md
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
@@ -611,10 +613,11 @@ Use `just perf-large-scale-smoke [max_secs]` for a coarse local wall-clock guard
 over the release-mode large-scale debug harness. The recipe owns its distinct
 2D-5D workloads of 32,000, 9,000, 1,000, and 160 vertices, respectively, and
 selects construction-only validation (Levels 1-3 plus Level 5). It caps each test
-runtime at 60 seconds by default and reports all failing dimensions before
-exiting. It does not compare
-against a baseline and should not be treated as benchmark data. Run it before
-pushing Rust or benchmark changes to catch obvious local performance drift early.
+runtime at 180 seconds for 4D and 60 seconds for the other dimensions by
+default. An explicit `max_secs` applies to every dimension. The guard reports
+all failing dimensions before exiting. Use its wall times to catch obvious
+local drift before pushing Rust or benchmark changes. Use the Criterion
+measurements below for baseline comparisons.
 
 Use `just bench-latest` from the release PR branch after measured inputs change,
 then `just bench-perf-summary` to regenerate `benches/PERFORMANCE_RESULTS.md`.

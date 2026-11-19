@@ -319,6 +319,7 @@ operations abort on error so a failed path cannot silently publish a fast result
 | `validation_components.rs` | Validation layer costs | Ordinary/adversarial 2D–5D | Filter explicitly | Manual only |
 | `circumsphere_queries.rs` | Batched circumsphere queries | 3D 1k/10k/30k | Filter explicitly | Manual only |
 | `hull_queries.rs` | Boundary and hull extraction | 3D 10k | Filter explicitly | Manual only |
+| `insertion_rollback.rs` | Rejected public insertion and rollback | 3D conflict predicate, 16 and 128 vertices | <1 min | Insertion rollback tuning |
 | `realization_validation.rs` | Level 4 validation and periodic Level 5 reports | Realistic/near-degenerate 2D-5D; periodic T^2 | ~1-5 min | Validation tuning |
 | `delete_vertex.rs` | Vertex deletion and rollback cost | 2D/3D seeded cases; 4D/5D inverse-k1; 2D-5D rollback | ~1-5 min | Vertex deletion |
 | `locate.rs` | Point-location facet-walk latency (no-hint vs exact-hint) | 2D-5D fixed cases | ~1-3 min | Locate/walk tuning |
@@ -336,6 +337,20 @@ This is an intentional incompatible replacement for the earlier unit-payload
 workload: unit-payload timings and saved Criterion baselines must not be compared
 with this identity. Delete or rename an old saved checkpoint baseline and create
 a fresh `u32-payloads-v1` baseline before drawing performance conclusions.
+
+### Insertion Rollback Scope
+
+Run `cargo bench --locked --profile perf --bench insertion_rollback -- --noplot`
+to measure repeated insertion of a 3D interior point whose conflict-region
+predicate returns an injected error. Insertion reaches that predicate after
+staging the vertex, and the harness verifies the typed error, live keys,
+topology generation, and Levels 1–5
+before accepting the results. Construction and invariant checks run outside
+timing. The measured path includes any spatial-index work triggered by retrying
+the public operation.
+
+The [insertion rollback performance record](../docs/insertion_rollback_performance.md)
+tracks the journal migration and the 4D smoke budget.
 
 ### Vertex Deletion Scope
 
@@ -424,8 +439,9 @@ the release-mode large-scale harness. It fixes the 2D/3D/4D/5D vertex counts at
 32,000/9,000/1,000/160 and checks structure/topology (Levels 1–3) plus the Level 5
 Delaunay property. These differ from the debug helpers' local count and
 validation defaults; see the [command guide](../docs/dev/commands.md#benchmark-profiles).
-The guard caps each test runtime at 60 seconds by default and reports all failing dimensions before
-exiting. At the end it also prints a compact 2D-5D summary table with the
+The default cap is 180 seconds for 4D and 60 seconds for the other dimensions.
+An explicit `max_secs` applies to every dimension. The guard reports all
+failing dimensions before exiting and prints a compact 2D-5D summary with the
 reported insertion wall time, total wall time, and pass/fail status so you do
 not have to scroll through the full nextest output. This is useful while
 iterating, but it is not a Criterion comparison and should not be treated as

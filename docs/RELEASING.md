@@ -41,7 +41,7 @@ reuses the declared citation date even after UTC midnight.
 
 ## Reusable CI evidence
 
-The published, locked `research-repo-tools==0.2.9` owns measurement, candidate,
+The published, locked `research-repo-tools==0.3.0` owns measurement, candidate,
 archive, signature and provider verification. Delaunay's adapters own its
 173-case scientific plan, independent local record selection, maintainer dispatch
 and Cargo reproduction.
@@ -111,25 +111,23 @@ remaining fresh-consumer failures from that release.
   from the changelog section shown by `release-notes`. Delaunay binds the
   signed Cargo archive digest before tagging.
 - A tag push prepares a draft with generated notes. `release-benchmarks TAG`
-  attaches the accepted archive without acquisition. RRT v0.2.9 authenticates
+  attaches the accepted archive without acquisition. RRT authenticates
   the draft handoff and journals the asset batch. Delaunay's dispatch command
   stages those assets from the retained owner record.
 - `release-publish TAG` publishes the reviewed draft. `release-upload TAG`
   freezes the same acceptance across `crates-io` approval and runs a nonbuilding
   Cargo upload. Delaunay also proves matching-tool, byte-identical Cargo
-  reproduction before acquiring a registry token. `release-verify TAG` checks
-  the release and registry.
+  reproduction before acquiring a registry token. After upload, RRT checks the
+  immutable release and registry from runner scratch using the accepted target.
 
 ## Validate shared-tooling adoption
 
 Complete shared-tooling adoption before preparing the consumer release. The
-RRT v0.2.9 command migration is owned by
+initial release command migration was tracked by
 [#693](https://github.com/acgetchell/delaunay/issues/693); its published-package,
 native and operational acceptance belongs to
-[#696](https://github.com/acgetchell/delaunay/issues/696). The supplying release
-is tracked by [RRT #236](https://github.com/acgetchell/research-repo-tools/issues/236).
-The migration pin and the native and operational acceptance are tracked
-independently.
+[#696](https://github.com/acgetchell/delaunay/issues/696). See the current
+[RRT adoption notes](dev/tooling_adoption.md#v030-release-command-adoption).
 
 Reconcile the manifest, lock, isolated runtime pins, Just recipes and composite
 actions against the published supplying package. A version bump does not rewrite
@@ -615,10 +613,23 @@ After the publishing workflow completes:
 just release-verify "$TAG"
 ```
 
-This requires the published stable GitHub release, nonempty durable baseline
-asset and exact non-yanked crates.io version with a checksum. It retries proven
-registry absence seven times at ten-second intervals, never an upload. A
-published GitHub release alone is insufficient.
+This checks dependency provenance, generated release notes, the baseline asset
+and the exact non-yanked crates.io version. The upload job uses the
+checkout-independent visibility check, which verifies the immutable release
+and completed baseline asset against the captured target. It allows up to seven
+registry observations at ten-second intervals and logs the registry archive
+SHA-256. Run this command from outside a checkout to repeat the visibility check.
+
+```bash
+uvx --no-config --isolated --python 3.15 --from research-repo-tools==0.3.0 \
+  research-repo-tools release visibility "$TAG" \
+  --repository acgetchell/delaunay --registry crates-io --package delaunay \
+  --required-asset "delaunay-$TAG-criterion-baseline.tar.gz" \
+  --target "$CAPTURED_TARGET" --attempts 7 --interval 10
+```
+
+Set `CAPTURED_TARGET` to the original `target.json` retained with the reviewed
+acceptance. Compare the reported SHA-256 with the retained main-produced crate.
 
 Check a clean consumer with a fresh Cargo home before dependent
 causal-triangulations releases:
@@ -666,7 +677,7 @@ and published assets remain unchanged.
 
 For uncertain draft creation, use the original handoff and complete state
 directory with the shared authenticated recovery procedure.
-[RRT draft recovery](https://github.com/acgetchell/research-repo-tools/blob/v0.2.9/docs/PREPARING_DRAFTS.md)
+[RRT draft recovery](https://github.com/acgetchell/research-repo-tools/blob/v0.3.0/docs/PREPARING_DRAFTS.md)
 A published release with missing required assets cannot be repaired by attachment.
 
 If the crates.io upload fails or Cargo times out, inspect the original run and
