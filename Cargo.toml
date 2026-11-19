@@ -1,6 +1,6 @@
 [package]
 name = "delaunay"
-version = "0.8.4"
+version = "0.8.5"
 edition = "2024"
 rust-version = "1.100.0"
 autobins = false

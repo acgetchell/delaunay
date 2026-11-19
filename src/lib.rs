@@ -72,6 +72,7 @@
 //! | Export stable mesh and visualization primitives | `use delaunay::prelude::export::*` |
 //! | Validation policies, errors, reports, PL-manifold link errors, and Level 5 diagnostics | `use delaunay::prelude::validation::*` |
 //! | Topology validation, Euler characteristic, ridge queries | `use delaunay::prelude::topology::validation::*` |
+//! | Construct, edit, or inspect [intrinsic 2D surfaces](topology::triangle_gluing) | `use delaunay::prelude::topology::triangle_gluing::*` |
 //! | Topological spaces, topology traits, spherical point/metric backends, lifted toroidal IDs | `use delaunay::prelude::topology::spaces::*` |
 //! | Construct, stage, inspect, or validate low-level TDS values | `use delaunay::prelude::tds::*` |
 //! | Collection types (`FastHashMap`, etc.) | `use delaunay::prelude::collections::*` |

@@ -336,7 +336,7 @@ These references ensure the library's geometric computations are mathematically 
   *ACM Transactions on Graphics* 15, no. 3 (1996): 223-248. DOI: [10.1145/231731.231735](https://doi.org/10.1145/231731.231735)
 - Karasick, M., Lieber, D., and Nackman, L. R. "Efficient Delaunay Triangulation Using Rational Arithmetic."
   *ACM Transactions on Graphics* 10, no. 1 (1991): 71-91. DOI: [10.1145/99902.99905](https://doi.org/10.1145/99902.99905)
-- Shewchuk, J. R. "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates."
+- Jonathan Richard Shewchuk. "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates."
   *Discrete & Computational Geometry* 18, no. 3 (1997): 305-363. DOI: [10.1007/PL00009321](https://doi.org/10.1007/PL00009321)
 - Shewchuk, J. R. "Robust Adaptive Floating-Point Geometric Predicates."
   *Proceedings of the Twelfth Annual Symposium on Computational Geometry* (1996): 141-150.

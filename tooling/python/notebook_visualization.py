@@ -2,6 +2,7 @@
 
 import json
 import math
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
@@ -227,6 +228,14 @@ def _spherical_vertices(data: JsonObject, expected_vertex_count: int) -> tuple[P
     return tuple(vertices)
 
 
+def _validate_closed_triangle_incidence(simplices: Sequence[Triangle]) -> None:
+    """Require every surface edge to have exactly two incident triangles."""
+    edges = Counter(frozenset(edge) for simplex in simplices for edge in combinations(simplex, 2))
+    for edge, count in edges.items():
+        if count != 2:
+            raise ValueError(f"spherical hero edge {sorted(edge)} must belong to exactly two triangles, got {count}")
+
+
 def _spherical_simplices(data: JsonObject, vertex_count: int) -> tuple[Triangle, ...]:
     raw_simplices = data.get("simplices")
     if not isinstance(raw_simplices, list):
@@ -235,6 +244,7 @@ def _spherical_simplices(data: JsonObject, vertex_count: int) -> tuple[Triangle,
     if len(raw_simplices) != expected_simplex_count:
         raise ValueError(f"expected {expected_simplex_count} closed-sphere triangles, got {len(raw_simplices)}")
     simplices: list[Triangle] = []
+    seen: set[frozenset[int]] = set()
     for simplex_index, raw_simplex in enumerate(raw_simplices):
         if not isinstance(raw_simplex, list) or len(raw_simplex) != 3:
             _fail_type(f"spherical hero simplices[{simplex_index}] must contain exactly three vertex indices")
@@ -248,9 +258,14 @@ def _spherical_simplices(data: JsonObject, vertex_count: int) -> tuple[Triangle,
                 raise IndexError(
                     f"simplices[{simplex_index}][{offset}] index {vertex_index} is outside 0..{vertex_count - 1}",
                 )
-        if len(set(simplex)) != 3:
+        key = frozenset(simplex)
+        if len(key) != 3:
             raise ValueError(f"spherical hero simplices[{simplex_index}] must contain three distinct vertex indices")
+        if key in seen:
+            raise ValueError(f"spherical hero simplices[{simplex_index}] is a duplicate triangle {sorted(key)}")
+        seen.add(key)
         simplices.append(simplex)
+    _validate_closed_triangle_incidence(simplices)
     return tuple(simplices)
 
 
@@ -297,6 +312,7 @@ def _simplex_vertex_map(data: JsonObject) -> dict[str, SimplexVertices]:
     if not isinstance(records, list):
         _fail_type("visualization field 'simplices' must be a list")
     simplices: dict[str, SimplexVertices] = {}
+    seen: set[frozenset[str]] = set()
     for record in records:
         if not isinstance(record, dict):
             _fail_type("simplex record must be a JSON object")
@@ -309,8 +325,12 @@ def _simplex_vertex_map(data: JsonObject) -> dict[str, SimplexVertices]:
         if simplex_id in simplices:
             raise ValueError(f"duplicate simplex ID: {simplex_id}")
         typed_ids = cast("list[str]", vertex_ids)
-        if len(set(typed_ids)) != 4:
+        key = frozenset(typed_ids)
+        if len(key) != 4:
             raise ValueError(f"simplex {simplex_id!r} must contain four distinct vertex IDs")
+        if key in seen:
+            raise ValueError(f"simplex {simplex_id!r} repeats tetrahedron {sorted(key)}")
+        seen.add(key)
         simplices[simplex_id] = (typed_ids[0], typed_ids[1], typed_ids[2], typed_ids[3])
     return simplices
 
@@ -344,39 +364,36 @@ def _simplex_neighbor_map(data: JsonObject, simplices: dict[str, SimplexVertices
     return {simplex_id: (values[0], values[1], values[2], values[3]) for simplex_id, values in slots.items()}
 
 
+def _facet_vertices(vertices: SimplexVertices, opposite_index: int) -> Face:
+    """Return the order-independent vertex identity of a slot's face."""
+    return cast("Face", tuple(sorted(vertex for index, vertex in enumerate(vertices) if index != opposite_index)))
+
+
 def _validate_adjacency_facets(simplices: dict[str, SimplexVertices], neighbors: dict[str, NeighborSlots]) -> None:
-    """Validate neighbor facet compatibility and reciprocal records."""
-    neighbor_edge_counts: dict[tuple[str, str], int] = {}
+    """Require slots to agree with actual face incidence and reciprocal adjacency."""
+    facets: dict[Face, list[tuple[str, int]]] = {}
     for simplex_id, slots in neighbors.items():
-        source_vertices = simplices[simplex_id]
         for facet_index, neighbor_id in enumerate(slots):
+            face = _facet_vertices(simplices[simplex_id], facet_index)
+            facets.setdefault(face, []).append((simplex_id, facet_index))
             if neighbor_id is None:
                 continue
-            neighbor_vertices = simplices[neighbor_id]
-            missing_facet_vertex = next(
-                (vertex_id for vertex_index, vertex_id in enumerate(source_vertices) if vertex_index != facet_index and vertex_id not in neighbor_vertices),
-                None,
-            )
+            if neighbor_id == simplex_id:
+                raise ValueError(f"adjacency for simplex {simplex_id!r} facet {facet_index} references itself, but self-referential adjacency is invalid")
+            missing_facet_vertex = next((vertex for vertex in face if vertex not in simplices[neighbor_id]), None)
             if missing_facet_vertex is not None:
                 raise ValueError(
                     f"adjacency for simplex {simplex_id!r} facet {facet_index} references neighbor {neighbor_id!r}, "
                     f"but source facet vertex {missing_facet_vertex!r} is absent from the neighbor"
                 )
-            edge = (simplex_id, neighbor_id)
-            neighbor_edge_counts[edge] = neighbor_edge_counts.get(edge, 0) + 1
 
-    for simplex_id, slots in neighbors.items():
-        for facet_index, neighbor_id in enumerate(slots):
-            if neighbor_id is None:
-                continue
-            if neighbor_id == simplex_id:
-                raise ValueError(f"adjacency for simplex {simplex_id!r} facet {facet_index} references itself, but self-referential adjacency is invalid")
-            reciprocal_count = neighbor_edge_counts.get((neighbor_id, simplex_id), 0)
-            if reciprocal_count == 0:
-                raise ValueError(
-                    f"adjacency for simplex {simplex_id!r} facet {facet_index} references neighbor {neighbor_id!r}, "
-                    "but the neighbor does not provide a distinct reciprocal adjacency"
-                )
+    for face, occurrences in facets.items():
+        if len(occurrences) > 2:
+            raise ValueError(f"facet {face} belongs to {len(occurrences)} tetrahedra, expected at most two")
+        if len(occurrences) == 2:
+            (left, left_slot), (right, right_slot) = occurrences
+            if neighbors[left][left_slot] != right or neighbors[right][right_slot] != left:
+                raise ValueError(f"shared facet {face} requires distinct reciprocal adjacency between {left!r} and {right!r}")
 
 
 def _validate_references(coordinates: dict[str, Point3], simplices: dict[str, SimplexVertices], neighbors: dict[str, NeighborSlots]) -> None:
@@ -410,8 +427,7 @@ def faces_by_boundary_state(simplices: Mapping[str, SimplexVertices], neighbors:
         for opposite_index, neighbor_id in enumerate(slots):
             if (neighbor_id is None) != boundary:
                 continue
-            face_ids = tuple(vertex_id for index, vertex_id in enumerate(vertex_ids) if index != opposite_index)
-            faces.add(cast("Face", tuple(sorted(face_ids))))
+            faces.add(_facet_vertices(vertex_ids, opposite_index))
     return sorted(faces)
 
 

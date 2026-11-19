@@ -164,5 +164,6 @@ Commit-message rules that affect generated changelog text live in
 
 ## Crates.io Documentation
 
-Publish documentation changes before bumping the crates.io version. crates.io
-does not allow re-publishing documentation without a version bump.
+Finish packaged documentation before acquiring release benchmarks and creating
+the release tag. crates.io keeps published archives immutable. Later changes to
+the packaged README or rustdoc require a new crate version.

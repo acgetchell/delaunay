@@ -70,6 +70,7 @@ and derived benchmark archive. Missing or replaced evidence fails closed.
 | --- | --- |
 | `changelog-release TAG [DATE]` | Generate prospective notes with the prepared citation date |
 | `changelog-preview [--tag TAG] [--date DATE]` | Preview generation without publishing files |
+| `release-dependency-builds` | Prepare local source-build receipts for the current release inputs |
 | `performance-prepare` | Capture release/ref assertions without timing |
 | `performance-release` | Acquire once, freeze owner records, promote reports |
 | `performance-resume` | Resume the original checkpoint, subject to shared recovery checks |
@@ -266,13 +267,23 @@ changes; do not edit them manually.
 
 ### 4. Generate release performance measurements
 
-After updating the package version, capture independent release/ref assertions,
-then measure and promote through the declared shared workflow:
+After updating the package version and locking the final dependencies, prepare
+the local source-build receipts. Then capture independent release/ref assertions
+and acquire performance evidence:
 
 ```bash
+just release-dependency-builds
 just performance-prepare
 just performance-release
 ```
+
+The release acquisition checks dependency provenance before creating a benchmark
+checkpoint. Source-build receipts are tied to this checkout, interpreter,
+platform, and the contents of `pyproject.toml`, `uv.lock`, and
+`dependency-sources.toml`. Run `just release-dependency-builds` again when those
+inputs change, including after a release version bump. If acquisition stops here
+with a stale receipt, refresh the receipts, verify them with
+`just release-dependencies`, then rerun `just performance-release`.
 
 `performance-release` runs benchmarks locally and can take hours. The recipe
 defaults to one heartbeat every **300 seconds (five minutes)**; stage changes
@@ -342,17 +353,15 @@ reported recovery paths after interruption.
 ### 6. Validate the release branch
 
 ```bash
-just ci
 just release-version-check
 just publish-check
 ```
 
-`just ci` includes lockfile, citation, documentation, Python tooling, tests,
-and benchmark-compilation checks. `release-version-check` invokes the strict
+`release-version-check` invokes the strict
 `research-repo-tools release check --final-release` gate, requiring exactly one current
 changelog heading whose date matches `CITATION.cff`. `publish-check` validates
 crates.io metadata and dry-runs the exact package from the intentionally dirty
-release worktree.
+release worktree. Run the full PR push gate on the final staged changes below.
 
 ### 7. Review, stage, and commit the release artifacts
 
@@ -369,11 +378,22 @@ files under `docs/performance-runs/`, `docs/archives/changelog/`, and
 `docs/assets/bench/`. Stage only reviewed paths;
 do not stage unrelated work or the entire `docs/` tree without inspecting it.
 
-Then inspect and commit the staged release delta:
+Inspect the staged release delta and confirm that the working tree contains
+only changes authorized for review. Run the full PR push gate:
 
 ```bash
 git --no-pager diff --cached
+just security
+just ci
+just review origin/main
+```
 
+`just ci` includes lockfile, citation, documentation, Python tooling, tests,
+and benchmark-compilation checks. Address valid review findings and rerun
+the [gate](dev/commands.md#local-coderabbit-review) on the resulting changes.
+After all three checks pass for the final content, commit:
+
+```bash
 git commit -m "chore(release): release $TAG
 
 - Bump version to $TAG
@@ -748,7 +768,9 @@ long-lived `CARGO_REGISTRY_TOKEN` secret.
 Workflow YAML does not apply account configuration. Inspect
 `gh api repos/acgetchell/delaunay/immutable-releases`; `enabled` must be `true`.
 Record the actual crates.io publisher identity, GitHub environment
-reviewers/tag policy, allowlist and permissions evidence in #618 before release.
+reviewers/tag policy, allowlist, and permissions evidence in the active release
+tracker before publication. [#618](https://github.com/acgetchell/delaunay/issues/618)
+records the initial setup.
 Validate the source with `just check-config`, `just python-check`,
 `just test-python`, `just check-docs` and `just doc-check`; PR tests use simulated
 providers and never upload crates. Native CI and successful approved publication
@@ -762,9 +784,8 @@ and `v*` tags only. The Actions allowlist contains the exact reviewed
 authentication-action commit. These values match the workflow on GitHub and
 the artifact-promotion changes.
 
-The crates.io **Require trusted publishing for all new versions** option was
-unchecked: API-token publication remains possible. That optional account
-restriction is separate from registering the publisher. This readback validates
-configuration; the next approved release must still establish successful OIDC
-publication and clean downstream resolution for #618. Re-read live settings
-before changing them, preserving newer entries.
+That readback recorded the crates.io **Require trusted publishing for all new
+versions** option as unchecked. This optional restriction is separate from
+publisher registration. Re-read live settings before changing them, preserving
+newer entries. Record v0.8.5 OIDC publication and downstream resolution in
+[release tracker #696](https://github.com/acgetchell/delaunay/issues/696).

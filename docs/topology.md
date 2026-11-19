@@ -139,6 +139,29 @@ general topology subsystem to the library.
 [lickorish-reference]: ../REFERENCES.md#lickorish1999
 [lickorish-text]: https://arxiv.org/html/math/9911256v1
 
+## Intrinsic 2D triangle gluings
+
+Use `delaunay::prelude::topology::triangle_gluing` to represent a surface from
+explicit triangle and edge incidences. Each edge has a caller-chosen ID, so
+parallel edges can share endpoints and loop edges can retain two distinct ends
+in a vertex link. A triangle lists three directed edge uses in cyclic order.
+Two sides are glued by using the same edge ID.
+
+`TriangleGluing::try_new(Cells)` checks identities, triangle boundaries, edge
+incidence, and vertex links. `components()` reports the boundary-circle count,
+orientability, and Euler characteristic of each connected component. Call
+`validate_orientability()` to require every component to be orientable.
+`try_apply(Edit)` checks the whole candidate surface before committing and
+returns the inverse edit. Versioned Serde data preserves caller-supplied IDs
+and revalidates the cells on load.
+
+This owner represents intrinsic topology without coordinates. The geometric
+`Tds`, `Triangulation`, and `DelaunayTriangulation` workflows use their own
+[construction and validation contracts](construction_and_validation.md).
+See the [Rust API](https://docs.rs/delaunay/latest/delaunay/topology/triangle_gluing/)
+for construction and edit examples and the [topology references](../REFERENCES.md#topological-manifolds-realizations-and-pl-topology-levels-3-4-validation)
+for the vertex-link criterion and Δ-complex background.
+
 ## Code layout
 
 Relevant modules (lexicographically sorted):
@@ -165,9 +188,10 @@ src/
 │   │   ├── euclidean.rs
 │   │   ├── spherical.rs
 │   │   └── toroidal.rs
-│   └── traits/
-│       ├── global_topology_model.rs
-│       └── topological_space.rs
+│   ├── traits/
+│   │   ├── global_topology_model.rs
+│   │   └── topological_space.rs
+│   └── triangle_gluing.rs
 └── triangulation/
     ├── flips.rs
     ├── query.rs

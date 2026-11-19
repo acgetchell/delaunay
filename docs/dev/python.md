@@ -20,9 +20,9 @@ just python-check
 just test-python
 ```
 
-Run `just check` on the final working tree before every push. Substantial Python
-changes also require `just ci`; see the [validation policy](commands.md#validation-command-selection)
-for the scope and focused-check exceptions.
+Use the [validation matrix](commands.md#validation-command-selection) to
+choose the local checks. Every initial or corrective PR push requires the
+[full push gate](commands.md#local-coderabbit-review), including `just ci`.
 
 `just python-check` invokes shared `python check` for Ruff formatting, Ruff linting,
 and ty; `just python-fix` invokes shared `python fix`. All three checks use shared batching over tracked

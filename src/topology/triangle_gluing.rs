@@ -233,7 +233,11 @@ impl TriangleGluing {
     ///
     /// # Errors
     ///
-    /// Returns a typed error for invalid records or neighborhoods.
+    /// Returns [`TriangleGluingError`] for duplicate or missing cells,
+    /// inconsistent triangle boundaries, invalid edge incidence or vertex links,
+    /// or a component whose Euler characteristic is outside the `isize` range.
+    ///
+    /// # Examples
     ///
     /// ```rust
     /// use delaunay::prelude::topology::triangle_gluing::{
@@ -336,6 +340,8 @@ impl TriangleGluing {
     ///
     /// Returns a typed error if the edit fails to match the current cells
     /// or would produce an invalid surface. An error preserves all state.
+    ///
+    /// # Examples
     ///
     /// ```rust
     /// use delaunay::prelude::topology::triangle_gluing::{Edit, TriangleGluing, TriangleGluingError};

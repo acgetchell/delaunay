@@ -35,8 +35,9 @@ cold/warm speedup. Splitting Python alone leaves most of the Rust critical path.
 The four hosted stages overlap substantial independent compilation and testing,
 but duplicate setup and some dependency compilation on separate runners.
 
-After-change native timings, queue time and total runner usage must be recorded
-for the final commit under [#694](https://github.com/acgetchell/delaunay/issues/694).
+Record after-change native timings, queue time and total runner usage for the
+final commit in [release tracker #696](https://github.com/acgetchell/delaunay/issues/696),
+which owns the validation transferred from [#694](https://github.com/acgetchell/delaunay/issues/694).
 Measure cold and warm caches separately with equivalent validator/test coverage.
 Local graph tests prove ordering and coverage; they do not establish hosted speed.
 
@@ -129,8 +130,8 @@ cache key so a portable install cannot populate the native preparation cache.
 
 Hosted preparation completes before the native matrix starts. Each stage still
 installs and verifies exact tool versions in its own runner; preparation shares
-only managed Cargo compilation output through RRT v0.2.8's supported build
-directory. That cache is keyed by OS, architecture and consumer tool/dependency
+only managed Cargo compilation output through RRT's managed build directory.
+That cache is keyed by OS, architecture and consumer tool/dependency
 declarations, without a broad restore prefix or installed executable cache.
 Windows retains the short `C:/rrt` installation and `C:/rrt-build` compilation
 roots. Managed Cargo tool installation on Windows uses HTTP/1.1 after hosted

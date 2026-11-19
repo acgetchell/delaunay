@@ -1,8 +1,8 @@
 # Limitations and Scope
 
-This page summarizes the operational limits of the code being prepared for
-v0.8.4. It distinguishes construction coverage, validated owner contracts, and
-operations that require a particular geometric model.
+This page summarizes operational limits. It distinguishes construction
+coverage, validated owner contracts, and operations that require a particular
+geometric model.
 Historical investigations and closed reproducers live in [`archive/`](archive/).
 
 ## Intended Use
@@ -35,6 +35,12 @@ GPU/parallel meshing, or production-scale dynamic remeshing.
 | `Tds` | Levels 1–2: elements and connectivity. | Checked storage and combinatorial transitions. |
 | `Triangulation` | Levels 1–4: adds intrinsic topology and valid realization. | General queries, geometry, persistence, and topology editing. |
 | `DelaunayTriangulation` | Levels 1–5: adds Delaunay certification. | Construction and vertex maintenance that preserve the Delaunay property. |
+
+[`TriangleGluing`](topology.md#intrinsic-2d-triangle-gluings) is a separate
+coordinate-free owner for 2D surfaces with explicit edge identities. It
+validates incidence and vertex links, including surfaces with parallel edges
+and loops. Use a geometric triangulation owner when you need coordinates,
+realization checks, or Delaunay predicates.
 
 `DelaunayTriangulationBuilder::build_triangulation()` stops at Levels 1–4;
 `build()` also establishes Level 5. `TriangulationBuilder` certifies an existing
@@ -82,8 +88,8 @@ These are geometric predicate limits, not a general limit on all `la-stack`
 matrix types or on the separate exact simplex-intersection adapter.
 The standalone `validate_simplex_intersection` API accepts labeled simplices
 through D=8. Barycentric, active-set and revised-simplex LP systems require
-orders D, D+1 and D+2, respectively; the consumer uses public `RationalMatrix`
-solves through order ten from published la-stack 0.5.2. Derived rational
+orders D, D+1 and D+2, respectively. The locked `la-stack` backend supplies
+public `RationalMatrix` solves through order ten. Derived rational
 coefficients remain exact. Floating-point rank and basis searches are only
 provisional and require exact certification. Unsupported dimensions, backend
 failures and exhausted active-set budgets return typed errors. The fallback

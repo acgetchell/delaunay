@@ -1,136 +1,51 @@
 # Roadmap
 
-This page separates v0.8.4 release preparation, completed release
-baselines, and future work. The [limitations guide](limitations.md) owns the
-current supported operation and geometry scope. Historical task snapshots
-live in [`archive/`](archive/).
+This page tracks release preparation and future work. The
+[limitations guide](limitations.md) describes supported operations and
+geometric models. Historical task snapshots live in [`archive/`](archive/).
 
-## v0.8.4 Release Preparation
+## v0.8.5 Release Preparation
 
-The current checkout is being reviewed for v0.8.4. The published v0.8.3 release
-is the preceding baseline; its completed changes are summarized below.
+The v0.8.5 candidate builds on the published
+[v0.8.4 baseline](https://github.com/acgetchell/delaunay/releases/tag/v0.8.4).
+The [release tracker #696](https://github.com/acgetchell/delaunay/issues/696)
+tracks native validation, benchmark and package evidence, and publication.
 
-Release preparation includes coordinated package/citation metadata and
-generated changelog updates, the required native validation, and the benchmark
-and publication gates in [RELEASING.md](RELEASING.md). A completed local check
-does not establish hosted CI, fresh performance measurements, or publication.
-The [changelog](../CHANGELOG.md) owns the detailed generated release notes.
+- [`TriangleGluing`](topology.md#intrinsic-2d-triangle-gluings) represents and
+  edits intrinsic 2D surfaces with explicit edge identities, including parallel
+  edges and loops.
+- Rust 1.100.0 is the minimum supported toolchain. The numerical backend is
+  `la-stack` 0.5.4. The [adoption record](la_stack_adoption.md) retains the
+  measurements and the bounds of the numerical comparisons.
+- The release workflow uses `research-repo-tools` 0.3.0. It carries one retained
+  acquisition through reports, README publication, and release attachment.
+  Cargo publication uses the explicit dispatch and approval in
+  [RELEASING.md](RELEASING.md).
+- The [rollback performance report](insertion_rollback_performance.md) records
+  the touched-record journal measurements and the 4D smoke guard results for
+  [#510](https://github.com/acgetchell/delaunay/issues/510).
 
-<!-- Preserve the former heading's public deep link. -->
-<!-- markdownlint-disable-next-line MD033 -->
+<!-- Preserve the former release headings' public deep links. -->
+<a id="v084-release-preparation"></a>
 <a id="v083-release-preparation"></a>
-
-## v0.8.3 Released Baseline
-
-v0.8.3 was published on October 26, 2026. It required Rust 1.99.1 and included
-the following changes since v0.8.2:
-
-- **Checked ownership boundaries:** `Tds` owns Levels 1–2,
-  `Triangulation` owns general geometry and topology through Levels 1–4, and
-  `DelaunayTriangulation` adds Level 5. General vertex editing, Pachner moves,
-  and persistence use these boundaries rather than implicitly retaining a
-  Delaunay proof after topology changes.
-- **Geometry and recovery fixes:** exterior insertion, hull-corner deletion,
-  periodic stellar insertion, point location, duplicate detection, and failed
-  insertion recovery preserve their scientific contracts and typed errors.
-  Unsupported periodic location and exact intersection dimensions fail
-  explicitly; these safeguards do not expand the supported geometry range.
-- **Numerical backend adoption:** `la-stack` 0.5.1 supplies the delegated
-  numerical kernels, while Delaunay retains geometric certification and
-  fallback policy. The built-in `ExactPredicates` contract still stops at D=6.
-- **Persistence contracts:** general triangulation snapshots and Delaunay
-  checkpoints restore their owning validation levels, preserve coordinate
-  storage, and expose recoverable load failures with the required payload bounds.
-- **Tooling and release evidence:** the published `research-repo-tools` package
-  supplies shared maintenance, managed tools, and evidence primitives. Cargo
-  release workflows validate retained archives and trusted exact-commit CI
-  evidence; benchmark comparisons retain their scientific provenance rules.
+<a id="v083-released-baseline"></a>
+<a id="v078-pre-v080-cleanup-released"></a>
+<a id="v080-paper-facing-api-and-topology-push-released"></a>
+<a id="v081-validation-evidence-and-performance-follow-up"></a>
+<a id="v082-corrected-benchmark-baseline"></a>
 
 ## Release Sequence
 
-The following entries describe earlier baselines and longer-term candidates.
-Their compiler versions, measurements, and artifact identities belong to those
-releases; they are not current setup instructions.
-
-### v0.7.8 pre-v0.8.0 cleanup (released)
-
-The v0.7.8 line was the final pre-v0.8.0 cleanup baseline. It kept the
-performance-summary work from v0.7.7, closes the release-facing documentation
-and doctest hygiene pass, tightens default test-suite budgets, validates compact
-`T^3` quotient construction, and restores failed topology-repair
-workflows to their pre-call state when fallback rebuild does not succeed.
-
-Key takeaways from v0.7.8:
-
-- Default correctness tests now stay under the routine 10-second budget, with
-  long-running correctness work routed through `slow-tests`.
-- Public examples and doctests avoid release-hostile unwrap/expect patterns in
-  favor of typed `Result` wrappers or non-degenerate examples.
-- Compact `T^3` quotients are validated through topology and Delaunay
-  checks before being returned; higher-dimensional quotient construction fails
-  fast until scalable follow-up work lands.
-- `delaunayize` now consumes a Levels 1–4 triangulation, keeps intermediate
-  flip-repair state private, and publishes only a Levels 1–5 result; raw-TDS
-  PL-manifold repair is an orthogonal pre-restoration workflow.
-- The release benchmark summary recorded construction throughput, generated
-  simplex counts, and circumsphere predicate behavior for that baseline.
-
-### v0.8.0 paper-facing API and topology push (released)
-
-v0.8.0 delivered the paper-facing API and topology work deferred from v0.7.8.
-That release required Rust 1.97.1 and included the completed audit of that
-toolchain surface. Its [reviewer artifact guide](archive/ARTIFACT.md) retains
-the original release identity, commands, and benchmark exception.
-
-- **Pachner/Edit API shape (#252/#253/#350/#337):** unified the Pachner move API,
-  expanded public flip benchmark coverage, added Monte-Carlo stress benchmarks,
-  and supported periodic external-simplex parity constraints in bistellar flips.
-- **Linear algebra and API boundaries (#424):** kept `la-stack` details behind
-  `src/geometry/matrix.rs`, preserved typed backend errors in geometry helpers,
-  and kept README/API guidance aligned with the focused prelude reference in
-  `docs/code_organization.md`.
-- **Topology and incidence surface (#359/#304):** added stable incidence queries
-  for simplex-local topology and dedicated targeted topology repair stages for
-  ridge and vertex-link failures.
-- **Transactional rollback architecture (#364):** replaced or centralized
-  full-TDS clone rollback where benchmarks show it matters, while preserving
-  the current strong failed-mutation rollback guarantee.
-- **Naming cleanup (#323):** made the breaking `Cell` → `Simplex` rename.
-- **Iterator cleanup (#353):** preferred iterator-based collection-building paths
-  where that improves clarity and allocation behavior.
-- **Rust 1.97.1 release gate (#329/#496):** raised the v0.8.0 MSRV to Rust
-  1.97.1, finished the baseline `assert_matches!` cleanup, audited the new
-  integer/`NonZero` bit helpers against Hilbert bit-depth/index invariants,
-  reviewed `RepeatN::default` and Cargo 1.97 tooling changes for useful adoption,
-  and re-benchmarked predicate `cold_path` decisions under the 1.97.1 compiler.
-- **Notebook/export artifact (#64/#408):** shipped the generic simplicial-complex
-  JSON export, reproducible quickstart and validation notebooks, tracked
-  validation diagrams, and reviewer-facing artifact instructions.
-
-### v0.8.1 validation evidence and performance follow-up
-
-This released baseline completed the following validation work:
-
-- **Level 4 realization validation (#482/#559):** completed the independent
-  randomized and degenerate 2D–5D agreement campaign for the revised
-  simplex-intersection narrow phase and added focused narrow-phase and
-  whole-realization benchmarks.
-- **Level 5 Delaunay reporting (#483/#560):** replaced the certified Euclidean
-  all-vertices/all-simplices report bottleneck with an O(simplices) local-flip
-  path while preserving exhaustive fallback diagnostics, with 2D–5D agreement
-  tests and performance canaries.
-
-### v0.8.2 corrected benchmark baseline
-
-v0.8.2 established the corrected benchmark contract and release metadata
-baseline. Cross-release performance claims must respect that contract boundary;
-old timings are not made comparable by relabeling them. See the
-[generated v0.8.2 notes](../CHANGELOG.md) and [benchmark guide](../benches/README.md).
+The [changelog](../CHANGELOG.md) and its [archives](archives/changelog/) own
+completed release history. The [v0.8.0 reviewer artifact](archive/ARTIFACT.md)
+records that release's reproduction procedure. The
+[retained benchmark runs](performance-runs/) identify the exact measured releases
+and preserve the evidence for each comparison.
 
 ### v0.9.0 and later horizon
 
-These are future candidates, not commitments for v0.8.3 or a fixed v0.9.0
-schedule. Scientific correctness and supporting evidence determine readiness.
+Scientific correctness and supporting evidence determine readiness for these
+future candidates.
 
 - **Broader geometry:** constrained Delaunay triangulations
   ([#299](https://github.com/acgetchell/delaunay/issues/299)), Voronoi diagrams
@@ -139,19 +54,11 @@ schedule. Scientific correctness and supporting evidence determine readiness.
 - **Concurrent topology mutation:** establish correctness, conflict, rollback,
   and performance evidence before adopting a scheduler
   ([#495](https://github.com/acgetchell/delaunay/issues/495)).
-- **Construction rollback:** verify the performance of the touched-record
-  journals shipped in [#587](https://github.com/acgetchell/delaunay/pull/587)
-  ([#510](https://github.com/acgetchell/delaunay/issues/510)).
 - **High-dimensional hull buffers:** investigate allocation beyond D=7
   ([#106](https://github.com/acgetchell/delaunay/issues/106)).
 - **Public builder polish:** use downstream experience before finalizing the
   construction API for v1.0.0
   ([#497](https://github.com/acgetchell/delaunay/issues/497)).
-- **Shared tooling adapter cleanup:** remove the temporary adapters after their
-  upstream replacements are published and adopted
-  ([#673](https://github.com/acgetchell/delaunay/issues/673),
-  [#676](https://github.com/acgetchell/delaunay/issues/676)); see the
-  [completed adoption record](dev/tooling_adoption.md) for context.
 - **Spherical integration:** extend the bounded `S^2`/`S^3` prototype to the
   broader spherical construction, realization, and editing contract
   ([#414](https://github.com/acgetchell/delaunay/issues/414)).
@@ -181,15 +88,6 @@ schedule. Scientific correctness and supporting evidence determine readiness.
 
 ## Not Implemented Today
 
-- Constrained Delaunay triangulations.
-- Concurrent topology mutation or multi-threaded construction.
-- Full spherical integration beyond the bounded `S^2`/`S^3` prototype, or
-  hyperbolic triangulation semantics.
-- Massively parallel, GPU, or out-of-core construction.
-- Native Rust plotting or viewer APIs; notebook visualization and JSON export
-  are already available.
-- Voronoi diagram extraction.
-
-See [`limitations.md`](limitations.md) for current operational limits and
+See [feature gaps](limitations.md#feature-gaps) for current operational limits and
 [`archive/todo_2026-04-23.md`](archive/todo_2026-04-23.md) for the retired
 post-v0.7.5 task snapshot.

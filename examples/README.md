@@ -58,10 +58,13 @@ method or every supported dimension.
 | Direct `SphericalDelaunayBuilder` use for `S^2` and `S^3` | `spherical_construction` |
 | Payloads, secondary maps, JSON persistence, and set similarity | `data_and_serialization` |
 | Builder-managed insertion and explicit Pachner moves | `topology_editing` |
+| Intrinsic 2D surface construction and reversible edits | [`TriangleGluing` doctests][triangle-gluing-doctests] |
 | PL-manifold and Delaunay repair | `delaunayize_repair` |
 | Typed validation reports and opt-in diagnostics | `diagnostics` |
 | Predicate kernels, degeneracy handling, and circumcenter fallback | `numerical_robustness` |
 | Stable mesh and hull export plus 3D visualization | [`00_quickstart.ipynb`](../notebooks/00_quickstart.ipynb) |
+
+[triangle-gluing-doctests]: https://docs.rs/delaunay/latest/delaunay/topology/triangle_gluing/struct.TriangleGluing.html
 
 The visual complements are
 [`01_validation.ipynb`](../notebooks/01_validation.ipynb) for the five-level

@@ -1,8 +1,8 @@
 {
   "run": {
-    "baseline": "v0.8.3",
-    "current": "v0.8.4",
-    "id": "09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad"
+    "baseline": "v0.8.4",
+    "current": "v0.8.5",
+    "id": "e736ac85e7715c81afbcb0d20ea925347408d86095c8e0af19f8fc4cf8aa5c90"
   },
   "schema": "research-repo-tools/latest-run/v1"
 }

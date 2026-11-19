@@ -44,11 +44,8 @@ From the repository root, initialize the declared toolchain:
 uv run --locked --managed-python --only-group tooling research-repo-tools setup
 ```
 
-The temporary scanner-selection adapter keeps setup on the locked Python baseline
-until [research-repo-tools #165](https://github.com/acgetchell/research-repo-tools/issues/165)
-is published and adopted; [#673](https://github.com/acgetchell/delaunay/issues/673)
-tracks its removal. Open a new terminal if setup changed PATH. No shared-package checkout or generated
-bootstrap launcher is needed. Repository Python tooling is described in
+The pinned shared package uses the locked Python environment for Semgrep
+setup and scans. Open a new terminal if setup changed PATH. Repository Python tooling is described in
 [docs/dev/python.md][dev-python] and [tooling/python/README.md][python-readme].
 
 Build the development profile:
@@ -71,10 +68,10 @@ During development, use `just check` alongside targeted tests for changed behavi
 
 | Command | Purpose |
 |---------|---------|
-| `just check` | Check code, configuration, documentation, formatting, and static analysis; required before every push. |
+| `just check` | Check code, configuration, documentation, formatting, and static analysis during iteration. |
 | `just test` | Run the default Rust and Python test suites. |
 | `just security` | Audit Rust and Python dependencies and scan reachable Git history and current files for secrets. |
-| `just ci` | Run comprehensive final validation for core Rust/Cargo, substantial Python, or public-behavior changes. |
+| `just ci` | Run comprehensive local CI, including `just check`. |
 
 Use `just fix` to apply formatters and safe automatic fixes, then rerun the
 relevant checks. `just ci` includes `just check` and every `just test` bucket; earlier runs
@@ -87,13 +84,12 @@ fallback. Hosted CI splits native work into four jobs on each supported OS;
 the [CI ownership guide](docs/dev/ci_validation.md) records their coverage and
 cache/evidence boundaries.
 
-Run `just check` on the final working tree before every push. Before submitting
-core Rust/Cargo, substantial Python, or public-behavior changes, complete `just ci`;
-that comprehensive command already includes `just check`. Smaller documentation,
-configuration, Python, notebook, test-only, benchmark-only, and example-only changes
-use their focused validators alongside the pre-push gate; for example, Markdown-only
-changes also use `just check-docs`. See [the command guide][dev-commands] for the
-authoritative validation matrix and security scan details.
+For every initial or corrective PR push, stage the intended changes and run
+`just security`, `just ci`, and the included `just review` against the PR base.
+Address valid findings and refresh the gates for the final content before
+committing and pushing. Use focused validators during iteration, such as
+`just check-docs` for Markdown. See [the command guide][dev-commands] for the
+validation matrix and review scope.
 
 Before committing edited notebooks, clear generated outputs and execution counts
 with `just notebook-clear-outputs-all`; see [notebook policy](docs/dev/notebooks.md).

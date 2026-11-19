@@ -21,16 +21,13 @@ Native Linux and Windows execution must be verified by their CI jobs.
 [otel-advisory]: https://github.com/advisories/GHSA-xcq7-p3pf-p88h
 [otel-api-advisory]: https://github.com/advisories/GHSA-mf5v-w3w3-f6cg
 
-The Rust dependency is now the published la-stack 0.5.2, retaining disabled
-default features and the `exact` feature. This dependency refresh makes the
-upstream APIs available; the new numerical delegation is tracked by
-[#654](https://github.com/acgetchell/delaunay/issues/654),
-[#655](https://github.com/acgetchell/delaunay/issues/655),
-[#656](https://github.com/acgetchell/delaunay/issues/656), and
-[#657](https://github.com/acgetchell/delaunay/issues/657).
+The v0.8.5 candidate uses the published `la-stack` 0.5.4 with the `exact`
+feature and default features disabled. See the
+[numerical adoption record](../la_stack_adoption.md) for the earlier
+delegation changes and their measured comparisons.
 
-The dependency's polynomial errors introduce 16-byte alignment. To contain that
-growth in nested triangulation errors, `CoordinateConversionError::LinearAlgebraFailure`,
+The la-stack 0.5.2 migration introduced 16-byte alignment through polynomial
+errors. To contain that growth, `CoordinateConversionError::LinearAlgebraFailure`,
 `QualityError::EdgeLength`, `RandomPointGenerationError::VectorComputation`, and
 `SphericalPointError::AngleComputationFailed`
 now store their `source` as `Box<LaError>`. This is an intentional public field
@@ -38,15 +35,13 @@ type change: construct these fields with `Box::new(source)` and inspect the
 backend variant through `source.as_ref()` or `*source`. Existing `From<LaError>`
 conversions remain available. The derived `Error::source()` now exposes the
 typed `Box<LaError>`, so downcast to that type before inspecting its inner error.
-Allocation occurs only when constructing those errors; the scientific kernels
-are unchanged.
+Allocation occurs when constructing those errors.
 
-The v0.2.4 pin also supplies the shared Windows notebook event-loop fix for
-[#661](https://github.com/acgetchell/delaunay/issues/661); native Windows consumer
-verification remains required. The performance and Rustdoc integrations are
-documented below. The [release-tooling adoption](#v024-release-tooling-adoption)
-implements [#653](https://github.com/acgetchell/delaunay/issues/653) using the
-same published package.
+Versioned sections below retain adoption history. The v0.2.4 adoption included
+the Windows notebook event-loop fix for
+[#661](https://github.com/acgetchell/delaunay/issues/661) and the
+[release-tooling migration](#v024-release-tooling-adoption) for
+[#653](https://github.com/acgetchell/delaunay/issues/653).
 
 ## v0.3.0 release command adoption
 
@@ -518,11 +513,13 @@ No tracked scientific report, CSV/JSON baseline, notebook, PDF, or figure is
 refreshed by this adoption patch. The canonical macOS `just ci` leg regenerates
 temporary validation figures only to compare them with the tracked artifacts.
 
-## Remaining shared-tool gaps
+<!-- markdownlint-disable-next-line MD033 -->
+<a id="remaining-shared-tool-gaps"></a>
 
-The v0.1.8 implementation is adopted for issues #625–#630, #632–#634 and #636.
-Their native Linux/Windows consumer results remain pending hosted CI.
-Issue #631 adopts the v0.1.9 discovery, heterogeneous completeness, saved-sample
+## Ownership after v0.1.8 and v0.1.9 adoption
+
+The v0.1.8 implementation covered issues #625–#630, #632–#634 and #636.
+Issue #631 adopted the v0.1.9 discovery, heterogeneous completeness, saved-sample
 verification and captured release-target APIs. Delaunay retains workload and
 scientific eligibility policy; shared code owns the underlying mechanisms.
 

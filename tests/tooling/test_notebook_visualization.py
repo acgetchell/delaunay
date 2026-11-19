@@ -481,6 +481,20 @@ def test_load_spherical_hero_returns_validated_records(tmp_path: Path) -> None:
     assert artifact.simplices[0] == (0, 2, 4)
 
 
+@pytest.mark.parametrize(
+    ("triangle", "message"),
+    [([4, 2, 0], "duplicate triangle"), ([0, 1, 4], "exactly two triangles")],
+)
+def test_load_spherical_hero_rejects_invalid_triangle_incidence(tmp_path: Path, triangle: list[int], message: str) -> None:
+    path = tmp_path / "spherical.json"
+    artifact = spherical_hero_artifact()
+    artifact["simplices"][-1] = triangle
+    write_spherical_hero(path, artifact)
+
+    with pytest.raises(ValueError, match=message):
+        load_spherical_hero(path, expected_vertex_count=6)
+
+
 @pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
 def test_load_spherical_hero_rejects_non_integer_schema_version(tmp_path: Path, schema_version: object) -> None:
     """Spherical schema versions must be exact JSON integers."""
@@ -643,6 +657,36 @@ def test_load_visualization_3d_rejects_nonreciprocal_ordinary_neighbor(tmp_path:
     path.write_text(json.dumps(artifact), encoding="utf-8")
 
     with pytest.raises(ValueError, match="distinct reciprocal adjacency"):
+        load_visualization_3d(path)
+
+
+def test_load_visualization_3d_rejects_shared_facet_marked_boundary(tmp_path: Path) -> None:
+    path = tmp_path / "visualization.json"
+    artifact = visualization_artifact()
+    artifact["vertices"].append({"id": "e", "coordinates": [1.0, 1.0, 1.0]})
+    artifact["simplices"].append({"id": "other", "vertex_ids": ["e", "b", "c", "d"]})
+    artifact["adjacency"].extend({"simplex_id": "other", "facet_index": index, "neighbor_simplex_id": None} for index in range(4))
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"shared facet .*distinct reciprocal adjacency"):
+        load_visualization_3d(path)
+
+
+@pytest.mark.parametrize(
+    ("added_simplices", "message"),
+    [([("d", "c", "b", "a")], "repeats tetrahedron"), ([("e", "b", "c", "d"), ("f", "b", "c", "d")], "expected at most two")],
+)
+def test_load_visualization_3d_rejects_invalid_facet_incidence(tmp_path: Path, added_simplices: list[tuple[str, ...]], message: str) -> None:
+    path = tmp_path / "visualization.json"
+    artifact = visualization_artifact()
+    artifact["vertices"].extend([{"id": "e", "coordinates": [1.0, 1.0, 1.0]}, {"id": "f", "coordinates": [2.0, 1.0, 1.0]}])
+    for index, vertices in enumerate(added_simplices):
+        simplex_id = f"extra-{index}"
+        artifact["simplices"].append({"id": simplex_id, "vertex_ids": vertices})
+        artifact["adjacency"].extend({"simplex_id": simplex_id, "facet_index": slot, "neighbor_simplex_id": None} for slot in range(4))
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
         load_visualization_3d(path)
 
 

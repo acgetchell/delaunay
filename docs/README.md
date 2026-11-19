@@ -11,7 +11,7 @@ Historical design notes, investigations, and completed optimization roadmaps liv
 - [`archive/ARTIFACT.md`](archive/ARTIFACT.md): v0.8.0 reviewer reproduction paths, claim map, evidence, and limits.
 - [`../examples/README.md`](../examples/README.md): public-workflow coverage across runnable Rust examples and notebooks.
 - [`api_design.md`](api_design.md): construction, vertex lifecycle, and Pachner move APIs.
-- [`topology.md`](topology.md): Level 3 Intrinsic PL Topology invariants (manifold checks, orientability, Euler characteristic).
+- [`topology.md`](topology.md): Level 3 Intrinsic PL Topology invariants and coordinate-free 2D triangle gluings.
 - [`construction_and_validation.md`](construction_and_validation.md): proof-bearing construction, the five validation levels, and their configuration.
 - [Validation manuscript](https://github.com/acgetchell/Papers/tree/main/delaunay-validation): source and reviewer PDF for the validation architecture paper.
 - [`diagnostics.md`](diagnostics.md): opt-in diagnostic helpers, structured reports, and debug switches.
@@ -27,7 +27,9 @@ Historical design notes, investigations, and completed optimization roadmaps liv
 - [`invariants.md`](invariants.md): theoretical background and rationale for the topological and geometric invariants.
 - [`numerical_robustness_guide.md`](numerical_robustness_guide.md): robustness strategies, kernels, and retry/repair behavior.
 - [`orientation_spec.md`](orientation_spec.md): coherent combinatorial and geometric orientation specification.
-- [`performance.md`](performance.md): retained release comparisons and their provenance qualifications.
+- [`insertion_rollback_performance.md`](insertion_rollback_performance.md): construction and rejected-insertion measurements across the journal transition.
+- [`performance_current.md`](performance_current.md): most recently promoted release benchmark comparison and provenance.
+- [`performance.md`](performance.md): legacy v0.8.0 benchmark report with limited provenance.
 - [`property_testing_summary.md`](property_testing_summary.md): property-based testing with proptest (where tests live, how to run).
 - [`../benches/README.md`](../benches/README.md): benchmark suites, perf-profile workflow, release summaries, and canary sizes.
 - [`RELEASING.md`](RELEASING.md): release workflow (changelog + benchmarks + publish).

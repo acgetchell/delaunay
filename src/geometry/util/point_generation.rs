@@ -378,6 +378,17 @@ impl SamplerRange {
     }
 }
 
+/// Samples a finite ordered range with finite width and enforces its exclusive upper bound.
+fn sample_half_open(min: f64, max: f64, rng: &mut (impl rand::Rng + ?Sized)) -> f64 {
+    // Rounding can make `random_range` return `max`. Keep the closest allowed value.
+    let sample = rng.random_range(min..max);
+    if sample >= max {
+        max.next_down()
+    } else {
+        sample
+    }
+}
+
 /// Samples one point from an already-validated and sampler-safe coordinate range.
 fn sample_point_in_range<R, const D: usize>(
     range: SamplerRange,
@@ -386,7 +397,7 @@ fn sample_point_in_range<R, const D: usize>(
 where
     R: rand::Rng + ?Sized,
 {
-    let coords = [0.0; D].map(|_| rng.random_range(range.min()..range.max()));
+    let coords = [0.0; D].map(|_| sample_half_open(range.min(), range.max(), rng));
     point_from_generated_coords(coords)
 }
 
@@ -835,7 +846,7 @@ pub fn generate_random_points_periodic<const D: usize>(
     let mut rng = StdRng::seed_from_u64(seed);
 
     (0..n_points).try_fold(try_point_buffer(n_points)?, |mut points, _| {
-        let coords = array::from_fn(|axis| rng.random_range(0.0..periods[axis].get()));
+        let coords = array::from_fn(|axis| sample_half_open(0.0, periods[axis].get(), &mut rng));
         points.push(point_from_generated_coords(coords)?);
         Ok(points)
     })
@@ -1042,6 +1053,8 @@ pub fn generate_random_points_in_ball_seeded<const D: usize>(
 /// rounds adjacent coordinates to the same value, or
 /// [`RandomPointGenerationError::CoordinateConversionFailed`] if a grid index
 /// cannot be represented exactly by the supported coordinate scalar.
+/// Returns [`RandomPointGenerationError::PointBufferReservationFailed`] if the
+/// output buffer cannot be reserved.
 ///
 /// # References
 ///
@@ -1112,9 +1125,7 @@ pub fn generate_grid_points<const D: usize>(
         })?;
     }
 
-    // Dimension/type-aware memory cap: total_points * D * size_of::<T>()
-    let per_point_bytes = D.saturating_mul(core::mem::size_of::<f64>());
-    let total_bytes = total_points.saturating_mul(per_point_bytes);
+    let total_bytes = total_points.saturating_mul(size_of::<Point<D>>());
     let cap = max_grid_bytes_safety_cap();
     if total_bytes > cap {
         return Err(RandomPointGenerationError::GridAllocationTooLarge {
@@ -1127,7 +1138,7 @@ pub fn generate_grid_points<const D: usize>(
     for (axis, &origin) in offset.iter().enumerate() {
         let mut previous = origin;
         for index in 1..points_per_dim {
-            let index_as_scalar = grid_index_as_scalar::<D>(&[index; D], axis, points_per_dim)?;
+            let index_as_scalar = grid_index_as_scalar(index)?;
             let coordinate = index_as_scalar.mul_add(spacing, origin);
             if !coordinate.is_finite() {
                 return Err(RandomPointGenerationError::InvalidGeneratedGridCoordinate {
@@ -1141,7 +1152,7 @@ pub fn generate_grid_points<const D: usize>(
             previous = coordinate;
         }
     }
-    let mut points = Vec::with_capacity(total_points);
+    let mut points = try_point_buffer(total_points)?;
 
     // Use mixed-radix counter over D dimensions (see Knuth TAOCP Vol 4A)
     // This avoids O(N) memory allocation for intermediate index vectors
@@ -1149,7 +1160,7 @@ pub fn generate_grid_points<const D: usize>(
     for _ in 0..total_points {
         let mut coords = [0.0; D];
         for d in 0..D {
-            let index_as_scalar = grid_index_as_scalar::<D>(&idx, d, points_per_dim)?;
+            let index_as_scalar = grid_index_as_scalar(idx[d])?;
             coords[d] = index_as_scalar.mul_add(spacing, offset[d]);
             if !coords[d].is_finite() {
                 return Err(RandomPointGenerationError::InvalidGeneratedGridCoordinate {
@@ -1177,14 +1188,10 @@ pub fn generate_grid_points<const D: usize>(
 ///
 /// This keeps [`generate_grid_points`] from silently rounding large grid indices
 /// when a scalar type cannot represent every `usize` exactly.
-fn grid_index_as_scalar<const D: usize>(
-    idx: &[usize; D],
-    coordinate_index: usize,
-    _points_per_dim: usize,
-) -> Result<f64, RandomPointGenerationError> {
-    safe_usize_to_scalar(idx[coordinate_index]).map_err(|source| {
+fn grid_index_as_scalar(index: usize) -> Result<f64, RandomPointGenerationError> {
+    safe_usize_to_scalar(index).map_err(|source| {
         RandomPointGenerationError::CoordinateConversionFailed {
-            value: idx[coordinate_index],
+            value: index,
             target_type: type_name::<f64>(),
             source,
         }
@@ -1753,6 +1760,44 @@ mod tests {
             }) if bound == CoordinateRangeBound::Minimum
                 && value == InvalidCoordinateValue::NegativeInfinity
         );
+    }
+
+    #[test]
+    fn test_half_open_box_excludes_the_next_float() {
+        let min = 1.0_f64;
+        let max = min.next_up();
+        let points = try_generate_random_points_seeded::<2>(16, (min, max), 42).unwrap();
+
+        assert_eq!(points.len(), 16);
+        for coordinate in points.iter().flat_map(Point::coords) {
+            assert!((min..max).contains(coordinate), "sampled {coordinate:?}");
+        }
+    }
+
+    #[test]
+    fn test_half_open_periodic_domain_excludes_subnormal_periods() {
+        let periods = [f64::from_bits(1), f64::from_bits(2)];
+        let points = generate_random_points_periodic::<2>(16, periods, 42).unwrap();
+
+        assert_eq!(points.len(), 16);
+        for point in points {
+            for (coordinate, period) in point.coords().iter().zip(periods) {
+                assert!((0.0..period).contains(coordinate), "sampled {coordinate:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_half_open_poisson_box_excludes_the_next_float() {
+        let min = 1.0_f64;
+        let max = min.next_up();
+        let points = try_generate_poisson_points::<2>(8, (min, max), f64::EPSILON, 42).unwrap();
+
+        // The half-open box contains only one representable point.
+        assert_eq!(points.len(), 1);
+        for coordinate in points[0].coords() {
+            assert!((min..max).contains(coordinate), "sampled {coordinate:?}");
+        }
     }
 
     #[test]
@@ -2600,8 +2645,7 @@ mod tests {
     #[test]
     fn test_generate_grid_points_index_conversion_failure() {
         let first_inexact_f64_index = (1_usize << f64::MANTISSA_DIGITS) + 1;
-        let idx = [first_inexact_f64_index];
-        let result = grid_index_as_scalar::<1>(&idx, 0, first_inexact_f64_index.saturating_add(1));
+        let result = grid_index_as_scalar(first_inexact_f64_index);
 
         assert_matches!(
             result,
