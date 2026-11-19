@@ -72,9 +72,35 @@ rebuild needed after the preceding failure. Untimed checks verify that the
 owner's vertex and simplex keys and topology generation are preserved and that
 the triangulation passes Levels 1–5.
 
+To reproduce the two historical columns, run this from the checkout containing
+the fixture. The only additions to each source export are the unchanged fixture
+and its Cargo target. Keep each revision's `Cargo.lock`.
+
 ```bash
-cargo bench --locked --profile perf --bench insertion_rollback -- --test
-cargo bench --locked --profile perf --bench insertion_rollback -- \
+scratch=$(mktemp -d)
+for revision in b99c3b93 3ef8e4d2; do
+  export_dir="$scratch/$revision"
+  mkdir "$export_dir"
+  git --no-pager archive "$revision" | tar -x -C "$export_dir"
+  cp benches/insertion_rollback.rs "$export_dir/benches/"
+  cat >> "$export_dir/Cargo.toml" <<'TOML'
+
+[[bench]]
+name = "insertion_rollback"
+path = "benches/insertion_rollback.rs"
+harness = false
+TOML
+done
+```
+
+Run the untimed preflight and benchmark from each export directory and from the
+current checkout. Use Rust 1.100.0 for all runs, including the exports that pin
+1.98.0. Each run writes build artifacts to its own source directory.
+
+```bash
+export CARGO_TARGET_DIR="$PWD/target"
+cargo +1.100.0 bench --locked --profile perf --bench insertion_rollback -- --test
+cargo +1.100.0 bench --locked --profile perf --bench insertion_rollback -- \
   --noplot --warm-up-time 1 --measurement-time 1
 ```
 

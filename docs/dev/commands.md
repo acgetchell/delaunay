@@ -139,13 +139,12 @@ mocked validation separately from measured evidence.
 
 ## Local CodeRabbit Review
 
-CodeRabbit review is opt-in. Agents may run `just review` or
-`just review-uncommitted` only when the maintainer explicitly requests that
-command or gives permission for the CodeRabbit review. A general request to
-review, fix, validate, or prepare a PR does not authorize sending the diff to
-this external service. Without authorization, continue local review and the
-applicable validators; CodeRabbit is not a PR-readiness requirement. Do not
-interrupt routine work to request a CodeRabbit review.
+The PR push gate requires `just security`, `just ci`, and a completed included
+CodeRabbit CLI review for every initial or corrective PR push. A maintainer
+request to publish a PR or push a correction authorizes sending its outgoing
+diff to CodeRabbit through `just review` or `just review-uncommitted`. This
+includes follow-up reviews of fixes within that PR's scope. For work that
+stays local, run CodeRabbit only on maintainer request.
 
 When authorized, run the review after substantive changes settle and fast
 checks pass. Assess each finding against the repository's contracts, fix valid
@@ -173,23 +172,26 @@ Both recipes call the locked shared CLI and stream CodeRabbit's structured
 one of `.coderabbit.yml` or `.coderabbit.yaml`. Install the
 [CodeRabbit CLI](https://docs.coderabbit.ai/cli) separately and authenticate with
 `coderabbit auth login`. It remains an external prerequisite; setup does not
-install or authenticate it, enable paid credits, or retry reviews.
+install or authenticate it, enable paid credits, or retry reviews. Start without
+`--use-credits`. If CodeRabbit asks for paid consent, stop and report the quoted
+scope and maximum charge. Paid consent covers a single quote, and the maintainer
+runs any paid review.
 
 CodeRabbit review is separate from `just check` and `just ci`: it uses a remote
 service, authentication, and review allowances. CLI failures propagate through
 the recipes. If an authorized review cannot run because of authentication,
 service errors, exhausted allowances, or another access limitation, report it
 as unavailable, never as a clean result. Report the scope, completion status,
-actionable findings, fixes, and any remaining issues in the handoff. A review
-that was not requested is simply not run; it does not block local validation
-or handoff.
+actionable findings, fixes, and any remaining issues in the handoff. An
+incomplete review blocks the push. Continue local validation while review
+is unavailable.
 
-Reuse a completed review of the same diff. Any rerun must be covered by the
-maintainer's explicit authorization and warranted by substantial fixes or new
-changes. After fixes, run `just ci` for core Rust/Cargo, substantial Python, or public
-behavior changes, or the focused final validators in the matrix above for
-other changes. Keep the GitHub PR review: its broader context can produce
-different findings from the local CLI review.
+Reuse a completed review when it covers the exact outgoing changes. Use
+`just review` against the PR base to cover outgoing commits and local changes.
+If that result only covers the committed changes, use `just review-uncommitted`
+to review the remaining local diff. After fixes, refresh the push gate for
+the final content. Keep the GitHub PR review because its broader context can
+produce different findings from the local CLI review.
 
 ## Justfile Usage
 
@@ -1091,8 +1093,8 @@ JSON/SARIF reports from `target/security/` for seven days, including on findings
 | Audit maintained Python and Rust lockfiles | `just audit` |
 | Scan Git history and current files for secrets | `just security-secrets` |
 | Fast compile check | `just check-fast` |
-| CodeRabbit review of a branch and local edits, when explicitly authorized | `just review [base]` |
-| CodeRabbit review of only local edits and new files, when explicitly authorized | `just review-uncommitted` |
+| Review the outgoing PR branch and local edits with CodeRabbit | `just review [base]` |
+| Review only local edits and new files with CodeRabbit | `just review-uncommitted` |
 | Check formatting | `just fmt-check` |
 | Check justfile formatting | `just justfile-fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |
