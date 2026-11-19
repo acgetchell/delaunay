@@ -159,8 +159,11 @@ just review-uncommitted      # Only staged, unstaged, and new files
 `just review [base]` includes committed branch changes and local edits;
 `just review-uncommitted` excludes already committed changes. Both include
 non-ignored untracked files and pass `AGENTS.md` and `.coderabbit.yml` as
-additional review instructions. Inspect the intended diff before invoking
-either recipe. The default `origin/main` must match the live remote at invocation.
+additional review instructions. Before invoking either recipe, confirm that
+every included staged or unstaged change and non-ignored untracked file is in
+the authorized scope. If either recipe would send unrelated work, hold the
+review and preserve those changes. The default `origin/main` must match the live
+remote at invocation.
 The shared CLI checks with `git ls-remote`, then compares the local cached ref.
 Missing, stale, or unreachable remote bases fail before CodeRabbit starts. Refresh
 stale refs yourself with `git fetch origin`, then retry when authorized. Explicit

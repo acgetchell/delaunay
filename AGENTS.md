@@ -77,6 +77,9 @@ workflow references do not need to be loaded preemptively.
 - **Run included CodeRabbit CLI review for PR pushes.** A maintainer request to
   publish a PR or push a correction authorizes `just review` and
   `just review-uncommitted` for the outgoing diff, including follow-up fixes.
+  Before either recipe, verify that all staged changes, unstaged changes, and
+  non-ignored untracked files belong to the authorized review scope. Hold the
+  review if it would send unrelated work.
   For work that stays local, run CodeRabbit only on maintainer request.
   Run the included review without paid credits and fix valid findings before
   pushing. Paid reviews require separate consent for each quote. See
