@@ -19,7 +19,7 @@ def test_release_workflow_separates_verification_from_writers() -> None:
         assert not any(step.get("uses", "").startswith("actions/checkout@") for step in job["steps"])
         rendered = yaml.safe_dump(job)
         assert "python -I" in rendered
-        assert "research-repo-tools==0.2.9" in rendered
+        assert "research-repo-tools==0.3.0" in rendered
         assert "setup-just" not in rendered
         assert "toolchain run" not in rendered
     assert jobs["verify"]["permissions"] == {"contents": "read", "checks": "read", "actions": "read"}

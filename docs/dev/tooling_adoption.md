@@ -1,7 +1,7 @@
 # Shared tooling adoption
 
 The repository now pins the published
-[research-repo-tools v0.2.9](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.2.9)
+[research-repo-tools v0.3.0](https://github.com/acgetchell/research-repo-tools/releases/tag/v0.3.0)
 PyPI distribution in runtime dependencies, the tooling/dev groups, and the
 notebook extra/group. `uv.lock` records exact registry artifacts and hashes.
 Python follows the shared package's 3.15 floor. Ruff, ty and pytest inherit exact
@@ -47,6 +47,21 @@ verification remains required. The performance and Rustdoc integrations are
 documented below. The [release-tooling adoption](#v024-release-tooling-adoption)
 implements [#653](https://github.com/acgetchell/delaunay/issues/653) using the
 same published package.
+
+## v0.3.0 release command adoption
+
+The isolated draft writer calls `release assets prepare-authenticated` with its
+declared policy and the original tag-push artifact. RRT rechecks a captured
+draft that briefly disappears from the provider listing using the same release ID.
+After Cargo upload, `release visibility` checks the accepted release ID and tag
+commit, the uploaded baseline asset and the exact crates.io version from runner
+scratch. The registry archive checksum is recorded in the job log.
+
+The shared preparation cache requires a schema-5 or schema-6 declaration and
+one directly invoked benchmark executable per phase. The schema-6 release
+signal invokes three Cargo benchmark targets per phase, and the topology and
+historical release-signal declarations use schema 4. Those declarations keep
+their current workloads and acquisition identities.
 
 ## v0.2.8 provenance and runtime adoption
 
@@ -798,9 +813,8 @@ These follow-up results are native aarch64 macOS evidence.
 ## Dependabot automation
 
 The Dependabot caller pins the reviewed reusable workflow revision
-`aa9e59fac03b11516be45cf32fcb22912061bead` from
-`acgetchell/research-repo-tools` v0.2.9. This workflow pin is independent of the PyPI
-package pin. Its reviewed `pull_request_target` job runs from trusted base
+`33d5670a36607ea2454691cde035b6660d40c7cc` from
+`acgetchell/research-repo-tools` v0.3.0. Its reviewed `pull_request_target` job runs from trusted base
 definitions without checking out or executing PR code and receives no repository
 secrets. The local policy lists exact Cargo, uv, workflow, and composite-action
 files, including both checkpoint fixture resolution files.

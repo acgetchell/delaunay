@@ -38,7 +38,7 @@ jobs:
       - name: Install trusted package runner
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.8"
+          version: "0.13.9"
           enable-cache: false
           cache-python: false
 
@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           uvx --no-config --isolated --python 3.15 \
-            --from 'research-repo-tools==0.2.9' \
+            --from 'research-repo-tools==0.3.0' \
             python -I - <<'PY'
           import hashlib, json, os
           from pathlib import Path
@@ -174,7 +174,7 @@ jobs:
       - name: Install trusted package runner
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.8"
+          version: "0.13.9"
           enable-cache: false
           cache-python: false
 
@@ -208,7 +208,7 @@ jobs:
         run: |
           set -euo pipefail
           uvx --no-config --isolated --python 3.15 \
-            --from 'research-repo-tools==0.2.9' \
+            --from 'research-repo-tools==0.3.0' \
             python -I - <<'PY'
           import hashlib, json, os
           from pathlib import Path

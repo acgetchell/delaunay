@@ -257,9 +257,10 @@ when proposing or applying changes. Agents require explicit maintainer
 authorization before version-control mutations; see the
 [Git and GitHub rules](docs/dev/git.md).
 
-CodeRabbit review requires explicit maintainer authorization and is not a
-readiness requirement. When authorized, run `just review` against the intended
-PR base and address valid findings before final validation. See
+The PR push gate requires an included CodeRabbit CLI review against the
+intended base. A maintainer request to publish a PR or push a correction
+authorizes that review. Standalone reviews and paid reviews require separate
+maintainer authorization. See
 [local CodeRabbit review](docs/dev/commands.md#local-coderabbit-review) for
 scope selection and prerequisites.
 

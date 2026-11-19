@@ -74,15 +74,16 @@ workflow references do not need to be loaded preemptively.
   benchmark-only, and example-only changes use the matching focused validators
   from `docs/dev/commands.md` alongside the pre-push gate; compose those
   validators once each when multiple focused surfaces changed.
-- **CodeRabbit review requires explicit authorization.** Never run CodeRabbit
-  automatically. Run `just review` (or `just review-uncommitted`) only when the
-  maintainer explicitly requests that command or gives permission for the
-  CodeRabbit review. A general request to review, fix, or prepare a PR does not
-  authorize uploading the diff to this external service. Without authorization,
-  continue local review and validation; CodeRabbit is not a readiness requirement.
-  When authorized, assess its findings and fix valid issues before final
-  validation. Command scope and follow-up guidance live in
-  `docs/dev/commands.md#local-coderabbit-review`.
+- **Run included CodeRabbit CLI review for PR pushes.** A maintainer request to
+  publish a PR or push a correction authorizes `just review` and
+  `just review-uncommitted` for the outgoing diff, including follow-up fixes.
+  Before either recipe, verify that all staged changes, unstaged changes, and
+  non-ignored untracked files belong to the authorized review scope. Hold the
+  review if it would send unrelated work.
+  For work that stays local, run CodeRabbit only on maintainer request.
+  Run the included review without paid credits and fix valid findings before
+  pushing. Paid reviews require separate consent for each quote. See
+  `docs/dev/commands.md#local-coderabbit-review` for scope and follow-up guidance.
 - **Do not edit generated changelogs manually.** Changelog and documentation
   maintenance rules live in `docs/dev/docs.md`.
 - **Keep documentation owners distinct.** README owns evaluation and quickstart;

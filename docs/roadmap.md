@@ -139,8 +139,8 @@ schedule. Scientific correctness and supporting evidence determine readiness.
 - **Concurrent topology mutation:** establish correctness, conflict, rollback,
   and performance evidence before adopting a scheduler
   ([#495](https://github.com/acgetchell/delaunay/issues/495)).
-- **Construction rollback:** replace per-insertion topology snapshots with a
-  narrower undo log while preserving failure atomicity
+- **Construction rollback:** verify the performance of the touched-record
+  journals shipped in [#587](https://github.com/acgetchell/delaunay/pull/587)
   ([#510](https://github.com/acgetchell/delaunay/issues/510)).
 - **High-dimensional hull buffers:** investigate allocation beyond D=7
   ([#106](https://github.com/acgetchell/delaunay/issues/106)).

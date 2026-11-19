@@ -139,13 +139,12 @@ mocked validation separately from measured evidence.
 
 ## Local CodeRabbit Review
 
-CodeRabbit review is opt-in. Agents may run `just review` or
-`just review-uncommitted` only when the maintainer explicitly requests that
-command or gives permission for the CodeRabbit review. A general request to
-review, fix, validate, or prepare a PR does not authorize sending the diff to
-this external service. Without authorization, continue local review and the
-applicable validators; CodeRabbit is not a PR-readiness requirement. Do not
-interrupt routine work to request a CodeRabbit review.
+The PR push gate requires `just security`, `just ci`, and a completed included
+CodeRabbit CLI review for every initial or corrective PR push. A maintainer
+request to publish a PR or push a correction authorizes sending its outgoing
+diff to CodeRabbit through `just review` or `just review-uncommitted`. This
+includes follow-up reviews of fixes within that PR's scope. For work that
+stays local, run CodeRabbit only on maintainer request.
 
 When authorized, run the review after substantive changes settle and fast
 checks pass. Assess each finding against the repository's contracts, fix valid
@@ -160,8 +159,11 @@ just review-uncommitted      # Only staged, unstaged, and new files
 `just review [base]` includes committed branch changes and local edits;
 `just review-uncommitted` excludes already committed changes. Both include
 non-ignored untracked files and pass `AGENTS.md` and `.coderabbit.yml` as
-additional review instructions. Inspect the intended diff before invoking
-either recipe. The default `origin/main` must match the live remote at invocation.
+additional review instructions. Before invoking either recipe, confirm that
+every included staged or unstaged change and non-ignored untracked file is in
+the authorized scope. If either recipe would send unrelated work, hold the
+review and preserve those changes. The default `origin/main` must match the live
+remote at invocation.
 The shared CLI checks with `git ls-remote`, then compares the local cached ref.
 Missing, stale, or unreachable remote bases fail before CodeRabbit starts. Refresh
 stale refs yourself with `git fetch origin`, then retry when authorized. Explicit
@@ -173,23 +175,26 @@ Both recipes call the locked shared CLI and stream CodeRabbit's structured
 one of `.coderabbit.yml` or `.coderabbit.yaml`. Install the
 [CodeRabbit CLI](https://docs.coderabbit.ai/cli) separately and authenticate with
 `coderabbit auth login`. It remains an external prerequisite; setup does not
-install or authenticate it, enable paid credits, or retry reviews.
+install or authenticate it, enable paid credits, or retry reviews. Start without
+`--use-credits`. If CodeRabbit asks for paid consent, stop and report the quoted
+scope and maximum charge. Paid consent covers a single quote, and the maintainer
+runs any paid review.
 
 CodeRabbit review is separate from `just check` and `just ci`: it uses a remote
 service, authentication, and review allowances. CLI failures propagate through
 the recipes. If an authorized review cannot run because of authentication,
 service errors, exhausted allowances, or another access limitation, report it
 as unavailable, never as a clean result. Report the scope, completion status,
-actionable findings, fixes, and any remaining issues in the handoff. A review
-that was not requested is simply not run; it does not block local validation
-or handoff.
+actionable findings, fixes, and any remaining issues in the handoff. An
+incomplete review blocks the push. Continue local validation while review
+is unavailable.
 
-Reuse a completed review of the same diff. Any rerun must be covered by the
-maintainer's explicit authorization and warranted by substantial fixes or new
-changes. After fixes, run `just ci` for core Rust/Cargo, substantial Python, or public
-behavior changes, or the focused final validators in the matrix above for
-other changes. Keep the GitHub PR review: its broader context can produce
-different findings from the local CLI review.
+Reuse a completed review when it covers the exact outgoing changes. Use
+`just review` against the PR base to cover outgoing commits and local changes.
+If that result only covers the committed changes, use `just review-uncommitted`
+to review the remaining local diff. After fixes, refresh the push gate for
+the final content. Keep the GitHub PR review because its broader context can
+produce different findings from the local CLI review.
 
 ## Justfile Usage
 
@@ -205,7 +210,7 @@ parameterized implementation helpers live in `just/helpers.just`.
 
 Tool declarations live in their authoritative consumer files: exact uv and Cargo
 tool pins in `pyproject.toml`, Python in `.python-version`, and Rust plus components
-in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.2.9` from PyPI
+in `rust-toolchain.toml`. `tooling` pins `research-repo-tools==0.3.0` from PyPI
 and is included by `dev`. Before the first Just invocation, run:
 
 ```bash
@@ -236,6 +241,8 @@ the locked dev/notebook environment once before any checks or parallel lanes.
 `just tools-export` exports verified paths to GitHub Actions.
 
 `just tools-python-check` checks inherited Ruff, ty and pytest pins explicitly.
+Check the shared tool version selected for this checkout with
+`uv run --locked --group dev research-repo-tools --version`.
 `just tools-sync-binaries` repairs only declared release binaries, including
 prebuilt dprint and rumdl. `just tools-clean` previews obsolete managed installs;
 include other consumers with `--keep-root PATH`, and use `--apply` only after
@@ -271,7 +278,7 @@ guide covers attested promotion of a temporary exact Git pin back to PyPI.
 `deps update-tools` is the separate
 legacy interface for user-installed tools; this repository uses managed TOML pins.
 
-[rrt-dependency-updates]: https://github.com/acgetchell/research-repo-tools/blob/v0.2.9/docs/UPDATING_DEPENDENCIES.md
+[rrt-dependency-updates]: https://github.com/acgetchell/research-repo-tools/blob/v0.3.0/docs/UPDATING_DEPENDENCIES.md
 
 Agents should **prefer running `just` commands instead of invoking the
 underlying tools directly**. The justfile ensures the correct flags,
@@ -611,10 +618,11 @@ Use `just perf-large-scale-smoke [max_secs]` for a coarse local wall-clock guard
 over the release-mode large-scale debug harness. The recipe owns its distinct
 2D-5D workloads of 32,000, 9,000, 1,000, and 160 vertices, respectively, and
 selects construction-only validation (Levels 1-3 plus Level 5). It caps each test
-runtime at 60 seconds by default and reports all failing dimensions before
-exiting. It does not compare
-against a baseline and should not be treated as benchmark data. Run it before
-pushing Rust or benchmark changes to catch obvious local performance drift early.
+runtime at 180 seconds for 4D and 60 seconds for the other dimensions by
+default. An explicit `max_secs` applies to every dimension. The guard reports
+all failing dimensions before exiting. Use its wall times to catch obvious
+local drift before pushing Rust or benchmark changes. Use the Criterion
+measurements below for baseline comparisons.
 
 Use `just bench-latest` from the release PR branch after measured inputs change,
 then `just bench-perf-summary` to regenerate `benches/PERFORMANCE_RESULTS.md`.
@@ -1088,8 +1096,8 @@ JSON/SARIF reports from `target/security/` for seven days, including on findings
 | Audit maintained Python and Rust lockfiles | `just audit` |
 | Scan Git history and current files for secrets | `just security-secrets` |
 | Fast compile check | `just check-fast` |
-| CodeRabbit review of a branch and local edits, when explicitly authorized | `just review [base]` |
-| CodeRabbit review of only local edits and new files, when explicitly authorized | `just review-uncommitted` |
+| Review the outgoing PR branch and local edits with CodeRabbit | `just review [base]` |
+| Review only local edits and new files with CodeRabbit | `just review-uncommitted` |
 | Check formatting | `just fmt-check` |
 | Check justfile formatting | `just justfile-fmt-check` |
 | Apply formatters/auto-fixes | `just fix` |

@@ -1,6 +1,6 @@
 # Tooling configuration
 
-Declare reusable workflows here using the published `research-repo-tools==0.2.9`
+Declare reusable workflows here using the published `research-repo-tools==0.3.0`
 contracts. `python/` holds the retained Delaunay-specific scientific modules and
 measurement and publication policy; consumer policy checks live in `tests/tooling/`.
 Shared infrastructure is called directly through the package's CLI or public

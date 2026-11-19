@@ -43,12 +43,12 @@ def write_stub(directory: Path, name: str, source: str) -> None:
 
 def test_published_pin_configuration_and_inventory() -> None:
     groups = MANIFEST["dependency-groups"]
-    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.2.9"]
+    assert groups["tooling"] == ["research-repo-tools[python-tools]==0.3.0"]
     assert {"include-group": "tooling"} in groups["dev"]
-    assert version("research-repo-tools") == "0.2.9"
+    assert version("research-repo-tools") == "0.3.0"
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     package = next(item for item in lock["package"] if item["name"] == "research-repo-tools")
-    assert package["version"] == "0.2.9"
+    assert package["version"] == "0.3.0"
     assert package["source"] == {"registry": "https://pypi.org/simple"}
     policy = tomllib.loads((ROOT / "dependency-sources.toml").read_text(encoding="utf-8"))
     assert policy["sources"]["tooling"]["version"] == package["version"]

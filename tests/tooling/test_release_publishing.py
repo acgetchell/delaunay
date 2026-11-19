@@ -17,6 +17,7 @@ from research_repo_tools import changelog, config, dependency_provenance, releas
 from research_repo_tools.cli import main
 from research_repo_tools.just_inspect import dry_run, inspect_justfile
 from research_repo_tools.process import run_command
+from research_repo_tools.registry import RegistryVersion
 
 import release_candidate
 
@@ -151,7 +152,7 @@ def release_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
     def published(root: Path, *, packages: tuple[str, ...] | None = None) -> tuple[dependency_provenance.DependencyIdentity, ...]:
         assert root == ROOT
         assert packages == ()
-        return (dependency_provenance.DependencyIdentity("research-repo-tools", "0.2.9", "https://pypi.org/simple"),)
+        return (dependency_provenance.DependencyIdentity("research-repo-tools", "0.3.0", "https://pypi.org/simple"),)
 
     monkeypatch.setattr(dependency_provenance, "check_release_dependencies", published)
     return {"event": event, "path": event_file, "checks": checks}
@@ -383,7 +384,7 @@ def test_workflow_limits_credentials_and_verifies_clean_packages() -> None:
     assert upload["run"] == "cargo publish --locked --package delaunay --registry crates-io --no-verify"
     assert [step for step in steps if "CARGO_REGISTRY_TOKEN" in step.get("env", {})] == [upload]
     assert visibility["if"] == "${{ !cancelled() && steps.auth.outcome == 'success' }}"
-    assert visibility["run"].endswith('release-verify "$RELEASE_TAG"')
+    assert visibility["working-directory"] == "${{ runner.temp }}"
     assert "continue-on-error" not in WORKFLOW.read_text(encoding="utf-8")
     commands = dry_run(ROOT, "release-package").stderr
     assert commands.count("--package delaunay --registry crates-io --dry-run") == 2
@@ -436,16 +437,55 @@ def test_release_setup_exports_only_the_selected_toolchain(tmp_path: Path, nativ
     assert calls.read_text(encoding="utf-8").splitlines() == ["toolchain sync --tool cargo", "toolchain export --tool cargo"]
 
 
-def test_oidc_release_verification_uses_the_external_locked_cli() -> None:
-    """Real Just expansion preserves the external release environment."""
+@pytest.mark.parametrize("mismatch", ["none", "commit", "asset"])
+def test_oidc_release_visibility_uses_captured_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mismatch: str
+) -> None:
+    """The workflow command verifies remote state from scratch with the accepted target."""
     workflow = yaml.safe_load(WORKFLOW.read_bytes())
-    command = shlex.split(workflow["jobs"]["publish"]["steps"][-1]["run"])
-    command[-1] = TAG
-    command.insert(1, "--dry-run")
-    result = run_command(command[0], command[1:], cwd=ROOT)
-    assert (result.stdout + result.stderr).strip() == (
-        f"research-repo-tools toolchain run --tool cargo -- research-repo-tools release verify '{TAG}' --attempts 7 --interval 10"
+    script = workflow["jobs"]["publish"]["steps"][-1]["run"]
+    repository = "acgetchell/delaunay"
+    env = os.environ | {"GITHUB_REPOSITORY": repository, "RELEASE_TAG": TAG}
+    bootstrap = "function research-repo-tools { printf '%s\\n' \"$@\"; }\n"
+    result = run_command("bash", ["-euc", bootstrap + script], cwd=tmp_path, env=env)
+    target = release_assets.ReleaseTarget(repository, TAG, 42, SHA, TAG)
+    accepted = tmp_path / "accepted-candidate"
+    accepted.mkdir()
+    (accepted / "target.json").write_bytes(release_assets.serialize_release_target(target))
+    release = release_assets.GitHubRelease(
+        repository,
+        TAG,
+        42,
+        draft=False,
+        prerelease=False,
+        immutable=True,
+        assets=((f"delaunay-{TAG}-criterion-baseline.tar.gz", 7, 100, None),),
+        title=TAG,
+        asset_states=((7, "new" if mismatch == "asset" else "uploaded"),),
     )
+
+    def lookup(root: Path, requested_repo: str, tag: str) -> release_assets.GitHubRelease:
+        assert (root, requested_repo, tag) == (tmp_path, repository, TAG)
+        return release
+
+    def registry(name: str, package: str, version: str, *, attempts: int, interval: int) -> RegistryVersion:
+        assert mismatch == "none"
+        assert (name, package, version, attempts, interval) == ("crates-io", "delaunay", VERSION, 7, 10)
+        return RegistryVersion("crates-io", package, version, present=True, checksum="c" * 64)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(release_publishing, "lookup_release", lookup)
+    monkeypatch.setattr(release_publishing, "_remote_commit", lambda *_args: "b" * 40 if mismatch == "commit" else SHA)
+    monkeypatch.setattr(release_publishing, "wait_for_version", registry)
+    status = main(result.stdout.splitlines())
+    output = capsys.readouterr()
+    if mismatch == "none":
+        assert status == 0, output.err
+        assert f"Registry archive SHA-256 {'c' * 64}" in output.out
+    else:
+        assert status == 1
+        expected = "published tag differs from captured source" if mismatch == "commit" else "missing, empty or incomplete"
+        assert expected in output.err
 
 
 def test_account_payloads_match_workflow_identity_and_require_tag_review() -> None:

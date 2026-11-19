@@ -53,7 +53,7 @@ sys.exit(main(sys.argv[1:]))
     if external_policy:
         script = script.replace("tooling/release-evidence.toml", '"$RUNNER_TEMP/evidence.toml"')
     bootstrap = f"""uvx() {{
-    [[ "$*" == '--no-config --isolated --no-cache --python 3.15 --from research-repo-tools==0.2.9 python -I -m research_repo_tools '* ]] || return 91
+    [[ "$*" == '--no-config --isolated --no-cache --python 3.15 --from research-repo-tools==0.3.0 python -I -m research_repo_tools '* ]] || return 91
     shift 11
     {shlex.quote(Path(sys.executable).as_posix())} -I {shlex.quote(fake_provider.as_posix())} "$@"
 }}

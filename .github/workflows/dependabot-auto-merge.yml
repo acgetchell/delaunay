@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml@aa9e59fac03b11516be45cf32fcb22912061bead # v0.2.9
+    uses: acgetchell/research-repo-tools/.github/workflows/dependabot-approve.yml@33d5670a36607ea2454691cde035b6660d40c7cc # v0.3.0
     with:
       repository: acgetchell/delaunay
       policy: >-

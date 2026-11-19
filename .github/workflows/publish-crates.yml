@@ -153,7 +153,12 @@ jobs:
 
       - name: Check visibility even after a Cargo upload timeout
         if: ${{ !cancelled() && steps.auth.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
-        run: just --set release_tool research-repo-tools release-verify "$RELEASE_TAG"
+        run: |
+          research-repo-tools release visibility "$RELEASE_TAG" \
+            --repository "$GITHUB_REPOSITORY" --registry crates-io --package delaunay \
+            --required-asset "delaunay-$RELEASE_TAG-criterion-baseline.tar.gz" \
+            --target accepted-candidate/target.json --attempts 7 --interval 10
