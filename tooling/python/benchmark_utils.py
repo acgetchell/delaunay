@@ -2363,6 +2363,9 @@ def collect_criterion_comparisons(
     scope: str = "release-signal",
 ) -> list[Comparison]:
     """Collect Criterion comparisons between ``new`` and a named saved baseline."""
+    if baseline_name.casefold() == "new":
+        msg = "'new' is the current Criterion sample; choose a saved baseline to compare against it"
+        raise ValueError(msg)
     current = _criterion_estimates_by_id(criterion_dir, "new")
     baseline = _criterion_estimates_by_id(criterion_dir, baseline_name)
     if stat not in {"mean", "median"}:
@@ -3620,7 +3623,7 @@ def _artifact_paths_for_output(output: Path) -> ArtifactPaths:
     return ArtifactPaths(payload=output.with_suffix(".comparison.json"), provenance=output.with_suffix(".evidence.json"))
 
 
-def _preflight_performance_destinations(*, output: Path, report_id: PerformanceReportId) -> None:
+def _preflight_performance_destinations(output: Path) -> None:
     """Reject aliases among the three historical-asset scratch outputs."""
     artifacts = _artifact_paths_for_output(output)
     ensure_distinct_paths({"Markdown output": output, "artifact payload": artifacts.payload, "artifact provenance": artifacts.provenance})
@@ -3649,10 +3652,7 @@ def generate_historical_asset_report(*, output: Path, config: ReleaseReportConfi
         scope=config.scope,
         stat=config.stat,
     )
-    _preflight_performance_destinations(
-        output=output,
-        report_id=PerformanceReportId(current_tag=current_tag, baseline_tag=baseline_tag),
-    )
+    _preflight_performance_destinations(output)
     # New release assets already contain both original phases. Reuse their
     # complete comparison and provenance; never relabel a measured PR as final main.
     with tempfile.TemporaryDirectory(prefix="delaunay-candidate-reader-") as temporary:
@@ -3944,10 +3944,7 @@ def _cmd_performance_github_assets(args: argparse.Namespace, project_root: Path)
             msg = "performance-github-assets requires distinct current and baseline tags"
             raise ValueError(msg)
         output = _path_from_root(project_root, args.output)
-        _preflight_performance_destinations(
-            output=output,
-            report_id=PerformanceReportId(current_tag=request.current_tag, baseline_tag=request.baseline_tag),
-        )
+        _preflight_performance_destinations(output)
         config = _release_config_from_args(args, project_root, request)
         report_id = generate_historical_asset_report(output=output, config=config)
     except _RECOVERABLE_CLI_ERRORS as exc:
@@ -3978,7 +3975,7 @@ def execute_command(args: argparse.Namespace, project_root: Path) -> None:
     if args.command == "sample-suite":
         _sample_delaunay_targets(
             project_root,
-            args.criterion_dir,
+            _path_from_root(project_root, args.criterion_dir),
             tuple(args.targets),
             SamplingOptions(args.profile, args.bench_timeout, args.save_baseline),
         )

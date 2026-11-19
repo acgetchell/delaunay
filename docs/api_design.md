@@ -6,7 +6,7 @@ triangulations, and the Pachner move API for explicit local topology edits.
 
 ## Overview
 
-The library provides two distinct APIs for different use cases:
+This guide covers two workflows for geometric triangulations:
 
 1. **Builder API** (`DelaunayTriangulation::insert_vertex` / `::delete_vertex`)
    - High-level construction and maintenance of Delaunay triangulations
@@ -21,6 +21,9 @@ The library provides two distinct APIs for different use cases:
    - Designed for topology manipulation, research, and custom algorithms
    - Keeps raw flip primitives out of preludes; expert callers who need that
      lower-level contract import `delaunay::flips` directly
+
+For coordinate-free 2D surfaces with explicit edge identities, use
+[`TriangleGluing`](topology.md#intrinsic-2d-triangle-gluings).
 
 Examples that derive `thiserror::Error` assume the example crate includes
 `thiserror`; run `cargo add thiserror` alongside `delaunay` when copying those

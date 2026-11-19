@@ -43,3 +43,14 @@ regexes = [
     # Exact truncated prefix of the retained [14181.68786609986,...] payload.
     '''^tukey\.json": "WzE0MTgxLjY4Nzg2NjA5OTg2LDE0MzEyLjk0NjI4NDYxOTUzOCwxNDY2Mi45Njg3MzQwM$''',
 ]
+
+[[rules.allowlists]]
+description = "Truncated numeric Tukey payloads in the retained v0.8.5 run"
+condition = "AND"
+paths = [ '''(^|/)docs/performance-runs/runs/e736ac85e7715c81afbcb0d20ea925347408d86095c8e0af19f8fc4cf8aa5c90/run\.json$''' ]
+regexTarget = "match"
+regexes = [
+    # These payloads start with 708.2706870592251 and 4231413.052564101.
+    '''^tukey\.json": "WzcwOC4yNzA2ODcwNTkyMjUxLDcyNy4yNDM4MTYwNjQ0$''',
+    '''^tukey\.json": "WzQyMzE0MTMuMDUyNTY0MTAxLDQ0MTgxMzMuMTQ4NTA0MjczLDQ5MTYwNTMu$''',
+]

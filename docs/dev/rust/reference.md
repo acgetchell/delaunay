@@ -885,6 +885,7 @@ delaunay::prelude::diagnostics
 delaunay::prelude::ordering
 delaunay::prelude::collections
 delaunay::prelude::tds
+delaunay::prelude::topology::triangle_gluing
 delaunay::prelude::topology::validation
 delaunay::prelude::topology::spaces
 ```
@@ -1009,12 +1010,9 @@ just test-doc
 just test-integration
 ```
 
-Reserve `just ci` for final validation once those iterations are complete.
-Core Rust/Cargo or public-behavior changes require that comprehensive pass
-before a PR is ready or the changes are pushed.
-Doctest-only, unit-test-only, integration-test-only, benchmark-only, and
-example-only changes use the focused validators in
-[`commands.md`](../commands.md).
+For a local handoff, choose the focused validators in
+[`commands.md`](../commands.md). Every initial or corrective PR push requires
+the [full push gate](../commands.md#local-coderabbit-review), including `just ci`.
 
 Property tests are preferred for geometric invariants such as:
 

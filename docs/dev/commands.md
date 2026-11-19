@@ -64,17 +64,11 @@ targeted tests that exercise changed behavior. Focused validators provide
 quicker feedback on individual surfaces, and `just check-fast` is available
 for compile-only feedback.
 
-Before every push, run `just check` on the final working tree, including for
-documentation, configuration, and test-only changes. Focused validators
-supplement this gate; they do not replace it. A successful `just ci` satisfies
-the gate because it includes `just check`.
-
-Reserve `just ci` for final validation once those iterations are complete,
-when preparing core Rust/Cargo, substantial Python, or public-behavior changes
-for PR readiness or push. Release validation and explicit maintainer requests may also require
-full CI. An intermediate local handoff records the checks run during iteration;
-it does not by itself trigger `just ci`. For smaller changes, compose the
-matching focused validators once each.
+Every initial or corrective PR push requires `just security`, `just ci`, and
+a completed [included CodeRabbit review](#local-coderabbit-review) on the final
+outgoing changes. `just ci` includes `just check`. For local handoffs, use the
+table below to validate the touched surfaces. Compose matching focused
+validators once each when several surfaces change.
 
 Core Rust code means production Rust or manifest changes that can affect library
 behavior, public API, features, examples, benchmarks, or downstream users. It
@@ -84,10 +78,9 @@ changed surface.
 
 Substantial Python changes include runtime or cross-module behavior, packaging,
 dependency/environment policy, and CI or release orchestration. Small isolated
-fixes and test-only edits use focused validators unless they affect those
-contracts. The pre-push `just check` gate applies in either case.
+fixes and test-only edits use focused validators during iteration.
 
-| Touched surface | Iteration validation | Final validation / PR readiness |
+| Touched surface | Iteration validation | Local handoff validation |
 |-----|-----|-----|
 | Markdown documentation (`*.md`) | `just markdown-check` | `just check-docs` |
 | Python sources and fixtures | Targeted pytest and `just python-check` | `just python-check`, `just python-fixture-lint`, and `just test-python` |
@@ -106,9 +99,9 @@ contracts. The pre-push `just check` gate applies in either case.
 For Semgrep fixture changes, also run `just semgrep-test` to preserve the
 deliberate positive and negative cases.
 
-Do not run `just ci` merely because documentation, configuration, small Python,
-notebook, or test-only Rust files changed. Do not run `just test` when a single
-focused test bucket covers the change unless you intentionally want the full
+Use focused validators for local documentation, configuration, small Python,
+notebook, or test-only Rust changes. Run the focused test bucket when it covers
+the change and use `just test` when you need the full
 default test suite. When a diff touches multiple focused test surfaces, compose
 the matching recipes once each; for example, run `just test-doc` and
 `just test-integration` for doctest plus integration-test changes. Broad Rust
@@ -399,9 +392,8 @@ current-version changelog heading whose date matches `CITATION.cff`.
 
 ## Full CI Validation
 
-Once iterative review and fixes are complete, core Rust/Cargo, substantial Python, or public-behavior
-changes must pass the full CI command before a PR is ready or the changes are
-pushed. Also run it for release validation or an explicit maintainer request:
+Run full CI after iterative review and fixes, as part of the PR push gate and
+release validation:
 
 ```bash
 just ci
@@ -464,7 +456,7 @@ artifact-refresh recipe. There is no aggregate recipe that executes every
 notebook.
 
 `just semgrep` scans explicit repository rule scopes, including Rust, Python,
-workflow YAML, documentation, notebooks and paper sources. Shared enumeration
+workflow YAML, documentation, and notebooks. Shared enumeration
 keeps tracked Python and Rust tests visible to both local validation and the
 hosted SARIF workflow. The paired reports require complete selected-input
 coverage and matching active findings. Deliberate violations
@@ -485,7 +477,7 @@ the previous attempt. The hosted SARIF workflow uploads only a pair newly
 published by its current attempt, then fails on any nonzero scan status. A valid
 scan with findings publishes current reports and remains a failure. The workflow
 uses the shared `require_current_reports` digest/inventory check before upload.
-Representation scopes and failure retention use the published 0.2.5 policy.
+The pinned package provides representation scopes and failure retention.
 
 `just test` is tests-only. `test-integration-compile` is an explicit no-run
 smoke recipe for cases where a compile-only check is the desired validator; do
@@ -706,7 +698,7 @@ harness onto both library revisions; the topology plan preserves each native
 harness. The release-signal schema-6 schedule declares one sequential trial
 and retains complete-run/v5 evidence; topology remains schema 4. Both retain
 original source provenance, independent discovery/gates/counts and exact raw samples.
-The payload at `target/bench-reports/performance.run.json`, its
+Outputs include `target/bench-reports/performance.run.json`, its
 `.evidence.json` envelope and a Markdown report. Incompatible identities retain
 absolute/one-sided results and suppress ratios.
 
@@ -717,17 +709,15 @@ and publication receipt outside the checkout before strict report promotion.
 `performance-resume` resumes the original checkpoint. `performance-capture`
 and `performance-promote` retry retention/rendering without collecting timings.
 `just performance-readme --preview` previews the separately published README
-selection; `just performance-readme` commits it. `just performance-doc`
+selection. `just performance-readme` updates the README and selected CSV. `just performance-doc`
 rerenders the retained current complete run without timing. Explicit new scratch
 pairs can be promoted with `--payload PATH --manifest PATH`. Commands use the
-six consumer declarations under `tooling/`; the paired workflows do not fetch
-tags or change Git state by default.
+consumer declarations under `tooling/`. The paired workflows do not fetch tags
+or change Git state by default.
 
-The default declaration matches the v0.8.3+ native inventory. Explicit comparisons
-against v0.8.2 use `tooling/measurement-release-signal-v082.toml`, preserving its
-different locate IDs as absolute union rows. Strict release promotion rejects
-that incompatible comparison. Prepare regular releases after advancing the
-package version beyond the latest published release.
+The release-signal declaration matches the v0.8.3+ native inventory. Prepare
+regular releases after advancing the package version beyond the latest
+published release.
 
 New report history lives under `docs/performance-runs/` with current report
 `docs/performance_current.md`. Existing `docs/performance.md`, prior archives
@@ -739,14 +729,8 @@ commit checks and explicit upload/publication boundary. Scientific single-run
 summaries, construction diagnostics and saved-baseline checks retain their
 adapter because shared complete acquisition requires two phases.
 
-Before pushing core Rust/Cargo, substantial Python, or public-behavior changes, complete final
-comprehensive validation:
-
-```bash
-just ci
-```
-
-Before pushing Rust or benchmark changes, also run the performance smoke guard:
+Before pushing Rust or benchmark changes, run the performance smoke guard
+alongside the PR push gate:
 
 ```bash
 just perf-large-scale-smoke
@@ -1192,13 +1176,6 @@ static-analysis regime.
 Rust warnings are denied by the manifest lint policy and Clippy warnings are
 denied by `just clippy`. Keep any
 intentional warning-level exceptions explicit in `Cargo.toml`.
-
-Agents use `just check` and targeted tests during iterative review and fixes.
-Before every push, run `just check` on the final working tree. Core Rust/Cargo,
-substantial Python, or public-behavior changes also require `just ci` for final
-PR readiness or push. Smaller documentation, configuration, Python, notebook,
-test-only, benchmark-only, and example-only changes use the focused validators
-in the matrix above alongside the pre-push gate; compose each affected surface once.
 
 ---
 

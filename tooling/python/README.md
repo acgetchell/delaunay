@@ -132,11 +132,13 @@ just performance-github-assets
 ```
 
 Fresh release-signal workflows call the installed `research-repo-tools` schema-6 scheduler
-through `tooling/measurement-release-signal.toml`. Read-only exports preserve
-each revision's own native harness. Discovery, gates, exact per-case counts,
+through `tooling/measurement-release-signal.toml`. Read-only exports preserve each
+revision's source provenance, and acquisition uses the current harness for both
+revisions. Discovery, gates, exact per-case counts,
 saved-copy verification and full raw retention precede publication of
 `target/bench-reports/performance.run.json` and its evidence envelope.
-The separate topology declaration preserves the 12-sample 4D group.
+The separate topology declaration uses each revision's native harness and
+preserves the 12-sample 4D group.
 
 Both complete phases survive scratch cleanup. Incompatible identities preserve
 absolute timings and union coverage while suppressing ratios. Release promotion
@@ -156,9 +158,9 @@ as a complete run. New releases use the shared candidate archive in place of
 `benchmark-utils create-release-benchmark-metadata`, which produced the legacy
 metadata format. See the [ownership record](../../docs/dev/tooling_adoption.md#declarative-independent-performance-adoption).
 
-The six declarations ship in the Python wheel/sdist and install under
-`share/delaunay/tooling/`. They remain consumer-owned resources; commands run
-from a source checkout with its native harnesses and reviewed local tags.
+The paired acquisition and publication declarations ship in the Python source
+distribution and install from the wheel under `share/delaunay/tooling/`. Run the
+commands from a source checkout with its native harnesses and reviewed local tags.
 
 ### Profiling metadata
 

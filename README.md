@@ -85,7 +85,7 @@ meshing, or production-scale dynamic remeshing.
 
 ## API at a glance
 
-The public API separates three owners: `Tds` validates elements and connectivity
+The geometric API separates three owners: `Tds` validates elements and connectivity
 through Levels 1–2, `Triangulation` adds topology and realization through Levels 3–4,
 and `DelaunayTriangulation` adds the Level 5 Delaunay contract. Use `Triangulation`
 for general geometric editing and `DelaunayTriangulation` when operations must
@@ -102,6 +102,7 @@ Here, `dt` is a `DelaunayTriangulation` and `tri` is a `Triangulation`.
 | Payloads, checkpoints, JSON, export | `Vertex`, `Simplex`, `prelude::checkpoint` | [JSON][data-example]; [export][mesh-export-guide] |
 | Queries, quality, and hulls | `dt.locate()`, `radius_ratio()`, `ConvexHull` | [Example][hull-example] |
 | Repair and Pachner editing | `DelaunayRefinementBuilder`, `PachnerMoves` | [Repair][repair-example]; [editing][pachner-example] |
+| Intrinsic 2D surfaces with parallel or loop edges | `TriangleGluing` | [Topology guide][triangle-gluing-guide] |
 | Toroidal/spherical construction | `.try_toroidal()`, `SphericalDelaunayBuilder` | [Torus][toroidal-example]; [sphere][spherical-example] |
 | Validation and diagnostics | `dt.validate()`, `dt.validation_report()`, `tri.realization_report()` | [Guide][Construction and Validation Guide] |
 
@@ -372,40 +373,47 @@ profiling guidance.
 Release PRs publish a compact per-case snapshot from the validated retained
 `.comparison.json`/`.evidence.json` bundle. The per-case ratios are descriptive summaries;
 the generated full report retains every benchmark result represented in that
-bundle.
+bundle. The version labels below identify the measured revisions. During release
+preparation, the previous snapshot remains in place until the candidate's
+evidence is acquired and promoted.
 
 <!-- PERFORMANCE_RELEASE_TABLE:BEGIN -->
 
-Run: `09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad`. Statistic: median. Unit: ns. Confidence level: 95%.
+Complete run: `4045fd56b9eeb632ab730c4e1700eed87c897425fc4c5579c204a97c2ea0024d`.
 
-- Baseline v0.8.3: baseline phase, v0.8.3, revision 3fa8a9907101c523574a0d17991a1f652b5419dc.
-- Current v0.8.4: current phase, v0.8.4, revision 317a114297007b1aa47082a73ed1c638a1e52fbf.
+Trial 1 of this complete run (separate trial; no pooled significance claim).
 
-| Case | Baseline v0.8.3 | Current v0.8.4 | Baseline / current |
+Selected trial run (CSV/plot identity): `d982cc4c205ebfd51df77d4cd14a0bca4b0cdb55448b17d1eaf2d918516dc3e0`. Statistic: median. Unit: ns. Confidence level: 95%.
+
+- Baseline v0.8.4: baseline phase, v0.8.4, revision 0ae37e2b7aed0559c97c5aa8a46871e7383c0f60.
+- Current v0.8.5: current phase, v0.8.5 working-tree snapshot based on commit 526566589d899eeb5b5cd04cd9523ff1fa766188; measured source SHA-256
+  7ef0dbfee443eb33ef5ae6c03159d77093e482e1cd8f20fe276405a15f9aa0a9.
+
+| Case | Baseline v0.8.4 | Current v0.8.5 | Baseline / current |
 | --- | --- | --- | --- |
-| 2D construction (500 vertices) | 4.57108e+07<br>[4.56421e+07, 4.60575e+07] | 4.57306e+07<br>[4.56665e+07, 4.59635e+07] | 0.999567 |
-| 3D construction (100 vertices) | 3.6891e+07<br>[3.68746e+07, 3.69504e+07] | 3.73342e+07<br>[3.72714e+07, 3.74754e+07] | 0.988129 |
-| 4D construction (30 vertices) | 9.29788e+07<br>[9.24575e+07, 9.30817e+07] | 9.68993e+07<br>[9.63217e+07, 9.74279e+07] | 0.959541 |
-| 5D construction (12 vertices) | 2.03154e+07<br>[2.02609e+07, 2.03676e+07] | 2.20554e+07<br>[2.17983e+07, 2.21252e+07] | 0.921107 |
+| 2D construction (500 vertices) | 4.70189e+07<br>[4.69742e+07, 4.71633e+07] | 4.6485e+07<br>[4.64085e+07, 4.65877e+07] | 1.01149 |
+| 3D construction (100 vertices) | 3.81963e+07<br>[3.8082e+07, 3.83753e+07] | 3.81808e+07<br>[3.81274e+07, 3.83228e+07] | 1.00041 |
+| 4D construction (30 vertices) | 9.93606e+07<br>[9.93009e+07, 9.94318e+07] | 1.02849e+08<br>[1.0157e+08, 1.03622e+08] | 0.966087 |
+| 5D construction (12 vertices) | 2.27595e+07<br>[2.25598e+07, 2.30618e+07] | 2.24918e+07<br>[2.23805e+07, 2.25379e+07] | 1.0119 |
 
 Intervals are recorded marginal timing intervals; ratios are point estimates, with no ratio intervals or significance claims.
 Ratio is numerator time / denominator time; greater than one means less denominator time.
 
-- Baseline / current: ratio; numerator = Baseline v0.8.3; denominator = Current v0.8.4.
+- Baseline / current: ratio; numerator = Baseline v0.8.4; denominator = Current v0.8.5.
 
 Selection coverage:
 
-- Baseline v0.8.3: 4 selected; 0 unavailable rows; 169 phase cases omitted. Complete evidence is retained independently.
-- Current v0.8.4: 4 selected; 0 unavailable rows; 169 phase cases omitted. Complete evidence is retained independently.
+- Baseline v0.8.4: 4 selected; 0 unavailable rows; 169 phase cases omitted. Complete evidence is retained independently.
+- Current v0.8.5: 4 selected; 0 unavailable rows; 169 phase cases omitted. Complete evidence is retained independently.
 - [Complete run evidence][rrt-performance-link-1]
 - [Evidence envelope][rrt-performance-link-2]
-- [Selected timings CSV](https://github.com/acgetchell/delaunay/blob/v0.8.4/docs/assets/bench/release-performance.csv)
+- [Selected timings CSV](https://github.com/acgetchell/delaunay/blob/v0.8.5/docs/assets/bench/release-performance.csv)
 
 [rrt-performance-link-1]:
-  <https://github.com/acgetchell/delaunay/blob/v0.8.4/docs/performance-runs/runs/09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad/run.json>
+  <https://github.com/acgetchell/delaunay/blob/v0.8.5/docs/performance-runs/runs/4045fd56b9eeb632ab730c4e1700eed87c897425fc4c5579c204a97c2ea0024d/run.json>
 
 [rrt-performance-link-2]:
-  <https://github.com/acgetchell/delaunay/blob/v0.8.4/docs/performance-runs/runs/09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad/evidence.json>
+  <https://github.com/acgetchell/delaunay/blob/v0.8.5/docs/performance-runs/runs/4045fd56b9eeb632ab730c4e1700eed87c897425fc4c5579c204a97c2ea0024d/evidence.json>
 
 <!-- PERFORMANCE_RELEASE_TABLE:END -->
 
@@ -418,6 +426,7 @@ Selection coverage:
 | Model | Current construction scope | Important limits |
 |---|---|---|
 | Euclidean | Broad 2D–5D coverage; built-in point-driven construction through D=6. | 6D coverage is more limited; cost rises with dimension. |
+| Intrinsic 2D | Explicit triangle gluings with caller-assigned edge identities. | Coordinate-free surface validation and editing. |
 | Toroidal | Periodic image-point quotients on `T^2` and compact `T^3`. | `T^4`/`T^5` construction fails fast. |
 | Spherical | Bounded `S^2`/`S^3` construction through a separate builder. | Points must enclose the origin; general mutable integration is future work. |
 
@@ -571,6 +580,7 @@ This project is licensed under the [BSD 3-Clause License](https://github.com/acg
 [spherical-example]: https://github.com/acgetchell/delaunay/blob/main/examples/spherical_construction.rs
 [spherical-notebook]: https://github.com/acgetchell/delaunay/blob/main/notebooks/02_spherical_hero.ipynb
 [topology-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/topology.md
+[triangle-gluing-guide]: https://github.com/acgetchell/delaunay/blob/main/docs/topology.md#intrinsic-2d-triangle-gluings
 [toroidal-example]: https://github.com/acgetchell/delaunay/blob/main/examples/toroidal_construction.rs
 [validation-notebook]: https://github.com/acgetchell/delaunay/blob/main/notebooks/01_validation.ipynb
 [validation-paper]: https://github.com/acgetchell/Papers/blob/main/delaunay-validation/validation.pdf

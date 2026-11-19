@@ -174,16 +174,10 @@ harnesses should assert known-answer checks or validation results around the
 measured workflow; keep those checks outside the Criterion-measured closure
 unless validation itself is the behavior being measured.
 
-Once those iterations are complete, core Rust/Cargo or public-behavior changes
-require final comprehensive validation before a PR is ready or the changes are
-pushed:
-
-```bash
-just ci
-```
-
-Benchmark-only, test-only, documentation, configuration, and other non-core
-changes use the focused validators in [`commands.md`](commands.md).
+Use the [validation matrix](commands.md#validation-command-selection) for
+local handoff checks. Run `just perf-large-scale-smoke` before pushing
+performance-sensitive Rust changes. Every initial or corrective PR push requires the
+[full push gate](commands.md#local-coderabbit-review), including `just ci`.
 
 ## Reporting
 

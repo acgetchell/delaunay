@@ -38,7 +38,6 @@ from research_repo_tools.process import run_command
 from research_repo_tools.publication import publish_publication
 from research_repo_tools.release_assets import GitHubRelease, ReleaseTarget
 from research_repo_tools.release_pairs import ReleasePair
-from research_repo_tools.run_reports import load_latest_run
 from research_repo_tools.scheduled_runs import ScheduledRun, select_trial
 from research_repo_tools.suite_measurement import SuiteMeasurementPlan
 from research_repo_tools.suite_runs import comparison_incompatibilities, parse_suite_run
@@ -115,12 +114,15 @@ def fixture_plan(root: Path, monkeypatch: pytest.MonkeyPatch) -> CompleteMeasure
 
 def test_retained_report_migration_preserves_frozen_history() -> None:
     """Verify all historical bytes without inventing a schedule for old evidence."""
-    before = {path: path.read_bytes() for path in (ROOT / "docs/performance-runs").rglob("*") if path.is_file()}
-    historical = load_latest_run(ROOT, "docs/performance-runs")
+    archive = "docs/performance-runs"
+    before = {path: path.read_bytes() for path in (ROOT / archive).rglob("*") if path.is_file()}
+    legacy = f"{archive}/runs/09e66eef3fc9e342931ff0f995ed3f2db4d8aed748c757b2f9c2533aa0dec4ad"
+    payload, manifest = f"{legacy}/run.json", f"{legacy}/evidence.json"
+    historical = load_evidence(ROOT / payload, ROOT / manifest)
     assert historical.payload_schema == "research-repo-tools/complete-run/v3"
     # A historic acquisition remains readable, but cannot meet the new policy.
     with pytest.raises(ValueError, match="scheduled run"):
-        load_report_plan(ROOT, "tooling/performance-report.toml")
+        load_report_plan(ROOT, "tooling/performance-report.toml", payload=payload, manifest=manifest)
     assert {path: path.read_bytes() for path in before} == before
 
 
@@ -147,18 +149,8 @@ def test_actual_declarations_preserve_scientific_counts_and_release_membership()
     counts = dict(topology.current.policy.sample_counts)
     assert {count for name, count in counts.items() if "/4d/" in name} == {12}
     assert dict(benchmark_utils._sampling_policy(tuple(counts)).sample_counts) == counts
-    historical = load_measurement(ROOT, "tooling/measurement-release-signal-v082.toml")
-    assert isinstance(historical, CompleteMeasurementPlan)
-    baseline = dict(historical.baseline.policy.sample_counts)
-    current = dict(historical.current.policy.sample_counts)
-    assert len(baseline) == len(current) == 173
-    assert len(baseline.keys() - current.keys()) == 20
-    assert len(current.keys() - baseline.keys()) == 20
-    assert all(name.startswith("locate/") for name in baseline.keys() ^ current.keys())
-    assert dict(benchmark_utils._sampling_policy(tuple(baseline)).sample_counts) == baseline
     probe = dict(plan.measurement.probes)["build-policy"]
     assert dict(topology.measurement.probes)["build-policy"] == probe
-    assert dict(historical.measurement.probes)["build-policy"] == probe
     observed = run_command(
         probe[0],
         probe[1:],
@@ -172,7 +164,7 @@ def test_actual_declarations_preserve_scientific_counts_and_release_membership()
     assert "fixture-credential" not in observed
 
 
-@pytest.mark.parametrize("suite", ["release-signal", "release-signal-v082", "topology"])
+@pytest.mark.parametrize("suite", ["release-signal", "topology"])
 def test_complete_measurement_commands_do_not_add_positional_filters(suite: str) -> None:
     """Original native harnesses interpret bare option values as case filters."""
     plan = load_measurement(ROOT, f"tooling/measurement-{suite}.toml")

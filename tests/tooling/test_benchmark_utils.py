@@ -612,13 +612,18 @@ def test_release_measurement_plan_digest_binds_per_target_sampling(monkeypatch: 
     assert benchmark_utils._sampling_plan_digest(targets) != full_sampling_digest
 
 
-def test_measurement_child_routes_cargo_and_scientific_diagnostics_to_private_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("relative", [False, True], ids=["absolute-output", "project-relative-output"])
+def test_measurement_child_routes_cargo_and_scientific_diagnostics_to_private_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: bool) -> None:
     """The shared runner's child must not overwrite the last successful generation."""
     criterion = tmp_path / "target/private-output"
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    monkeypatch.chdir(caller)
+    argument = criterion.relative_to(tmp_path) if relative else criterion
     run = Mock(return_value=completed_process(CI_MANIFEST_STDOUT))
     monkeypatch.setattr(benchmark_utils, "run_cargo_command", run)
     args = create_argument_parser().parse_args(
-        ["sample-suite", "--criterion-dir", str(criterion), "--targets", "ci_performance_suite", "--save-baseline", "last"]
+        ["sample-suite", "--criterion-dir", str(argument), "--targets", "ci_performance_suite", "--save-baseline", "last"]
     )
     execute_command(args, tmp_path)
     assert run.call_args.kwargs["env"]["CRITERION_HOME"] == str(criterion)
@@ -628,6 +633,7 @@ def test_measurement_child_routes_cargo_and_scientific_diagnostics_to_private_ou
     assert benchmark_utils._load_ci_performance_manifest_ids(criterion)
     assert benchmark_utils._load_ci_performance_run_metadata(criterion)["sampling_mode"] == "full"
     assert not (tmp_path / "target/criterion").exists()
+    assert not (caller / "target").exists()
 
 
 @pytest.mark.parametrize(
@@ -731,6 +737,24 @@ def test_bench_compare_cli_rejects_invalid_point_estimates(tmp_path: Path, capsy
     assert "bench-compare:" in captured.err
     assert re.search(r"finite|positive|JSON", captured.err)
     assert "Traceback" not in captured.err
+
+
+def test_bench_compare_rejects_fresh_sample_as_its_own_baseline(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.8.5"\n', encoding=UTF8)
+    write_named_estimate(tmp_path, ("validation", "validate_3d", "750"), "new", 1_000_000.0)
+    output = tmp_path / "report.md"
+    existing_report = b"previous report\n"
+    output.write_bytes(existing_report)
+    args = create_argument_parser().parse_args(["bench-compare", "new", "--criterion-dir", str(tmp_path / "criterion"), "--output", str(output)])
+
+    with pytest.raises(SystemExit) as failure:
+        execute_command(args, tmp_path)
+
+    assert failure.value.code == 1
+    assert output.read_bytes() == existing_report
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "'new' is the current Criterion sample" in captured.err
 
 
 @pytest.mark.parametrize("stage", ["sample", "publication"])

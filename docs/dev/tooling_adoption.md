@@ -21,16 +21,13 @@ Native Linux and Windows execution must be verified by their CI jobs.
 [otel-advisory]: https://github.com/advisories/GHSA-xcq7-p3pf-p88h
 [otel-api-advisory]: https://github.com/advisories/GHSA-mf5v-w3w3-f6cg
 
-The Rust dependency is now the published la-stack 0.5.2, retaining disabled
-default features and the `exact` feature. This dependency refresh makes the
-upstream APIs available; the new numerical delegation is tracked by
-[#654](https://github.com/acgetchell/delaunay/issues/654),
-[#655](https://github.com/acgetchell/delaunay/issues/655),
-[#656](https://github.com/acgetchell/delaunay/issues/656), and
-[#657](https://github.com/acgetchell/delaunay/issues/657).
+The v0.8.5 candidate uses the published `la-stack` 0.5.4 with the `exact`
+feature and default features disabled. See the
+[numerical adoption record](../la_stack_adoption.md) for the earlier
+delegation changes and their measured comparisons.
 
-The dependency's polynomial errors introduce 16-byte alignment. To contain that
-growth in nested triangulation errors, `CoordinateConversionError::LinearAlgebraFailure`,
+The la-stack 0.5.2 migration introduced 16-byte alignment through polynomial
+errors. To contain that growth, `CoordinateConversionError::LinearAlgebraFailure`,
 `QualityError::EdgeLength`, `RandomPointGenerationError::VectorComputation`, and
 `SphericalPointError::AngleComputationFailed`
 now store their `source` as `Box<LaError>`. This is an intentional public field
@@ -38,15 +35,13 @@ type change: construct these fields with `Box::new(source)` and inspect the
 backend variant through `source.as_ref()` or `*source`. Existing `From<LaError>`
 conversions remain available. The derived `Error::source()` now exposes the
 typed `Box<LaError>`, so downcast to that type before inspecting its inner error.
-Allocation occurs only when constructing those errors; the scientific kernels
-are unchanged.
+Allocation occurs when constructing those errors.
 
-The v0.2.4 pin also supplies the shared Windows notebook event-loop fix for
-[#661](https://github.com/acgetchell/delaunay/issues/661); native Windows consumer
-verification remains required. The performance and Rustdoc integrations are
-documented below. The [release-tooling adoption](#v024-release-tooling-adoption)
-implements [#653](https://github.com/acgetchell/delaunay/issues/653) using the
-same published package.
+Versioned sections below retain adoption history. The v0.2.4 adoption included
+the Windows notebook event-loop fix for
+[#661](https://github.com/acgetchell/delaunay/issues/661) and the
+[release-tooling migration](#v024-release-tooling-adoption) for
+[#653](https://github.com/acgetchell/delaunay/issues/653).
 
 ## v0.3.0 release command adoption
 
@@ -220,13 +215,13 @@ interfaces (#157), Criterion suite transport (#159), and evidence protection
 sibling checkout, local wheel override or editable shared-package installation.
 
 `performance-local`, performance CI, prepared release comparisons, report
-promotion and README publication now call installed commands with the six
-consumer TOML declarations under `tooling/`. The Python wheel/sdist also carries
-these declarations under `share/delaunay/tooling/`. Read-only source exports
+promotion and README publication call installed commands with the consumer TOML
+declarations under `tooling/`. The Python wheel includes these declarations under
+`share/delaunay/tooling/`. Read-only source exports
 retain original source provenance. The release-signal plan overlays one current
 harness onto both library revisions so harness edits do not invalidate the new
-comparison. The topology and historical v0.8.2 plans preserve native harnesses
-and baseline-only files. Each phase
+comparison. The topology plan preserves native harnesses and baseline-only
+files. Each phase
 discovers canonical IDs, completes its scientific gate, executes its declared
 counts, and verifies its saved copy against fresh benchmark/estimate/sample/Tukey
 bytes. The retained payload contains both complete phases and original raw JSON.
@@ -234,13 +229,8 @@ Source/controller mutations reject publication. Absolute union rows survive
 incompatible identities; ratios depend only on recorded measurement evidence.
 
 The scientific release plan remains 173 cases at 10/15/20/25/100 observations.
-Native read-only discovery found that v0.8.2 has 20 older locate IDs. The named
-`measurement-release-signal-v082.toml` declaration keeps its exact baseline
-inventory and the current phase's 20 newer locate IDs independently. No original
-fixture or harness is substituted; union rows remain absolute evidence. The
-default declaration uses the v0.8.3+ contract for current-vs-latest and subsequent
-release preparation. Both declared baseline inventories are checked against
-original tagged source exports, without collecting new release timings.
+It uses the v0.8.3+ contract for current-vs-latest comparisons and release
+preparation.
 The separate topology declaration retains its 12-observation 4D group. New
 profiling targets from [#558](https://github.com/acgetchell/delaunay/issues/558)
 remain manual and are not promoted into release measurements. The benchmark
@@ -518,11 +508,13 @@ No tracked scientific report, CSV/JSON baseline, notebook, PDF, or figure is
 refreshed by this adoption patch. The canonical macOS `just ci` leg regenerates
 temporary validation figures only to compare them with the tracked artifacts.
 
-## Remaining shared-tool gaps
+<!-- markdownlint-disable-next-line MD033 -->
+<a id="remaining-shared-tool-gaps"></a>
 
-The v0.1.8 implementation is adopted for issues #625–#630, #632–#634 and #636.
-Their native Linux/Windows consumer results remain pending hosted CI.
-Issue #631 adopts the v0.1.9 discovery, heterogeneous completeness, saved-sample
+## Ownership after v0.1.8 and v0.1.9 adoption
+
+The v0.1.8 implementation covered issues #625–#630, #632–#634 and #636.
+Issue #631 adopted the v0.1.9 discovery, heterogeneous completeness, saved-sample
 verification and captured release-target APIs. Delaunay retains workload and
 scientific eligibility policy; shared code owns the underlying mechanisms.
 
@@ -626,11 +618,11 @@ identified by the recovery error before retrying. Release packaging revalidates 
 the retained measurement and preflight policy. No samples are synthesized,
 padded, truncated or rescaled.
 
-The current release-signal plan overlays the current harness onto both library
-revisions and requires it to compile against each. The topology and historical
-v0.8.2 plans retain independent native harnesses. Current schema-4 runs retain
-complete-run evidence with the declared harness mode, original source provenance,
-canonical inventories, count policies and exact raw samples.
+The release-signal plan overlays the current harness onto both library revisions
+and requires it to compile against each. The topology plan retains independent
+native harnesses. Both plans retain complete-run evidence with the declared
+harness mode, original source provenance, canonical inventories, count policies
+and exact raw samples.
 
 The retired independent-checkout runner kept each revision's own harness and
 retained separate sample/evidence pairs. Those historical records remain intact;

@@ -19,6 +19,7 @@ for bibliographic records and stable citation keys.
 |---|---|---|
 | Euclidean construction | `DelaunayTriangulationBuilder` | Finite `f64` point sets, routine 2D–5D coverage: [contracts][construction] |
 | Generic triangulation/editing | `Triangulation`, `PachnerMoves` | Topology and realization separate from Delaunay: [API design](api_design.md) |
+| Intrinsic 2D surfaces | `TriangleGluing` | Explicit edge identities and incidence: [topology](topology.md#intrinsic-2d-triangle-gluings) |
 | Periodic tori | `DelaunayTriangulationBuilder::try_toroidal` | Image-point quotients on `T^2` and compact `T^3`: [limits][domains] |
 | Spheres | `SphericalDelaunayBuilder` | Bounded `S^2`/`S^3` prototype in ambient `R^3`/`R^4`: [topology](topology.md) |
 | Stored connectivity | `Tds`, then checked promotion | Levels 1–2 alone do not prove a manifold, realization, or Delaunay: [promotion][construction] |
@@ -44,11 +45,10 @@ implemented contract. [Limitations](limitations.md) owns the complete scope.
 
 ## Shared assumptions and validation layers
 
-A triangulation combines an oriented abstract simplicial complex with a coordinate
-realization in a supported geometric model. Finite binary64 coordinates are the
-public input model; exact predicates reason about those stored values, not an
-unrecorded ideal measurement. Unrepresentable derived coordinates must surface
-typed errors rather than silently erase a predicate sign.
+A geometric triangulation combines an oriented abstract simplicial complex
+with a coordinate realization in a supported model. Its public numerical inputs
+are finite binary64 coordinates. Exact predicates reason about those stored
+values. Unrepresentable derived coordinates must surface typed errors.
 
 The [simplicial terminology table](topology.md#simplicial-terminology-and-notation)
 maps Lickorish's joins, links, closed stars, closure, and relative interior to
@@ -71,6 +71,9 @@ In D≥4, local incidence tests alone do not decide whether an arbitrary vertex
 link is a PL sphere or ball; the `PLManifold` contract also requires crate-held
 construction provenance. See the [topology contract](topology.md) and
 [PL-topology background](../REFERENCES.md#topological-manifolds-realizations-and-pl-topology-levels-3-4-validation).
+The separate intrinsic `TriangleGluing` owner admits loop and parallel edges
+and reports orientability per component. Its validation stops at the surface
+incidence and vertex-link contracts.
 
 Euclidean/toroidal Level 4 checks require positively oriented, nondegenerate
 maximal simplices whose realizations intersect only in shared abstract faces.
